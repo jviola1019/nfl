@@ -98,6 +98,11 @@ BLEND_META_MODEL    <- getOption("nfl_sim.blend_model",    default = "glmnet")
 BLEND_ALPHA         <- getOption("nfl_sim.blend_alpha",    default = 0.25)
 CALIBRATION_METHOD  <- getOption("nfl_sim.calibration",    default = "isotonic")
 
+# Meta-model and calibration controls for the market/model blend
+BLEND_META_MODEL    <- getOption("nfl_sim.blend_model",    default = "glmnet")
+BLEND_ALPHA         <- getOption("nfl_sim.blend_alpha",    default = 0.25)
+CALIBRATION_METHOD  <- getOption("nfl_sim.calibration",    default = "isotonic")
+
 # SoS weighting knobs
 USE_SOS            <- TRUE     # turn on/off SoS weighting
 SOS_STRENGTH       <- 0.60     # 0=no effect; 1=full strength; try 0.4–0.8
@@ -119,6 +124,12 @@ COLD_TEMP_PEN      <- -0.6     # apply if you set cold flag on a game
 RAIN_SNOW_PEN      <- -0.8
 
 RHO_SCORE      <- NA  # if NA, we’ll estimate it from data
+
+# Player availability impact scalars (points per aggregated severity unit)
+SKILL_AVAIL_POINT_PER_FLAG     <- 0.55
+TRENCH_AVAIL_POINT_PER_FLAG    <- 0.65
+SECONDARY_AVAIL_POINT_PER_FLAG <- 0.45
+FRONT7_AVAIL_POINT_PER_FLAG    <- 0.50
 
 # Player availability impact scalars (points per aggregated severity unit)
 SKILL_AVAIL_POINT_PER_FLAG     <- 0.55
@@ -2310,6 +2321,10 @@ build_final_safe <- function(resolved_list, games_ready) {
         home_mean_pts   = mean(sims$home),
         total_mean      = mean(sims$total),
         margin_mean     = mean(sims$margin),
+        away_sd_pts     = stats::sd(sims$away),
+        home_sd_pts     = stats::sd(sims$home),
+        total_sd        = stats::sd(sims$total),
+        margin_sd       = stats::sd(sims$margin),
         away_median_pts = median(sims$away),
         home_median_pts = median(sims$home),
         total_median    = median(sims$total),
@@ -2339,10 +2354,11 @@ build_final_safe <- function(resolved_list, games_ready) {
       season, week, date, matchup,
       proj_away_score, proj_home_score,
       away_mean_pts, home_mean_pts,
+      away_sd_pts, home_sd_pts,
       away_median_pts, home_median_pts,
       away_ci_lo, away_ci_hi, home_ci_lo, home_ci_hi,
-      total_mean, total_median, total_ci_lo, total_ci_hi,
-      margin_mean, margin_median, margin_ci_lo, margin_ci_hi,
+      total_mean, total_sd, total_median, total_ci_lo, total_ci_hi,
+      margin_mean, margin_sd, margin_median, margin_ci_lo, margin_ci_hi,
       home_win_prob, away_win_prob, tie_prob
     )
   

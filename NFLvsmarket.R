@@ -19,6 +19,9 @@ suppressPackageStartupMessages({
   library(tidyverse)
   library(gt)
   library(nflreadr)
+  library(scales)
+  library(reactable)
+  library(glue)
 })
 
 # -------------------------- Config knobs --------------------------------------
@@ -41,9 +44,156 @@ prob_to_american <- function(p) {
   ifelse(p >= 0.5, -round(100 * p/(1-p)), round(100 * (1-p)/p))
 }
 
+american_to_decimal <- function(odds) {
+  odds <- suppressWarnings(as.numeric(odds))
+  ifelse(odds < 0, 1 + 100/abs(odds), 1 + odds/100)
+}
+
+expected_value_units <- function(prob, odds) {
+  dec <- american_to_decimal(odds)
+  prob <- .clp(prob)
+  ifelse(is.finite(dec), prob * (dec - 1) - (1 - prob), NA_real_)
+}
+
+format_line <- function(x) {
+  ifelse(
+    is.na(x),
+    NA_character_,
+    ifelse(abs(x - round(x)) < 1e-6,
+           sprintf("%+d", as.integer(round(x))),
+           sprintf("%+.1f", x))
+  )
+}
+
+cover_probability_norm <- function(mean_margin, sd_margin, spread, side = c("home","away")) {
+  side <- match.arg(side)
+  if (!is.finite(mean_margin) || !is.finite(sd_margin) || sd_margin <= 0 || !is.finite(spread)) {
+    return(NA_real_)
+  }
+  if (side == "home") {
+    stats::pnorm(-spread, mean = mean_margin, sd = sd_margin, lower.tail = FALSE)
+  } else {
+    stats::pnorm(spread, mean = mean_margin, sd = sd_margin, lower.tail = TRUE)
+  }
+}
+
 pick_col <- function(df, cands) {
   nm <- intersect(cands, names(df))
   if (length(nm)) nm[1] else NA_character_
+}
+
+safe_load_lines <- function(seasons) {
+  tryCatch(nflreadr::load_lines(seasons = seasons), error = function(e) NULL)
+}
+
+closing_spreads_tbl <- function(sched_df) {
+  sp_col <- pick_col(sched_df, c("close_spread","spread_close","home_spread_close","spread_line","spread","home_spread"))
+  if (is.na(sp_col)) return(tibble(game_id = character(), home_main_spread = numeric()))
+  sched_df %>%
+    filter(game_type %in% c("REG","Regular")) %>%
+    transmute(game_id, home_main_spread = suppressWarnings(as.numeric(.data[[sp_col]])))
+}
+
+standardize_side <- function(side_raw, home_team, away_team) {
+  if (is.na(side_raw)) return(NA_character_)
+  sr <- toupper(trimws(as.character(side_raw)))
+  home <- toupper(home_team)
+  away <- toupper(away_team)
+
+  if (sr %in% c("HOME","H","HOST")) return("home")
+  if (sr %in% c("AWAY","VISITOR","ROAD","A")) return("away")
+  if (nzchar(home) && grepl(home, sr, fixed = TRUE)) return("home")
+  if (nzchar(away) && grepl(away, sr, fixed = TRUE)) return("away")
+  if (nzchar(home) && startsWith(sr, substr(home, 1, 3))) return("home")
+  if (nzchar(away) && startsWith(sr, substr(away, 1, 3))) return("away")
+  NA_character_
+}
+
+build_line_catalog <- function(final_df, lines_df, sched_df) {
+  if (is.null(lines_df) || !nrow(lines_df)) return(tibble())
+
+  bt_col  <- pick_col(lines_df, c("bet_type","market_type","type","wager_type"))
+  side_col<- pick_col(lines_df, c("side","team","participant","selection"))
+  odds_col<- pick_col(lines_df, c("american_odds","odds_american","price","line_price","odds"))
+  line_col<- pick_col(lines_df, c("line","spread_line","handicap","points","spread"))
+  book_col<- pick_col(lines_df, c("provider","book","bookmaker","sportsbook"))
+  alt_col <- pick_col(lines_df, c("is_alternate","alternate","is_alt","alt_line"))
+
+  if (is.na(bt_col) || is.na(side_col) || is.na(odds_col)) return(tibble())
+
+  base <- final_df %>%
+    transmute(game_id, date = as.Date(date), matchup, home_team, away_team,
+              home_prob = dplyr::coalesce(home_p_2w_blend, home_p_2w_model, home_p_2w_cal, home_win_prob_cal),
+              away_prob = 1 - home_prob,
+              margin_mean, margin_sd) %>%
+    distinct()
+
+  if (!"game_id" %in% names(lines_df)) return(tibble())
+
+  lines_df %>%
+    filter(game_id %in% base$game_id) %>%
+    transmute(
+      game_id,
+      bet_type = tolower(as.character(.data[[bt_col]])),
+      side_raw = .data[[side_col]],
+      odds = suppressWarnings(as.numeric(.data[[odds_col]])),
+      line = if (!is.na(line_col)) suppressWarnings(as.numeric(.data[[line_col]])) else NA_real_,
+      book = if (!is.na(book_col)) as.character(.data[[book_col]]) else NA_character_,
+      is_alt = if (!is.na(alt_col)) as.logical(.data[[alt_col]]) else NA
+    ) %>%
+    left_join(base, by = "game_id") %>%
+    mutate(
+      side = standardize_side(side_raw, home_team, away_team),
+      is_alt = ifelse(is.na(is_alt), FALSE, is_alt)
+    ) %>%
+    filter(is.finite(odds), !is.na(side)) %>%
+    left_join(closing_spreads_tbl(sched_df), by = "game_id") %>%
+    mutate(
+      main_spread_side = case_when(
+        !is.na(home_main_spread) & side == "home" ~ home_main_spread,
+        !is.na(home_main_spread) & side == "away" ~ -home_main_spread,
+        TRUE ~ NA_real_
+      ),
+      is_alt = ifelse(!is_alt & !is.na(main_spread_side) & !is.na(line), abs(line - main_spread_side) > 0.05, is_alt),
+      bet_bucket = case_when(
+        grepl("moneyline", bet_type) ~ "Moneyline",
+        grepl("spread", bet_type) & is_alt ~ "Alt Spread",
+        grepl("spread", bet_type) ~ "Spread",
+        TRUE ~ stringr::str_to_title(bet_type)
+      ),
+      team_label = ifelse(side == "home", home_team, away_team),
+      model_prob = case_when(
+        bet_bucket == "Moneyline" & side == "home" ~ home_prob,
+        bet_bucket == "Moneyline" & side == "away" ~ away_prob,
+        bet_bucket %in% c("Spread","Alt Spread") & side == "home" ~ cover_probability_norm(margin_mean, margin_sd, line, "home"),
+        bet_bucket %in% c("Spread","Alt Spread") & side == "away" ~ cover_probability_norm(margin_mean, margin_sd, line, "away"),
+        TRUE ~ NA_real_
+      ),
+      market_prob = .clp(american_to_prob(odds)),
+      edge = model_prob - market_prob,
+      ev_units = expected_value_units(model_prob, odds),
+      line_display = dplyr::case_when(
+        bet_bucket == "Moneyline" ~ "ML",
+        bet_bucket %in% c("Spread","Alt Spread") ~ format_line(line),
+        TRUE ~ as.character(line)
+      ),
+      selection = as.character(glue("{team_label} {line_display}")),
+      odds_fmt = ifelse(is.finite(odds), sprintf("%+d", as.integer(round(odds))), NA_character_)
+    ) %>%
+    filter(is.finite(model_prob))
+}
+
+best_offer_rows <- function(catalog) {
+  if (!nrow(catalog)) return(catalog)
+
+  catalog %>%
+    group_by(game_id, bet_bucket, side, line_display) %>%
+    slice_max(order_by = ev_units, n = 1, with_ties = FALSE) %>%
+    ungroup() %>%
+    group_by(game_id, bet_bucket) %>%
+    slice_max(order_by = ev_units, n = 6, with_ties = FALSE) %>%
+    ungroup() %>%
+    arrange(date, matchup, bet_bucket, desc(ev_units))
 }
 
 # ------------------ Load/locate inputs if not present -------------------------
@@ -292,7 +442,7 @@ if ("p_blend" %in% names(comp) && any(is.finite(comp$p_blend))) {
 }
 
 # ------------------ Best Bets table for current slate -------------------------
-build_best_bets <- function(final_df, sched_df, spread_mapper=NULL, focus_matchup=NULL) {
+build_best_bets <- function(final_df, sched_df, spread_mapper=NULL, focus_matchup=NULL, line_catalog=NULL) {
   stopifnot(all(c("matchup","date") %in% names(final_df)))
   # final_df should carry home_p_2w_cal; if not, reconstruct from calibrated 3-way
   if (!("home_p_2w_cal" %in% names(final_df)) && all(c("home_win_prob_cal","away_win_prob_cal","tie_prob") %in% names(final_df))) {
@@ -300,10 +450,10 @@ build_best_bets <- function(final_df, sched_df, spread_mapper=NULL, focus_matchu
       mutate(two_way_mass = pmax(1 - tie_prob, 1e-9),
              home_p_2w_cal = .clp(home_win_prob_cal / two_way_mass))
   }
-  
+
   mkt_now <- market_probs_from_sched(sched_df, spread_mapper = spread_mapper) %>%
     select(game_id, p_home_mkt_2w)
-  
+
   out <- final_df %>%
     separate(matchup, into = c("away","home"), sep = " @ ", remove = FALSE) %>%
     mutate(date = as.Date(date)) %>%
@@ -316,31 +466,110 @@ build_best_bets <- function(final_df, sched_df, spread_mapper=NULL, focus_matchu
       fair_ml_model = prob_to_american(p_model),
       fair_ml_mkt   = prob_to_american(p_mkt)
     ) %>%
-    select(date, matchup, p_model, p_mkt, edge, side, fair_ml_model, fair_ml_mkt) %>%
+    select(game_id, date, matchup, p_model, p_mkt, edge, side, fair_ml_model, fair_ml_mkt) %>%
     arrange(desc(edge))
-  
+
   if (!is.null(focus_matchup)) {
     out <- out %>% filter(matchup == focus_matchup)
   }
-  out
+
+  if (!is.null(line_catalog) && nrow(line_catalog)) {
+    ml_best <- line_catalog %>%
+      filter(bet_bucket == "Moneyline") %>%
+      group_by(game_id, side) %>%
+      slice_max(order_by = ev_units, n = 1, with_ties = FALSE) %>%
+      ungroup() %>%
+      transmute(
+        game_id,
+        best_book = book,
+        best_odds = odds_fmt,
+        best_market_prob = market_prob,
+        best_ev_units = ev_units,
+        side = if_else(side == "home", paste0(team_label, " ML"), paste0(team_label, " ML"))
+      )
+
+    out <- out %>%
+      left_join(ml_best, by = c("game_id","side")) %>%
+      mutate(
+        best_market_prob = coalesce(best_market_prob, p_mkt),
+        best_ev_units = coalesce(best_ev_units, expected_value_units(p_model, prob_to_american(best_market_prob))),
+        best_odds = ifelse(is.na(best_odds), sprintf("%+d", prob_to_american(best_market_prob)), best_odds)
+      )
+  }
+
+  if (!"best_book" %in% names(out)) out$best_book <- NA_character_
+  if (!"best_odds" %in% names(out)) out$best_odds <- NA_character_
+  if (!"best_market_prob" %in% names(out)) out$best_market_prob <- out$p_mkt
+  if (!"best_ev_units" %in% names(out)) out$best_ev_units <- expected_value_units(out$p_model, prob_to_american(out$p_mkt))
+
+  out %>% select(-game_id)
 }
 
 if (exists("final")) {
-  bets <- build_best_bets(final, sched, spread_mapper, FOCUS_MATCHUP)
+  seasons_needed <- sort(unique(final$season))
+  lines_raw <- safe_load_lines(seasons_needed)
+  line_catalog <- build_line_catalog(final, lines_raw, sched)
+  best_offers <- best_offer_rows(line_catalog)
+
+  bets <- build_best_bets(final, sched, spread_mapper, FOCUS_MATCHUP, line_catalog)
   message("\n=== Best Bets (current slate) ===")
   bets %>%
     mutate(
       `Model %`  = scales::percent(p_model, accuracy = 0.1),
-      `Market %` = scales::percent(p_mkt,   accuracy = 0.1),
-      `Edge %`   = scales::percent(edge,    accuracy = 0.1),
+      `Market %` = scales::percent(coalesce(best_market_prob, p_mkt), accuracy = 0.1),
+      `Edge %`   = scales::percent(edge, accuracy = 0.1),
+      `Best Odds` = best_odds,
+      `Best Book` = best_book,
+      `EV (1u)`   = scales::number(best_ev_units, accuracy = 0.001, scale = 1),
       `Fair ML (Model)`  = ifelse(is.finite(fair_ml_model), sprintf("%+d", fair_ml_model), NA),
       `Fair ML (Market)` = ifelse(is.finite(fair_ml_mkt),   sprintf("%+d", fair_ml_mkt),   NA)
     ) %>%
-    select(date, matchup, side, `Edge %`, `Model %`, `Market %`, `Fair ML (Model)`, `Fair ML (Market)`) %>%
+    select(date, matchup, side, `Edge %`, `Model %`, `Market %`, `Best Odds`, `Best Book`, `EV (1u)`, `Fair ML (Model)`, `Fair ML (Market)`) %>%
     gt() %>%
-    tab_header(title = "Best Bets vs Market (2-way ML)") %>%
+    tab_header(title = "Best Bets vs Market (Moneyline focus)") %>%
     fmt_date(columns = "date") %>%
     print()
+
+  if (nrow(best_offers)) {
+    message("\n=== Best Available Odds (spread & alt) ===")
+    ev_domain <- range(best_offers$ev_units, na.rm = TRUE)
+    if (!all(is.finite(ev_domain))) ev_domain <- c(-0.05, 0.05)
+    ev_domain <- c(min(ev_domain[1], -0.05), max(ev_domain[2], 0.05))
+    palette_ev <- scales::col_numeric("RdYlGn", domain = ev_domain)
+
+    reactable::reactable(
+      best_offers %>%
+        mutate(date = as.Date(date)),
+      searchable = TRUE,
+      defaultPageSize = 20,
+      pagination = TRUE,
+      defaultSorted = list("date" = "asc"),
+      defaultColDef = colDef(align = "center"),
+      columns = list(
+        date = colDef(name = "Date", sticky = "left", format = colFormat(date = TRUE)),
+        matchup = colDef(name = "Matchup", sticky = "left", align = "left"),
+        bet_bucket = colDef(name = "Bet Type"),
+        selection = colDef(name = "Selection", align = "left", sticky = "left"),
+        odds_fmt = colDef(name = "Odds"),
+        book = colDef(name = "Book"),
+        model_prob = colDef(name = "Model %", format = colFormat(percent = TRUE, digits = 1)),
+        market_prob = colDef(name = "Market %", format = colFormat(percent = TRUE, digits = 1)),
+        edge = colDef(name = "Edge %", format = colFormat(percent = TRUE, digits = 1),
+                      cell = function(value) {
+                        col <- palette_ev(value)
+                        list(style = list(background = col, color = ifelse(value > 0.04, "white", "black")))
+                      }),
+        ev_units = colDef(name = "EV (1u)", format = colFormat(digits = 3),
+                          cell = function(value) {
+                            col <- palette_ev(value)
+                            list(style = list(background = col, color = ifelse(value > 0.02, "white", "black")))
+                          })
+      ),
+      highlight = TRUE
+    ) %>% print()
+  } else {
+    message("No sportsbook lines available via nflreadr::load_lines for the requested slate.")
+  }
 } else {
   message("\nNo `final` object found. To see Best Bets, run your simulation first (or save `final` to RDS and set FINAL_RDS).")
 }
