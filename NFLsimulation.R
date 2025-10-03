@@ -3012,6 +3012,7 @@ team_strength_tbl <- list(
   extract_team_metric(team_stats_def, c("success_rate_rush", "rush_success_rate", "rushing_success_rate"), "def_rush_sr"),
   extract_team_metric(team_stats_def, c("pressure_rate", "pressures_per_dropback", "qb_hit_rate"), "def_pressure_rate"),
   extract_team_metric(team_stats_off, c("pressure_rate_allowed", "pressure_rate", "pressures_per_dropback"), "off_pressure_rate")
+  extract_team_metric(team_stats_def, c("success_rate", "series_success_rate", "sr"), "def_sr")
 ) %>%
   purrr::compact()
 
@@ -3020,6 +3021,7 @@ if (length(team_strength_tbl)) {
 
   rename_strength_cols <- function(df, prefix) {
     cols <- setdiff(names(df), c("season", "team"))
+    cols <- intersect(c("off_epa", "off_sr", "def_epa", "def_sr"), names(df))
     if (!length(cols)) return(df)
     dplyr::rename_with(df, ~ paste0(prefix, .x), dplyr::all_of(cols))
   }
@@ -3122,6 +3124,8 @@ suppressWarnings(suppressMessages(require(glmnet)))
 
 .pick_open <- function(df, cands) { nm <- intersect(cands, names(df)); if (length(nm)) nm[1] else NA_character_ }
 
+.pick_open <- function(df, cands) { nm <- intersect(cands, names(df)); if (length(nm)) nm[1] else NA_character_ }
+
 # Try to add open/close deltas when present
 blend_design <- function(df) {
   zm <- .lgt(df$p_model); zk <- .lgt(df$p_mkt)
@@ -3172,6 +3176,7 @@ blend_design <- function(df) {
     "home_secondary_avail_pen", "away_secondary_avail_pen", "home_front7_avail_pen", "away_front7_avail_pen",
     "off_epa_edge", "def_epa_edge", "sr_edge", "net_epa_edge",
     "pass_epa_edge", "rush_epa_edge", "pass_sr_edge", "rush_sr_edge", "pressure_rate_diff"
+    "off_epa_edge", "def_epa_edge", "sr_edge", "net_epa_edge"
   ), names(df))
 
   for (col in optional_cols) {
@@ -3234,6 +3239,9 @@ make_calibrator <- function(method, p, y, weights = NULL) {
     stats::approx(xs, ys, xout = newp, rule = 2)$y %>% .clp()
   }
 }
+
+# weeks “ago” from (S,W) for recency weights (approx 18 weeks/season)
+weeks_ago <- function(season, week, S, W) (S - season) * 18 + (W - week)
 
 cw <- sched %>% dplyr::filter(game_type %in% c("REG","Regular")) %>%
   dplyr::arrange(season, week) %>% dplyr::distinct(season, week)
