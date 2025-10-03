@@ -93,6 +93,11 @@ set.seed(SEED)
 # ----- Priors / blending knobs -----
 GLMM_BLEND_W <- 0.35   # weight on GLMM μ vs your PPD×pace μ (0..1)
 
+# Meta-model and calibration controls for the market/model blend
+BLEND_META_MODEL    <- getOption("nfl_sim.blend_model",    default = "glmnet")
+BLEND_ALPHA         <- getOption("nfl_sim.blend_alpha",    default = 0.25)
+CALIBRATION_METHOD  <- getOption("nfl_sim.calibration",    default = "isotonic")
+
 # SoS weighting knobs
 USE_SOS            <- TRUE     # turn on/off SoS weighting
 SOS_STRENGTH       <- 0.60     # 0=no effect; 1=full strength; try 0.4–0.8
@@ -114,6 +119,12 @@ COLD_TEMP_PEN      <- -0.6     # apply if you set cold flag on a game
 RAIN_SNOW_PEN      <- -0.8
 
 RHO_SCORE      <- NA  # if NA, we’ll estimate it from data
+
+# Player availability impact scalars (points per aggregated severity unit)
+SKILL_AVAIL_POINT_PER_FLAG     <- 0.55
+TRENCH_AVAIL_POINT_PER_FLAG    <- 0.65
+SECONDARY_AVAIL_POINT_PER_FLAG <- 0.45
+FRONT7_AVAIL_POINT_PER_FLAG    <- 0.50
 
 # Optional: per-game manual adjustments (apply to mu &/or sd after all calcs)
 # Columns:
@@ -331,7 +342,7 @@ teams_on_slate <- sort(unique(c(week_slate$home_team, week_slate$away_team)))
 
 # ───────────────────────── INJURIES (schema-agnostic + safe) ──────────────────
 inj_all <- nflreadr::load_injuries(
-  seasons = 2024,
+  seasons = sort(unique(sched$season)),
   file_type = getOption("nflreadr.prefer", default = "rds")
 )
 
@@ -340,8 +351,87 @@ inj_pick <- function(df, candidates) {
   if (length(nm)) nm[1] else NA_character_
 }
 
+calc_injury_impacts <- function(df, group_vars = c("team")) {
+  if (!is.data.frame(df) || !nrow(df)) {
+    return(tibble())
+  }
+
+  required <- c("team", "position", "status")
+  if (!all(required %in% names(df))) return(tibble())
+
+  missing_groups <- setdiff(group_vars, names(df))
+  if (length(missing_groups)) return(tibble())
+
+  df %>%
+    dplyr::mutate(
+      base_pen = dplyr::case_when(
+        grepl("OUT|IR", status)       ~ -0.50,
+        grepl("DOUBTFUL", status)     ~ -0.35,
+        grepl("QUESTIONABLE", status) ~ -0.20,
+        grepl("LIMITED", status)      ~ -0.10,
+        TRUE                          ~  0
+      ),
+      pos_group = dplyr::case_when(
+        position %in% c("QB")                                        ~ "qb",
+        position %in% c("T","OT","LT","RT","G","OG","C","OL")  ~ "trenches",
+        position %in% c("WR","TE","RB","FB","HB")              ~ "skill",
+        position %in% c("CB","S","SS","FS","DB")               ~ "secondary",
+        position %in% c("LB","ILB","OLB","EDGE")               ~ "front7",
+        position %in% c("DL","DT","DE","NT","IDL")             ~ "front7",
+        TRUE                                                         ~ "other"
+      ),
+      pos_wt = dplyr::case_when(
+        pos_group == "qb"        ~ 0.0,
+        pos_group == "trenches"  ~ 1.3,
+        pos_group == "skill"     ~ 1.05,
+        pos_group == "secondary" ~ 0.95,
+        pos_group == "front7"    ~ 0.85,
+        TRUE                     ~ 0.6
+      ),
+      severity = dplyr::case_when(
+        grepl("OUT|IR", status)       ~ 1.0,
+        grepl("DOUBTFUL", status)     ~ 0.7,
+        grepl("QUESTIONABLE", status) ~ 0.4,
+        grepl("LIMITED", status)      ~ 0.2,
+        TRUE                          ~ 0.0
+      ),
+      pen = base_pen * pos_wt
+    ) %>%
+    dplyr::group_by(dplyr::across(dplyr::all_of(group_vars))) %>%
+    dplyr::summarise(
+      inj_off_pts_raw = sum(dplyr::if_else(position == "QB", 0, pen), na.rm = TRUE),
+      inj_def_pts_raw = sum(dplyr::if_else(position %in% c("CB","S","SS","FS","DB","LB","ILB","OLB","EDGE","DL","DT","DE","NT","IDL"),
+                                           -pen, 0), na.rm = TRUE),
+      n_listed = dplyr::n(),
+      skill_avail_pen = sum(dplyr::if_else(pos_group == "skill", severity, 0), na.rm = TRUE),
+      trench_avail_pen = sum(dplyr::if_else(pos_group == "trenches", severity, 0), na.rm = TRUE),
+      secondary_avail_pen = sum(dplyr::if_else(pos_group == "secondary", severity, 0), na.rm = TRUE),
+      front7_avail_pen = sum(dplyr::if_else(pos_group == "front7", severity, 0), na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    dplyr::mutate(
+      w = n_listed / (n_listed + 8),
+      inj_off_pts = pmax(pmin(inj_off_pts_raw * w,  -1.5), -4.0),
+      inj_def_pts = pmax(pmin(inj_def_pts_raw * w,  +1.5),  0.0),
+      skill_avail_pen = pmin(skill_avail_pen, 6),
+      trench_avail_pen = pmin(trench_avail_pen, 6),
+      secondary_avail_pen = pmin(secondary_avail_pen, 6),
+      front7_avail_pen = pmin(front7_avail_pen, 6)
+    ) %>%
+    dplyr::select(dplyr::all_of(group_vars), inj_off_pts, inj_def_pts,
+                  skill_avail_pen, trench_avail_pen, secondary_avail_pen,
+                  front7_avail_pen)
+}
+
+inj_hist_features <- tibble()
+
 if (!is.data.frame(inj_all) || nrow(inj_all) == 0) {
-  inj_team_effects <- tibble(team = teams_on_slate, inj_off_pts = 0, inj_def_pts = 0)
+  inj_team_effects <- tibble(
+    team = teams_on_slate,
+    inj_off_pts = 0, inj_def_pts = 0,
+    skill_avail_pen = 0, trench_avail_pen = 0,
+    secondary_avail_pen = 0, front7_avail_pen = 0
+  )
 } else {
   col_season <- inj_pick(inj_all, c("season","Season","season_year","year"))
   col_week   <- inj_pick(inj_all, c("week","Week","game_week","gameday"))
@@ -349,58 +439,44 @@ if (!is.data.frame(inj_all) || nrow(inj_all) == 0) {
   col_pos    <- inj_pick(inj_all, c("position","pos"))
   col_status <- inj_pick(inj_all, c("game_status","status","practice_status",
                                     "player_status","report_status"))
-  
+
   if (is.na(col_team)) {
     # no team column → nothing we can do; default to zeros
-    inj_team_effects <- tibble(team = teams_on_slate, inj_off_pts = 0, inj_def_pts = 0)
+    inj_team_effects <- tibble(
+      team = teams_on_slate,
+      inj_off_pts = 0, inj_def_pts = 0,
+      skill_avail_pen = 0, trench_avail_pen = 0,
+      secondary_avail_pen = 0, front7_avail_pen = 0
+    )
   } else {
-    inj_week <- inj_all %>%
+    inj_prepped <- inj_all %>%
       transmute(
         season   = if (!is.na(col_season)) .data[[col_season]] else NA_integer_,
         week     = if (!is.na(col_week))   .data[[col_week]]   else NA_integer_,
         team     = toupper(as.character(.data[[col_team]])),
         position = toupper(as.character(coalesce(if (!is.na(col_pos))    .data[[col_pos]]    else NA_character_, ""))),
         status   = toupper(as.character(coalesce(if (!is.na(col_status)) .data[[col_status]] else NA_character_, "")))
-      ) %>%
+      )
+
+    inj_hist_features <- calc_injury_impacts(
+      inj_prepped %>% dplyr::filter(!is.na(season), !is.na(week), nzchar(team)),
+      group_vars = c("season", "week", "team")
+    )
+
+    inj_week <- inj_prepped %>%
       { if (!is.na(col_season)) dplyr::filter(., season == SEASON) else . } %>%
       { if (!is.na(col_week))   dplyr::filter(., week   == WEEK_TO_SIM) else . } %>%
       dplyr::filter(team %in% teams_on_slate)
-    
-    inj_team_effects <- inj_week %>%
-      mutate(
-        base_pen = case_when(
-          grepl("OUT|IR", status)       ~ -0.50,
-          grepl("DOUBTFUL", status)     ~ -0.35,
-          grepl("QUESTIONABLE", status) ~ -0.20,
-          TRUE                          ~  0
-        ),
-        pos_wt = case_when(
-          position %in% c("QB")                                  ~ 0.0,
-          position %in% c("T","OT","LT","RT","G","OG","C","OL")  ~ 1.2,
-          position %in% c("WR","TE","RB","FB","HB")              ~ 1.0,
-          position %in% c("CB","S","SS","FS","DB")               ~ 0.9,
-          position %in% c("LB","ILB","OLB","EDGE")               ~ 0.8,
-          position %in% c("DL","DT","DE","NT","IDL")             ~ 0.8,
-          TRUE                                                   ~ 0.6
-        ),
-        pen = base_pen * pos_wt
-      ) %>%
-      group_by(team) %>%
-      summarise(
-        inj_off_pts_raw = sum(if_else(position == "QB", 0, pen), na.rm = TRUE),
-        inj_def_pts_raw = sum(if_else(position %in% c("CB","S","SS","FS","DB","LB","ILB","OLB","EDGE","DL","DT","DE","NT","IDL"),
-                                      -pen, 0), na.rm = TRUE),
-        n_listed = n(), .groups = "drop"
-      ) %>%
-      mutate(
-        w = n_listed / (n_listed + 8),
-        inj_off_pts = pmax(pmin(inj_off_pts_raw * w,  -1.5), -4.0),
-        inj_def_pts = pmax(pmin(inj_def_pts_raw * w,  +1.5),  0.0)
-      ) %>%
-      dplyr::select(team, inj_off_pts, inj_def_pts)
-    
-    if (nrow(inj_team_effects) == 0) {
-      inj_team_effects <- tibble(team = teams_on_slate, inj_off_pts = 0, inj_def_pts = 0)
+
+    inj_team_effects <- calc_injury_impacts(inj_week, group_vars = c("team"))
+
+    if (!nrow(inj_team_effects)) {
+      inj_team_effects <- tibble(
+        team = teams_on_slate,
+        inj_off_pts = 0, inj_def_pts = 0,
+        skill_avail_pen = 0, trench_avail_pen = 0,
+        secondary_avail_pen = 0, front7_avail_pen = 0
+      )
     }
   }
 }
@@ -835,7 +911,11 @@ recent_form <- recent_form %>%
   left_join(inj_team_effects, by = c("team" = "team")) %>%
   mutate(
     inj_off_pts = coalesce(inj_off_pts, 0),
-    inj_def_pts = coalesce(inj_def_pts, 0)
+    inj_def_pts = coalesce(inj_def_pts, 0),
+    skill_avail_pen = coalesce(skill_avail_pen, 0),
+    trench_avail_pen = coalesce(trench_avail_pen, 0),
+    secondary_avail_pen = coalesce(secondary_avail_pen, 0),
+    front7_avail_pen = coalesce(front7_avail_pen, 0)
   )
 
 
@@ -1181,9 +1261,23 @@ games_ready <- week_slate |>
     # Expected drives this game = average of team offense and opponent defense
     exp_drives_home = (home_off_drives_pg + away_def_drives_pg)/2,
     exp_drives_away = (away_off_drives_pg + home_def_drives_pg)/2,
-    
+
     exp_ppd_home = ppd_blend(home_off_ppd, away_def_ppd, w_off = 0.65),
-    exp_ppd_away = ppd_blend(away_off_ppd, home_def_ppd, w_off = 0.65)
+    exp_ppd_away = ppd_blend(away_off_ppd, home_def_ppd, w_off = 0.65),
+
+    home_skill_penalty = coalesce(home_skill_avail_pen, 0) * SKILL_AVAIL_POINT_PER_FLAG,
+    home_trench_penalty = coalesce(home_trench_avail_pen, 0) * TRENCH_AVAIL_POINT_PER_FLAG,
+    home_secondary_penalty = coalesce(home_secondary_avail_pen, 0) * SECONDARY_AVAIL_POINT_PER_FLAG,
+    home_front7_penalty = coalesce(home_front7_avail_pen, 0) * FRONT7_AVAIL_POINT_PER_FLAG,
+    away_skill_penalty = coalesce(away_skill_avail_pen, 0) * SKILL_AVAIL_POINT_PER_FLAG,
+    away_trench_penalty = coalesce(away_trench_avail_pen, 0) * TRENCH_AVAIL_POINT_PER_FLAG,
+    away_secondary_penalty = coalesce(away_secondary_avail_pen, 0) * SECONDARY_AVAIL_POINT_PER_FLAG,
+    away_front7_penalty = coalesce(away_front7_avail_pen, 0) * FRONT7_AVAIL_POINT_PER_FLAG,
+
+    home_injury_off_total = home_inj_off_pts - home_skill_penalty - home_trench_penalty,
+    away_injury_off_total = away_inj_off_pts - away_skill_penalty - away_trench_penalty,
+    home_injury_def_total = home_inj_def_pts + home_secondary_penalty + home_front7_penalty,
+    away_injury_def_total = away_inj_def_pts + away_secondary_penalty + away_front7_penalty
   ) %>%
   # <<< add this mutate right after the previous one >>>
   dplyr::mutate(
@@ -1215,14 +1309,14 @@ games_ready <- week_slate |>
     margin_shift = (home_hfa - away_hfa)/2,
     
     # QB & rest adjustments (additive to means)
-    mu_home_qb_rest = mu_home_base + home_off_points_adj + home_rest_points + home_inj_off_pts,
-    mu_away_qb_rest = mu_away_base + away_off_points_adj + away_rest_points + away_inj_off_pts,
-    
+    mu_home_qb_rest = mu_home_base + home_off_points_adj + home_rest_points + home_injury_off_total,
+    mu_away_qb_rest = mu_away_base + away_off_points_adj + away_rest_points + away_injury_off_total,
+
     # Apply HFA split & non-negativity
     mu_home = pmax(mu_home_qb_rest, 0),
     mu_away = pmax(mu_away_qb_rest, 0),
-    mu_home = pmax(mu_home + away_inj_def_pts, 0),  # away defense ding → home scores more
-    mu_away = pmax(mu_away + home_inj_def_pts, 0),
+    mu_home = pmax(mu_home + away_injury_def_total, 0),  # away defense ding → home scores more
+    mu_away = pmax(mu_away + home_injury_def_total, 0),
     
     
     # SD guardrails and QB-related spread tweak
@@ -2833,11 +2927,28 @@ wind_num <- function(x) { v <- suppressWarnings(as.numeric(x)); ifelse(is.finite
 ctx <- sched %>%
   dplyr::transmute(
     game_id, season, week,
+    home_team = .data[[home_col]],
+    away_team = .data[[away_col]],
     is_outdoors = if (!is.na(roof_col)) outdoor_flag(.data[[roof_col]]) else NA_integer_,
     wind_mph    = if (!is.na(wind_col)) wind_num(.data[[wind_col]]) else NA_real_,
     high_wind   = as.integer(is.finite(wind_mph) & wind_mph >= 12)
   ) %>%
   dplyr::left_join(rest_features, by = "game_id")
+
+if (nrow(inj_hist_features)) {
+  inj_home <- inj_hist_features %>%
+    dplyr::rename(home_team = team) %>%
+    dplyr::rename_with(~ paste0("home_", .x),
+                       dplyr::all_of(setdiff(names(.), c("season", "week", "home_team"))))
+  inj_away <- inj_hist_features %>%
+    dplyr::rename(away_team = team) %>%
+    dplyr::rename_with(~ paste0("away_", .x),
+                       dplyr::all_of(setdiff(names(.), c("season", "week", "away_team"))))
+
+  ctx <- ctx %>%
+    dplyr::left_join(inj_home, by = c("season", "week", "home_team")) %>%
+    dplyr::left_join(inj_away, by = c("season", "week", "away_team"))
+}
 
 # ---- Team strength features from nflreadr::load_team_stats -------------------
 safe_team_stats <- function(stat_type, seasons) {
@@ -2890,6 +3001,17 @@ team_strength_tbl <- list(
   extract_team_metric(team_stats_off, c("epa_per_play", "epa", "epa_per_pass"), "off_epa"),
   extract_team_metric(team_stats_off, c("success_rate", "series_success_rate", "sr"), "off_sr"),
   extract_team_metric(team_stats_def, c("epa_per_play", "epa", "epa_per_pass"), "def_epa"),
+  extract_team_metric(team_stats_def, c("success_rate", "series_success_rate", "sr"), "def_sr"),
+  extract_team_metric(team_stats_off, c("epa_per_pass", "pass_epa", "passing_epa", "epa_per_pass_play"), "off_pass_epa"),
+  extract_team_metric(team_stats_def, c("epa_per_pass", "pass_epa", "passing_epa", "epa_per_pass_play"), "def_pass_epa"),
+  extract_team_metric(team_stats_off, c("epa_per_rush", "rush_epa", "rushing_epa", "epa_per_rush_play"), "off_rush_epa"),
+  extract_team_metric(team_stats_def, c("epa_per_rush", "rush_epa", "rushing_epa", "epa_per_rush_play"), "def_rush_epa"),
+  extract_team_metric(team_stats_off, c("success_rate_pass", "pass_success_rate", "passing_success_rate"), "off_pass_sr"),
+  extract_team_metric(team_stats_def, c("success_rate_pass", "pass_success_rate", "passing_success_rate"), "def_pass_sr"),
+  extract_team_metric(team_stats_off, c("success_rate_rush", "rush_success_rate", "rushing_success_rate"), "off_rush_sr"),
+  extract_team_metric(team_stats_def, c("success_rate_rush", "rush_success_rate", "rushing_success_rate"), "def_rush_sr"),
+  extract_team_metric(team_stats_def, c("pressure_rate", "pressures_per_dropback", "qb_hit_rate"), "def_pressure_rate"),
+  extract_team_metric(team_stats_off, c("pressure_rate_allowed", "pressure_rate", "pressures_per_dropback"), "off_pressure_rate")
   extract_team_metric(team_stats_def, c("success_rate", "series_success_rate", "sr"), "def_sr")
 ) %>%
   purrr::compact()
@@ -2898,6 +3020,7 @@ if (length(team_strength_tbl)) {
   team_strength_tbl <- purrr::reduce(team_strength_tbl, dplyr::full_join, by = c("season", "team"))
 
   rename_strength_cols <- function(df, prefix) {
+    cols <- setdiff(names(df), c("season", "team"))
     cols <- intersect(c("off_epa", "off_sr", "def_epa", "def_sr"), names(df))
     if (!length(cols)) return(df)
     dplyr::rename_with(df, ~ paste0(prefix, .x), dplyr::all_of(cols))
@@ -2940,6 +3063,46 @@ if (length(team_strength_tbl)) {
       dplyr::mutate(sr_edge = NA_real_)
   }
 
+  if (all(c("home_off_pass_epa", "away_def_pass_epa") %in% names(ctx_strength))) {
+    ctx_strength <- ctx_strength %>%
+      dplyr::mutate(pass_epa_edge = home_off_pass_epa - away_def_pass_epa)
+  } else {
+    ctx_strength <- ctx_strength %>%
+      dplyr::mutate(pass_epa_edge = NA_real_)
+  }
+
+  if (all(c("home_off_rush_epa", "away_def_rush_epa") %in% names(ctx_strength))) {
+    ctx_strength <- ctx_strength %>%
+      dplyr::mutate(rush_epa_edge = home_off_rush_epa - away_def_rush_epa)
+  } else {
+    ctx_strength <- ctx_strength %>%
+      dplyr::mutate(rush_epa_edge = NA_real_)
+  }
+
+  if (all(c("home_off_pass_sr", "away_def_pass_sr") %in% names(ctx_strength))) {
+    ctx_strength <- ctx_strength %>%
+      dplyr::mutate(pass_sr_edge = home_off_pass_sr - away_def_pass_sr)
+  } else {
+    ctx_strength <- ctx_strength %>%
+      dplyr::mutate(pass_sr_edge = NA_real_)
+  }
+
+  if (all(c("home_off_rush_sr", "away_def_rush_sr") %in% names(ctx_strength))) {
+    ctx_strength <- ctx_strength %>%
+      dplyr::mutate(rush_sr_edge = home_off_rush_sr - away_def_rush_sr)
+  } else {
+    ctx_strength <- ctx_strength %>%
+      dplyr::mutate(rush_sr_edge = NA_real_)
+  }
+
+  if (all(c("home_off_pressure_rate", "away_def_pressure_rate") %in% names(ctx_strength))) {
+    ctx_strength <- ctx_strength %>%
+      dplyr::mutate(pressure_rate_diff = away_def_pressure_rate - home_off_pressure_rate)
+  } else {
+    ctx_strength <- ctx_strength %>%
+      dplyr::mutate(pressure_rate_diff = NA_real_)
+  }
+
   ctx <- ctx %>%
     dplyr::left_join(ctx_strength, by = c("game_id", "season", "week"))
 }
@@ -2958,6 +3121,8 @@ suppressWarnings(suppressMessages(require(glmnet)))
 .clp <- function(x, eps=1e-12) pmin(pmax(x, eps), 1-eps)
 .lgt <- function(p) log(p/(1-p))
 .inv <- function(z) 1/(1+exp(-z))
+
+.pick_open <- function(df, cands) { nm <- intersect(cands, names(df)); if (length(nm)) nm[1] else NA_character_ }
 
 .pick_open <- function(df, cands) { nm <- intersect(cands, names(df)); if (length(nm)) nm[1] else NA_character_ }
 
@@ -3001,6 +3166,16 @@ blend_design <- function(df) {
     "is_outdoors", "high_wind", "wind_mph",
     "home_off_epa", "away_off_epa", "home_def_epa", "away_def_epa",
     "home_off_sr", "away_off_sr", "home_def_sr", "away_def_sr",
+    "home_off_pass_epa", "away_off_pass_epa", "home_def_pass_epa", "away_def_pass_epa",
+    "home_off_rush_epa", "away_off_rush_epa", "home_def_rush_epa", "away_def_rush_epa",
+    "home_off_pass_sr", "away_off_pass_sr", "home_def_pass_sr", "away_def_pass_sr",
+    "home_off_rush_sr", "away_off_rush_sr", "home_def_rush_sr", "away_def_rush_sr",
+    "home_off_pressure_rate", "away_off_pressure_rate", "home_def_pressure_rate", "away_def_pressure_rate",
+    "home_inj_off_pts", "away_inj_off_pts", "home_inj_def_pts", "away_inj_def_pts",
+    "home_skill_avail_pen", "away_skill_avail_pen", "home_trench_avail_pen", "away_trench_avail_pen",
+    "home_secondary_avail_pen", "away_secondary_avail_pen", "home_front7_avail_pen", "away_front7_avail_pen",
+    "off_epa_edge", "def_epa_edge", "sr_edge", "net_epa_edge",
+    "pass_epa_edge", "rush_epa_edge", "pass_sr_edge", "rush_sr_edge", "pressure_rate_diff"
     "off_epa_edge", "def_epa_edge", "sr_edge", "net_epa_edge"
   ), names(df))
 
@@ -3011,6 +3186,58 @@ blend_design <- function(df) {
   }
 
   design
+}
+
+# weeks “ago” from (S,W) for recency weights (approx 18 weeks/season)
+weeks_ago <- function(season, week, S, W) (S - season) * 18 + (W - week)
+
+make_calibrator <- function(method, p, y, weights = NULL) {
+  method <- tolower(ifelse(is.null(method) || !nzchar(method), "isotonic", method))
+  p <- .clp(p)
+  y <- as.numeric(y)
+
+  if (method == "beta") {
+    df <- tibble::tibble(
+      y = y,
+      lp = log(p),
+      l1mp = log1p(-p)
+    )
+    fit <- try(stats::glm(y ~ lp + l1mp, data = df, family = binomial(), weights = weights), silent = TRUE)
+    if (!inherits(fit, "try-error")) {
+      return(function(newp) {
+        newp <- .clp(newp)
+        newdata <- tibble::tibble(lp = log(newp), l1mp = log1p(-newp))
+        stats::predict(fit, newdata = newdata, type = "response") %>% .clp()
+      })
+    }
+    method <- "isotonic"  # fallback if beta calibration failed
+  }
+
+  if (method == "logistic") {
+    df <- tibble::tibble(y = y, z = stats::qlogis(p))
+    fit <- try(stats::glm(y ~ poly(z, 2, raw = TRUE), family = binomial(), data = df, weights = weights), silent = TRUE)
+    if (!inherits(fit, "try-error")) {
+      return(function(newp) {
+        newp <- .clp(newp)
+        stats::predict(fit, newdata = tibble::tibble(z = stats::qlogis(newp)), type = "response") %>% .clp()
+      })
+    }
+    method <- "isotonic"
+  }
+
+  # default isotonic regression calibrator
+  tb <- tibble::tibble(p = .clp(p), y = y) %>%
+    dplyr::mutate(bin = pmin(pmax(floor(p * 100), 0), 100)) %>%
+    dplyr::group_by(bin) %>%
+    dplyr::summarise(x = mean(p), y = mean(y), .groups = "drop") %>%
+    dplyr::arrange(x)
+  iso <- stats::isoreg(c(0, tb$x, 1), c(0.01, tb$y, 0.99))
+  xs  <- iso$x[!duplicated(iso$x)]
+  ys  <- iso$yf[!duplicated(iso$x)]
+  function(newp) {
+    newp <- .clp(newp)
+    stats::approx(xs, ys, xout = newp, rule = 2)$y %>% .clp()
+  }
 }
 
 # weeks “ago” from (S,W) for recency weights (approx 18 weeks/season)
@@ -3033,24 +3260,40 @@ blend_oos <- purrr::map_dfr(seq_len(nrow(cw)), function(i){
   Xtr <- blend_design(train)
   ytr <- as.numeric(train$y2)
   wtr <- 0.98 ^ pmax(0, weeks_ago(train$season, train$week, S, W))  # recency
-  
-  cv  <- glmnet::cv.glmnet(Xtr, ytr, family = "binomial", alpha = 0.25, weights = wtr, nfolds = 10)
+
   Xte <- blend_design(test)
-  
-  p_raw_tr <- as.numeric(predict(cv, newx = Xtr, s = "lambda.min", type = "response"))
-  p_raw_te <- as.numeric(predict(cv, newx = Xte, s = "lambda.min", type = "response"))
-  
-  # per-cut isotonic on train -> apply to test (keeps it truly OOS)
-  tb <- tibble::tibble(p = .clp(p_raw_tr), y = ytr) %>%
-    dplyr::mutate(bin = pmin(pmax(floor(p*100),0),100)) %>%
-    dplyr::group_by(bin) %>% dplyr::summarise(x = mean(p), y = mean(y), .groups="drop") %>%
-    dplyr::arrange(x)
-  iso <- stats::isoreg(c(0, tb$x, 1), c(0.01, tb$y, 0.99))
-  xs  <- iso$x[!duplicated(iso$x)]
-  ys  <- iso$yf[!duplicated(iso$x)]
-  map_iso_local <- function(p){ p <- .clp(p); .clp(stats::approx(xs, ys, xout = p, rule = 2)$y) }
-  
-  test$p_blend <- map_iso_local(p_raw_te)
+
+  model_name <- tolower(ifelse(is.null(BLEND_META_MODEL) || !nzchar(BLEND_META_MODEL), "glmnet", BLEND_META_MODEL))
+  alpha_val <- suppressWarnings(as.numeric(BLEND_ALPHA))
+  if (!is.finite(alpha_val)) alpha_val <- 0.25
+  alpha_val <- pmin(pmax(alpha_val, 0), 1)
+
+  fit_glmnet <- function() {
+    glmnet::cv.glmnet(Xtr, ytr, family = "binomial", alpha = alpha_val, weights = wtr, nfolds = 10)
+  }
+
+  p_raw_tr <- p_raw_te <- NULL
+
+  if (model_name == "glm") {
+    df_tr <- as.data.frame(Xtr)
+    df_tr$y <- ytr
+    glm_fit <- try(stats::glm(y ~ ., family = binomial(), data = df_tr, weights = wtr), silent = TRUE)
+    if (!inherits(glm_fit, "try-error")) {
+      p_raw_tr <- stats::predict(glm_fit, type = "response")
+      p_raw_te <- stats::predict(glm_fit, newdata = as.data.frame(Xte), type = "response")
+    } else {
+      model_name <- "glmnet"  # fallback
+    }
+  }
+
+  if (model_name != "glm") {
+    cv <- fit_glmnet()
+    p_raw_tr <- as.numeric(predict(cv, newx = Xtr, s = "lambda.min", type = "response"))
+    p_raw_te <- as.numeric(predict(cv, newx = Xte, s = "lambda.min", type = "response"))
+  }
+
+  calibrator <- make_calibrator(CALIBRATION_METHOD, p_raw_tr, ytr, weights = wtr)
+  test$p_blend <- calibrator(p_raw_te)
   test
 })
 
