@@ -114,7 +114,45 @@ compare_to_market <- function(res, sched) {
       dL = logloss2(jj$p_model, jj$y2) - logloss2(jj$p_mkt, jj$y2)
     )
   })
-  
+
+  rolling_week_bootstrap <- function(comp_df, window_sizes = c(8, 17), B = 400, seed = 123) {
+    wk_tbl <- comp_df %>% dplyr::distinct(season, week) %>% dplyr::arrange(season, week) %>% dplyr::mutate(idx = dplyr::row_number())
+    if (!nrow(wk_tbl)) return(tibble::tibble())
+
+    purrr::map_dfr(window_sizes, function(win) {
+      if (nrow(wk_tbl) < win) return(tibble::tibble())
+      purrr::map_dfr(seq(win, nrow(wk_tbl)), function(end_idx) {
+        sel <- wk_tbl[(end_idx - win + 1):end_idx, , drop = FALSE]
+        sub <- comp_df %>% dplyr::inner_join(sel %>% dplyr::select(season, week), by = c("season", "week"))
+        if (!nrow(sub)) return(tibble::tibble())
+        set.seed(seed + end_idx + win)
+        wk_sub <- sel
+        boot_sub <- replicate(B, {
+          samp <- wk_sub[sample(nrow(wk_sub), replace = TRUE), , drop = FALSE]
+          jj <- comp_df %>% dplyr::inner_join(samp, by = c("season", "week"))
+          c(
+            dB = brier2(jj$p_model, jj$y2) - brier2(jj$p_mkt, jj$y2),
+            dL = logloss2(jj$p_model, jj$y2) - logloss2(jj$p_mkt, jj$y2)
+          )
+        })
+        tibble::tibble(
+          window_weeks = win,
+          end_season = sel$season[nrow(sel)],
+          end_week   = sel$week[nrow(sel)],
+          games_in_window = nrow(sub),
+          dB_mean = mean(boot_sub["dB",], na.rm = TRUE),
+          dB_lo   = unname(stats::quantile(boot_sub["dB",], 0.025, na.rm = TRUE)),
+          dB_hi   = unname(stats::quantile(boot_sub["dB",], 0.975, na.rm = TRUE)),
+          dL_mean = mean(boot_sub["dL",], na.rm = TRUE),
+          dL_lo   = unname(stats::quantile(boot_sub["dL",], 0.025, na.rm = TRUE)),
+          dL_hi   = unname(stats::quantile(boot_sub["dL",], 0.975, na.rm = TRUE))
+        )
+      })
+    })
+  }
+
+  rolling_ci <- rolling_week_bootstrap(comp)
+
   dBS <- c(
     mean = mean(boot["dB",], na.rm = TRUE),
     lo   = unname(quantile(boot["dB",], 0.025, na.rm = TRUE)),
@@ -157,7 +195,17 @@ compare_to_market <- function(res, sched) {
 
   cat("\n--- By season (model vs market) ---\n"); print(by_season)
   cat("\nMarket reliability (2-way bins):\n"); print(bins)
-  
+
+  if (nrow(rolling_ci)) {
+    latest_roll <- rolling_ci %>%
+      dplyr::group_by(window_weeks) %>%
+      dplyr::slice_tail(n = 1, with_ties = FALSE) %>%
+      dplyr::ungroup()
+    cat("\nRolling week-block bootstrap deltas (latest windows):\n")
+    print(latest_roll)
+  }
+
   invisible(list(overall = overall, deltas = list(LogLoss = dLL, Brier = dBS),
-                 by_season = by_season, bins = bins, comp = comp))
+                 by_season = by_season, bins = bins, comp = comp,
+                 rolling = rolling_ci))
 }
