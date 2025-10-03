@@ -2839,15 +2839,117 @@ ctx <- sched %>%
   ) %>%
   dplyr::left_join(rest_features, by = "game_id")
 
-# Merge into comp0 later:
-# comp0 <- preds_hist %>% inner_join(mkt_hist, ...) %>% inner_join(outcomes_hist, ...) %>%
-#   left_join(ctx, by = c("game_id","season","week"))
+# ---- Team strength features from nflreadr::load_team_stats -------------------
+safe_team_stats <- function(stat_type, seasons) {
+  tryCatch({
+    nflreadr::load_team_stats(stat_type = stat_type, seasons = seasons)
+  }, error = function(e) NULL)
+}
+
+extract_team_metric <- function(df, metric_candidates, label) {
+  if (is.null(df) || !is.data.frame(df) || !nrow(df)) return(NULL)
+
+  season_col <- .pick_col2(df, c("season", "season_year", "year"))
+  team_col   <- .pick_col2(df, c("team", "team_abbr", "club_code", "team_code"))
+  metric_col <- .pick_col2(df, metric_candidates)
+  stype_col  <- .pick_col2(df, c("season_type", "season_type_name", "type"))
+  week_col   <- .pick_col2(df, c("week", "game_week"))
+
+  if (is.na(season_col) || is.na(team_col) || is.na(metric_col)) return(NULL)
+
+  out <- df %>%
+    dplyr::mutate(
+      season = suppressWarnings(as.integer(.data[[season_col]])),
+      team   = toupper(as.character(.data[[team_col]])),
+      metric = suppressWarnings(as.numeric(.data[[metric_col]]))
+    ) %>%
+    dplyr::filter(!is.na(season), nzchar(team), is.finite(metric))
+
+  if (!is.na(stype_col)) {
+    out <- out %>%
+      dplyr::filter(.data[[stype_col]] %in% c("REG", "Regular", "REGULAR SEASON"))
+  }
+
+  if (!is.na(week_col) && any(is.finite(out[[week_col]]))) {
+    out <- out %>%
+      dplyr::group_by(season, team) %>%
+      dplyr::filter(.data[[week_col]] == max(.data[[week_col]], na.rm = TRUE)) %>%
+      dplyr::ungroup()
+  } else {
+    out <- out %>% dplyr::distinct(season, team, .keep_all = TRUE)
+  }
+
+  out %>%
+    dplyr::transmute(season, team, !!label := metric)
+}
+
+team_stats_off <- safe_team_stats("offense", unique(sched$season))
+team_stats_def <- safe_team_stats("defense", unique(sched$season))
+
+team_strength_tbl <- list(
+  extract_team_metric(team_stats_off, c("epa_per_play", "epa", "epa_per_pass"), "off_epa"),
+  extract_team_metric(team_stats_off, c("success_rate", "series_success_rate", "sr"), "off_sr"),
+  extract_team_metric(team_stats_def, c("epa_per_play", "epa", "epa_per_pass"), "def_epa"),
+  extract_team_metric(team_stats_def, c("success_rate", "series_success_rate", "sr"), "def_sr")
+) %>%
+  purrr::compact()
+
+if (length(team_strength_tbl)) {
+  team_strength_tbl <- purrr::reduce(team_strength_tbl, dplyr::full_join, by = c("season", "team"))
+
+  rename_strength_cols <- function(df, prefix) {
+    cols <- intersect(c("off_epa", "off_sr", "def_epa", "def_sr"), names(df))
+    if (!length(cols)) return(df)
+    dplyr::rename_with(df, ~ paste0(prefix, .x), dplyr::all_of(cols))
+  }
+
+  ctx_strength <- sched %>%
+    dplyr::filter(game_type %in% c("REG", "Regular")) %>%
+    dplyr::transmute(
+      game_id, season, week,
+      home_team = .data[[home_col]],
+      away_team = .data[[away_col]]
+    ) %>%
+    dplyr::left_join(team_strength_tbl, by = c("season", "home_team" = "team")) %>%
+    rename_strength_cols("home_") %>%
+    dplyr::left_join(team_strength_tbl, by = c("season", "away_team" = "team")) %>%
+    rename_strength_cols("away_")
+
+  if (all(c("home_off_epa", "away_off_epa") %in% names(ctx_strength))) {
+    ctx_strength <- ctx_strength %>%
+      dplyr::mutate(off_epa_edge = home_off_epa - away_off_epa)
+  } else {
+    ctx_strength <- ctx_strength %>%
+      dplyr::mutate(off_epa_edge = NA_real_)
+  }
+
+  if (all(c("home_def_epa", "away_def_epa") %in% names(ctx_strength))) {
+    ctx_strength <- ctx_strength %>%
+      dplyr::mutate(def_epa_edge = away_def_epa - home_def_epa,
+                    net_epa_edge = (home_off_epa - home_def_epa) - (away_off_epa - away_def_epa))
+  } else {
+    ctx_strength <- ctx_strength %>%
+      dplyr::mutate(def_epa_edge = NA_real_, net_epa_edge = NA_real_)
+  }
+
+  if (all(c("home_off_sr", "away_off_sr") %in% names(ctx_strength))) {
+    ctx_strength <- ctx_strength %>%
+      dplyr::mutate(sr_edge = home_off_sr - away_off_sr)
+  } else {
+    ctx_strength <- ctx_strength %>%
+      dplyr::mutate(sr_edge = NA_real_)
+  }
+
+  ctx <- ctx %>%
+    dplyr::left_join(ctx_strength, by = c("game_id", "season", "week"))
+}
 
 
 # align
 comp0 <- preds_hist %>%
   dplyr::inner_join(mkt_hist,    by = c("game_id","season","week")) %>%
   dplyr::inner_join(outcomes_hist, by = c("game_id","season","week")) %>%
+  dplyr::left_join(ctx, by = c("game_id","season","week")) %>%
   dplyr::mutate(p_model = .clp(p_model), p_mkt = .clp(p_home_mkt_2w))
 
 # ---- fit OOS blend by week (ridge + meta-features + recency weights) ----
@@ -2863,21 +2965,21 @@ suppressWarnings(suppressMessages(require(glmnet)))
 blend_design <- function(df) {
   zm <- .lgt(df$p_model); zk <- .lgt(df$p_mkt)
   diff <- zm - zk
-  
+
   # optional: open lines
-  sp_open <- .pick_open(df, c("spread_open","open_spread","home_spread_open"))
-  sp_close<- .pick_open(df, c("close_spread","spread_close","home_spread_close","spread_line","spread"))
-  mlh_open<- .pick_open(df, c("home_ml_open","ml_home_open","home_moneyline_open"))
+  sp_open  <- .pick_open(df, c("spread_open","open_spread","home_spread_open"))
+  sp_close <- .pick_open(df, c("close_spread","spread_close","home_spread_close","spread_line","spread"))
+  mlh_open <- .pick_open(df, c("home_ml_open","ml_home_open","home_moneyline_open"))
   mlh_close<- .pick_open(df, c("home_ml_close","ml_home_close","home_moneyline_close","home_ml"))
-  
+
   d_sp <- if (!is.na(sp_open) && !is.na(sp_close)) suppressWarnings(as.numeric(df[[sp_close]]) - as.numeric(df[[sp_open]])) else NA_real_
   d_ml <- if (!is.na(mlh_open) && !is.na(mlh_close)) {
     ph_o <- american_to_prob(suppressWarnings(as.numeric(df[[mlh_open]])))
     ph_c <- american_to_prob(suppressWarnings(as.numeric(df[[mlh_close]])))
     (ph_c - ph_o)
   } else NA_real_
-  
-  cbind(
+
+  design <- cbind(
     lgt_model = zm,
     lgt_mkt   = zk,
     diff      = diff,
@@ -2886,23 +2988,29 @@ blend_design <- function(df) {
     d_spread  = ifelse(is.finite(d_sp), d_sp, 0),
     d_mlprob  = ifelse(is.finite(d_ml), d_ml, 0)
   )
-}
 
-if ("short_week_home" %in% names(df)) {
-  extra <- cbind(
-    short_week_home = as.numeric(df$short_week_home %||% 0),
-    short_week_away = as.numeric(df$short_week_away %||% 0),
-    bye_home        = as.numeric(df$bye_home %||% 0),
-    bye_away        = as.numeric(df$bye_away %||% 0),
-    outdoors        = as.numeric(df$is_outdoors %||% 0),
-    high_wind       = as.numeric(df$high_wind %||% 0)
-  )
-  return(cbind(
-    lgt_model = zm, lgt_mkt = zk, diff = diff, adiff = abs(diff), diff2 = diff^2,
-    d_spread  = ifelse(is.finite(d_sp), d_sp, 0),
-    d_mlprob  = ifelse(is.finite(d_ml), d_ml, 0),
-    extra
-  ))
+  # optional contextual features if present on the data frame
+  add_feat <- function(mat, col, values) {
+    mat <- cbind(mat, as.numeric(values))
+    colnames(mat)[ncol(mat)] <- col
+    mat
+  }
+
+  optional_cols <- intersect(c(
+    "short_week_home", "short_week_away", "bye_home", "bye_away",
+    "is_outdoors", "high_wind", "wind_mph",
+    "home_off_epa", "away_off_epa", "home_def_epa", "away_def_epa",
+    "home_off_sr", "away_off_sr", "home_def_sr", "away_def_sr",
+    "off_epa_edge", "def_epa_edge", "sr_edge", "net_epa_edge"
+  ), names(df))
+
+  for (col in optional_cols) {
+    vals <- suppressWarnings(as.numeric(df[[col]]))
+    vals[!is.finite(vals)] <- 0
+    design <- add_feat(design, col, vals)
+  }
+
+  design
 }
 
 # weeks “ago” from (S,W) for recency weights (approx 18 weeks/season)
