@@ -103,6 +103,11 @@ BLEND_META_MODEL    <- getOption("nfl_sim.blend_model",    default = "glmnet")
 BLEND_ALPHA         <- getOption("nfl_sim.blend_alpha",    default = 0.25)
 CALIBRATION_METHOD  <- getOption("nfl_sim.calibration",    default = "isotonic")
 
+# Meta-model and calibration controls for the market/model blend
+BLEND_META_MODEL    <- getOption("nfl_sim.blend_model",    default = "glmnet")
+BLEND_ALPHA         <- getOption("nfl_sim.blend_alpha",    default = 0.25)
+CALIBRATION_METHOD  <- getOption("nfl_sim.calibration",    default = "isotonic")
+
 # SoS weighting knobs
 USE_SOS            <- TRUE     # turn on/off SoS weighting
 SOS_STRENGTH       <- 0.60     # 0=no effect; 1=full strength; try 0.4–0.8
@@ -124,6 +129,12 @@ COLD_TEMP_PEN      <- -0.6     # apply if you set cold flag on a game
 RAIN_SNOW_PEN      <- -0.8
 
 RHO_SCORE      <- NA  # if NA, we’ll estimate it from data
+
+# Player availability impact scalars (points per aggregated severity unit)
+SKILL_AVAIL_POINT_PER_FLAG     <- 0.55
+TRENCH_AVAIL_POINT_PER_FLAG    <- 0.65
+SECONDARY_AVAIL_POINT_PER_FLAG <- 0.45
+FRONT7_AVAIL_POINT_PER_FLAG    <- 0.50
 
 # Player availability impact scalars (points per aggregated severity unit)
 SKILL_AVAIL_POINT_PER_FLAG     <- 0.55
@@ -3137,8 +3148,6 @@ suppressWarnings(suppressMessages(require(glmnet)))
 .clp <- function(x, eps=1e-12) pmin(pmax(x, eps), 1-eps)
 .lgt <- function(p) log(p/(1-p))
 .inv <- function(z) 1/(1+exp(-z))
-
-.pick_open <- function(df, cands) { nm <- intersect(cands, names(df)); if (length(nm)) nm[1] else NA_character_ }
 
 .pick_open <- function(df, cands) { nm <- intersect(cands, names(df)); if (length(nm)) nm[1] else NA_character_ }
 
