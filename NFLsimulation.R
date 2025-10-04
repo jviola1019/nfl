@@ -1052,14 +1052,24 @@ extract_first <- function(x, nm) {
   as.numeric(x[[nm]][1])
 }
 
-weather_rows <- week_slate %>%
+weather_inputs <- week_slate %>%
   mutate(
     venue_key = stringr::str_to_lower(stringr::str_replace_all(venue, "[^a-zA-Z0-9]+", " ")),
     date_iso  = format(as.Date(game_date), "%Y-%m-%d")
   ) %>%
   dplyr::left_join(stadium_coords %>% dplyr::select(venue_key, lat, lon, dome), by = "venue_key") %>%
-  mutate(lat = as.numeric(lat), lon = as.numeric(lon)) %>%
-  mutate(.wx = purrr::pmap(list(lat, lon, date_iso), safe_hourly)) %>%
+  mutate(
+    lat = as.numeric(lat),
+    lon = as.numeric(lon)
+  )
+
+weather_lookup <- purrr::pmap(
+  list(weather_inputs$lat, weather_inputs$lon, weather_inputs$date_iso),
+  safe_hourly
+)
+
+weather_rows <- weather_inputs %>%
+  mutate(.wx = weather_lookup) %>%
   transmute(
     game_id,
     wind_mph    = purrr::map_dbl(.wx, function(x) extract_first(x, "wind_mph")),
