@@ -22,6 +22,8 @@ suppressPackageStartupMessages({
   library(scales)
   library(reactable)
   library(glue)
+  library(htmltools)
+  library(htmlwidgets)
 })
 
 # -------------------------- Config knobs --------------------------------------
@@ -379,98 +381,183 @@ comp <- eval_df %>%
 
 # ------------------ Print headline table (Model vs Market) --------------------
 overall_tbl <- comp %>%
-  group_by(season, week) %>%
-  summarise(
-    n_games = n(),
-    Brier_model = brier(p_model, y2),
-    Brier_mkt   = brier(p_mkt,   y2),
-    LogL_model  = logloss(p_model, y2),
-    LogL_mkt    = logloss(p_mkt,   y2),
-    .groups = "drop"
+  mutate(
+    p_model = .clp(p_model),
+    p_mkt   = .clp(p_mkt),
+    b_model = (p_model - y2)^2,
+    b_mkt   = (p_mkt - y2)^2,
+    ll_model = -(y2 * log(p_model) + (1 - y2) * log(1 - p_model)),
+    ll_mkt   = -(y2 * log(p_mkt)   + (1 - y2) * log(1 - p_mkt))
   ) %>%
   summarise(
-    n_weeks = n(),
-    n_games = sum(n_games),
-    Brier_model = weighted.mean(Brier_model, n_games),
-    Brier_mkt   = weighted.mean(Brier_mkt,   n_games),
-    LogL_model  = weighted.mean(LogL_model,  n_games),
-    LogL_mkt    = weighted.mean(LogL_mkt,    n_games),
-    .groups = "drop"
+    n_weeks = n_distinct(paste(season, week, sep = "-")),
+    n_games = n(),
+    Brier_model = mean(b_model, na.rm = TRUE),
+    Brier_mkt   = mean(b_mkt,   na.rm = TRUE),
+    LogL_model  = mean(ll_model, na.rm = TRUE),
+    LogL_mkt    = mean(ll_mkt,   na.rm = TRUE)
   ) %>%
   mutate(
     Brier_delta = Brier_model - Brier_mkt,
     LogL_delta  = LogL_model  - LogL_mkt
   )
 
+overall_gt <- overall_tbl %>%
+  transmute(
+    Weeks = n_weeks,
+    Games = n_games,
+    `Brier (Model)` = Brier_model,
+    `Brier (Market)` = Brier_mkt,
+    `Brier Δ` = Brier_delta,
+    `LogLoss (Model)` = LogL_model,
+    `LogLoss (Market)` = LogL_mkt,
+    `LogLoss Δ` = LogL_delta
+  ) %>%
+  gt() %>%
+  fmt_number(columns = c(`Brier (Model)`, `Brier (Market)`, `Brier Δ`), decimals = 3) %>%
+  fmt_number(columns = c(`LogLoss (Model)`, `LogLoss (Market)`, `LogLoss Δ`), decimals = 3) %>%
+  fmt_number(columns = c(Weeks, Games), decimals = 0)
+
 message("\n=== Overall (Model vs Market) ===")
-print(overall_tbl)
+print(overall_gt)
 
 ci_tbl <- bootstrap_week_ci(comp, p_col_model = "p_model", p_col_mkt = "p_mkt", n_boot = N_BOOT)
+ci_gt <- ci_tbl %>%
+  gt() %>%
+  fmt_number(columns = c(delta, lo, hi), decimals = 4)
 message("\n=== Week-block bootstrap CI (Model – Market) ===")
-print(ci_tbl)
+print(ci_gt)
+
+overall_blend_gt <- NULL
+ci_blend_gt <- NULL
 
 if ("p_blend" %in% names(comp) && any(is.finite(comp$p_blend))) {
   overall_blend <- comp %>%
-    group_by(season, week) %>%
-    summarise(
-      n_games = n(),
-      Brier_blend = brier(p_blend, y2),
-      Brier_mkt   = brier(p_mkt,   y2),
-      LogL_blend  = logloss(p_blend, y2),
-      LogL_mkt    = logloss(p_mkt,   y2),
-      .groups = "drop"
+    mutate(
+      p_blend = .clp(p_blend),
+      p_mkt   = .clp(p_mkt),
+      b_blend = (p_blend - y2)^2,
+      b_mkt   = (p_mkt   - y2)^2,
+      ll_blend = -(y2 * log(p_blend) + (1 - y2) * log(1 - p_blend)),
+      ll_mkt   = -(y2 * log(p_mkt)   + (1 - y2) * log(1 - p_mkt))
     ) %>%
     summarise(
-      n_weeks = n(),
-      n_games = sum(n_games),
-      Brier_blend = weighted.mean(Brier_blend, n_games),
-      Brier_mkt   = weighted.mean(Brier_mkt,   n_games),
-      LogL_blend  = weighted.mean(LogL_blend,  n_games),
-      LogL_mkt    = weighted.mean(LogL_mkt,    n_games),
-      .groups = "drop"
+      n_weeks = n_distinct(paste(season, week, sep = "-")),
+      n_games = n(),
+      Brier_blend = mean(b_blend, na.rm = TRUE),
+      Brier_mkt   = mean(b_mkt,   na.rm = TRUE),
+      LogL_blend  = mean(ll_blend, na.rm = TRUE),
+      LogL_mkt    = mean(ll_mkt,   na.rm = TRUE)
     ) %>%
     mutate(
       Brier_delta = Brier_blend - Brier_mkt,
       LogL_delta  = LogL_blend  - LogL_mkt
     )
+  overall_blend_gt <- overall_blend %>%
+    transmute(
+      Weeks = n_weeks,
+      Games = n_games,
+      `Brier (Blend)` = Brier_blend,
+      `Brier (Market)` = Brier_mkt,
+      `Brier Δ` = Brier_delta,
+      `LogLoss (Blend)` = LogL_blend,
+      `LogLoss (Market)` = LogL_mkt,
+      `LogLoss Δ` = LogL_delta
+    ) %>%
+    gt() %>%
+    fmt_number(columns = c(`Brier (Blend)`, `Brier (Market)`, `Brier Δ`), decimals = 3) %>%
+    fmt_number(columns = c(`LogLoss (Blend)`, `LogLoss (Market)`, `LogLoss Δ`), decimals = 3) %>%
+    fmt_number(columns = c(Weeks, Games), decimals = 0)
   message("\n=== Overall (Blend vs Market) ===")
-  print(overall_blend)
-  
+  print(overall_blend_gt)
+
   ci_tbl_blend <- bootstrap_week_ci(comp, p_col_model = "p_blend", p_col_mkt = "p_mkt", n_boot = N_BOOT)
+  ci_blend_gt <- ci_tbl_blend %>%
+    gt() %>%
+    fmt_number(columns = c(delta, lo, hi), decimals = 4)
   message("\n=== Week-block bootstrap CI (Blend – Market) ===")
-  print(ci_tbl_blend)
+  print(ci_blend_gt)
 }
 
 # ------------------ Best Bets table for current slate -------------------------
-build_best_bets <- function(final_df, sched_df, spread_mapper=NULL, focus_matchup=NULL, line_catalog=NULL) {
-  stopifnot(all(c("matchup","date") %in% names(final_df)))
-  # final_df should carry home_p_2w_cal; if not, reconstruct from calibrated 3-way
-  if (!("home_p_2w_cal" %in% names(final_df)) && all(c("home_win_prob_cal","away_win_prob_cal","tie_prob") %in% names(final_df))) {
+build_best_bets <- function(final_df, sched_df, spread_mapper = NULL, focus_matchup = NULL, line_catalog = NULL) {
+  stopifnot(all(c("matchup", "date") %in% names(final_df)))
+
+  # Reconstruct calibrated two-way probabilities if needed
+  if (!("home_p_2w_cal" %in% names(final_df)) &&
+      all(c("home_win_prob_cal", "away_win_prob_cal", "tie_prob") %in% names(final_df))) {
     final_df <- final_df %>%
       mutate(two_way_mass = pmax(1 - tie_prob, 1e-9),
              home_p_2w_cal = .clp(home_win_prob_cal / two_way_mass))
   }
 
-  mkt_now <- market_probs_from_sched(sched_df, spread_mapper = spread_mapper) %>%
-    select(game_id, p_home_mkt_2w)
+  if (!("home_p_2w_blend" %in% names(final_df)) && "home_p_2w_cal" %in% names(final_df)) {
+    final_df$home_p_2w_blend <- final_df$home_p_2w_cal
+  }
 
-  out <- final_df %>%
-    separate(matchup, into = c("away","home"), sep = " @ ", remove = FALSE) %>%
-    mutate(date = as.Date(date)) %>%
-    left_join(mkt_now, by = "game_id") %>%
+  if (!("home_p_2w_mkt" %in% names(final_df))) {
+    final_df$home_p_2w_mkt <- NA_real_
+  }
+
+  missing_market <- !is.finite(final_df$home_p_2w_mkt)
+  if (any(missing_market)) {
+    mkt_now <- tryCatch(
+      market_probs_from_sched(sched_df, spread_mapper = spread_mapper) %>%
+        dplyr::select(game_id, p_home_mkt_2w),
+      error = function(e) tibble::tibble(game_id = character(), p_home_mkt_2w = numeric())
+    )
+    if (nrow(mkt_now)) {
+      final_df <- final_df %>%
+        left_join(mkt_now, by = "game_id") %>%
+        mutate(home_p_2w_mkt = dplyr::coalesce(home_p_2w_mkt, p_home_mkt_2w)) %>%
+        select(-p_home_mkt_2w)
+    }
+  }
+
+  spread_col <- pick_col(final_df, c("home_main_spread", "spread_close", "spread", "home_spread"))
+  if (!is.na(spread_col)) {
+    missing_market <- !is.finite(final_df$home_p_2w_mkt)
+    if (any(missing_market)) {
+      spreads <- suppressWarnings(as.numeric(final_df[[spread_col]]))
+      if (!is.null(spread_mapper)) {
+        final_df$home_p_2w_mkt[missing_market] <- spread_mapper$predict(spreads[missing_market])
+      } else {
+        SD_MARGIN <- 13.86
+        final_df$home_p_2w_mkt[missing_market] <- .clp(stats::pnorm(-spreads[missing_market] / SD_MARGIN))
+      }
+    }
+  }
+
+  final_df <- final_df %>%
+    separate(matchup, into = c("away", "home"), sep = " @ ", remove = FALSE) %>%
     mutate(
-      p_model = .clp(home_p_2w_cal),
-      p_mkt   = .clp(p_home_mkt_2w),
-      edge    = p_model - p_mkt,
-      side    = ifelse(edge >= 0, paste0(home, " ML"), paste0(away, " ML")),
-      fair_ml_model = prob_to_american(p_model),
-      fair_ml_mkt   = prob_to_american(p_mkt)
-    ) %>%
-    select(game_id, date, matchup, p_model, p_mkt, edge, side, fair_ml_model, fair_ml_mkt) %>%
-    arrange(desc(edge))
+      date = as.Date(date),
+      home_prob_model = .clp(dplyr::coalesce(home_p_2w_blend, home_p_2w_cal, home_p_2w_model)),
+      home_prob_mkt   = dplyr::coalesce(.clp(home_p_2w_mkt), NA_real_),
+      away_prob_model = 1 - home_prob_model,
+      away_prob_mkt   = ifelse(is.finite(home_prob_mkt), 1 - home_prob_mkt, NA_real_),
+      home_team = home,
+      away_team = away
+    )
+
+  bets <- bind_rows(
+    final_df %>%
+      transmute(game_id, date, matchup, opponent = away_team, team = home_team,
+                side_key = "home", model_prob = home_prob_model, market_prob = home_prob_mkt),
+    final_df %>%
+      transmute(game_id, date, matchup, opponent = home_team, team = away_team,
+                side_key = "away", model_prob = away_prob_model, market_prob = away_prob_mkt)
+  ) %>%
+    mutate(
+      model_prob = .clp(model_prob),
+      market_prob = ifelse(is.finite(market_prob), .clp(market_prob), NA_real_),
+      side = paste0(team, " ML"),
+      fair_ml_model = prob_to_american(model_prob),
+      fair_ml_mkt   = ifelse(is.finite(market_prob), prob_to_american(market_prob), NA_real_)
+    )
 
   if (!is.null(focus_matchup)) {
-    out <- out %>% filter(matchup == focus_matchup)
+    bets <- bets %>% filter(matchup == focus_matchup)
   }
 
   if (!is.null(line_catalog) && nrow(line_catalog)) {
@@ -481,29 +568,50 @@ build_best_bets <- function(final_df, sched_df, spread_mapper=NULL, focus_matchu
       ungroup() %>%
       transmute(
         game_id,
+        side_key = side,
         best_book = book,
-        best_odds = odds_fmt,
-        best_market_prob = market_prob,
-        best_ev_units = ev_units,
-        side = if_else(side == "home", paste0(team_label, " ML"), paste0(team_label, " ML"))
+        best_odds = ifelse(is.finite(odds), sprintf("%+d", as.integer(round(odds))), NA_character_),
+        best_odds_num = odds,
+        best_market_prob = market_prob
       )
 
-    out <- out %>%
-      left_join(ml_best, by = c("game_id","side")) %>%
+    bets <- bets %>%
+      left_join(ml_best, by = c("game_id", "side_key")) %>%
       mutate(
-        best_market_prob = coalesce(best_market_prob, p_mkt),
-        best_ev_units = coalesce(best_ev_units, expected_value_units(p_model, prob_to_american(best_market_prob))),
-        best_odds = ifelse(is.na(best_odds), sprintf("%+d", prob_to_american(best_market_prob)), best_odds)
+        market_prob = dplyr::coalesce(best_market_prob,
+                                      ifelse(is.finite(best_odds_num), american_to_prob(best_odds_num), NA_real_),
+                                      market_prob),
+        best_odds_num = dplyr::coalesce(best_odds_num,
+                                        ifelse(is.finite(market_prob), prob_to_american(market_prob), NA_real_)),
+        best_odds = ifelse(is.na(best_odds) & is.finite(best_odds_num),
+                           sprintf("%+d", as.integer(round(best_odds_num))), best_odds)
+      )
+  } else {
+    bets <- bets %>%
+      mutate(
+        best_book = NA_character_,
+        best_odds_num = ifelse(is.finite(market_prob), prob_to_american(market_prob), NA_real_),
+        best_odds = ifelse(is.finite(best_odds_num), sprintf("%+d", as.integer(round(best_odds_num))), NA_character_)
       )
   }
 
-  if (!"best_book" %in% names(out)) out$best_book <- NA_character_
-  if (!"best_odds" %in% names(out)) out$best_odds <- NA_character_
-  if (!"best_market_prob" %in% names(out)) out$best_market_prob <- out$p_mkt
-  if (!"best_ev_units" %in% names(out)) out$best_ev_units <- expected_value_units(out$p_model, prob_to_american(out$p_mkt))
+  bets <- bets %>%
+    mutate(
+      market_prob = ifelse(is.finite(market_prob), .clp(market_prob), NA_real_),
+      edge = model_prob - market_prob,
+      fair_ml_mkt = ifelse(is.finite(market_prob), prob_to_american(market_prob), NA_real_),
+      ev_units = ifelse(is.finite(best_odds_num), expected_value_units(model_prob, best_odds_num), NA_real_)
+    ) %>%
+    filter(is.finite(market_prob)) %>%
+    arrange(desc(edge))
 
-  out %>% select(-game_id)
+  bets %>%
+    select(game_id, date, matchup, side_key, side, team, opponent, model_prob, market_prob,
+           edge, ev_units, best_book, best_odds, best_odds_num, fair_ml_model, fair_ml_mkt)
 }
+
+bets_gt <- NULL
+best_offers_widget <- NULL
 
 if (exists("final")) {
   seasons_needed <- sort(unique(final$season))
@@ -513,22 +621,48 @@ if (exists("final")) {
 
   bets <- build_best_bets(final, sched, spread_mapper, FOCUS_MATCHUP, line_catalog)
   message("\n=== Best Bets (current slate) ===")
-  bets %>%
-    mutate(
-      `Model %`  = scales::percent(p_model, accuracy = 0.1),
-      `Market %` = scales::percent(coalesce(best_market_prob, p_mkt), accuracy = 0.1),
-      `Edge %`   = scales::percent(edge, accuracy = 0.1),
-      `Best Odds` = best_odds,
-      `Best Book` = best_book,
-      `EV (1u)`   = scales::number(best_ev_units, accuracy = 0.001, scale = 1),
-      `Fair ML (Model)`  = ifelse(is.finite(fair_ml_model), sprintf("%+d", fair_ml_model), NA),
-      `Fair ML (Market)` = ifelse(is.finite(fair_ml_mkt),   sprintf("%+d", fair_ml_mkt),   NA)
-    ) %>%
-    select(date, matchup, side, `Edge %`, `Model %`, `Market %`, `Best Odds`, `Best Book`, `EV (1u)`, `Fair ML (Model)`, `Fair ML (Market)`) %>%
-    gt() %>%
-    tab_header(title = "Best Bets vs Market (Moneyline focus)") %>%
-    fmt_date(columns = "date") %>%
-    print()
+  if (nrow(bets)) {
+    bets_table <- bets %>%
+      mutate(
+        `Side` = side,
+        `Edge` = edge,
+        `Model` = model_prob,
+        `Market` = market_prob,
+        `Best Odds` = best_odds_num,
+        `Best Book` = best_book,
+        `EV (1u)` = ev_units,
+        `Fair ML (Model)` = fair_ml_model,
+        `Fair ML (Market)` = fair_ml_mkt
+      ) %>%
+      select(date, matchup, `Side`, `Edge`, `Model`, `Market`, `Best Odds`, `Best Book`, `EV (1u)`, `Fair ML (Model)`, `Fair ML (Market)`)
+
+    edge_domain <- range(bets_table$`Edge`, na.rm = TRUE)
+    if (!all(is.finite(edge_domain))) edge_domain <- c(-0.1, 0.1)
+    edge_domain <- c(min(edge_domain[1], -0.1), max(edge_domain[2], 0.1))
+    palette_edge <- scales::col_numeric("RdYlGn", domain = edge_domain)
+
+    bets_gt <- bets_table %>%
+      gt() %>%
+      tab_header(
+        title = gt::md("**Best Bets vs Market**"),
+        subtitle = "Moneyline focus"
+      ) %>%
+      fmt_date(columns = date) %>%
+      fmt_percent(columns = c(`Edge`, `Model`, `Market`), decimals = 1) %>%
+      fmt_number(columns = `EV (1u)`, decimals = 3, drop_trailing_zeros = TRUE) %>%
+      fmt(
+        columns = c(`Best Odds`, `Fair ML (Model)`, `Fair ML (Market)`),
+        fns = function(x) ifelse(is.na(x), "—", sprintf("%+d", as.integer(round(x))))
+      ) %>%
+      data_color(
+        columns = `Edge`,
+        colors = function(x) palette_edge(scales::squish(x, edge_domain))
+      )
+
+    print(bets_gt)
+  } else {
+    message("No moneyline opportunities surfaced for the current slate.")
+  }
 
   if (nrow(best_offers)) {
     message("\n=== Best Available Odds (spread & alt) ===")
@@ -537,7 +671,7 @@ if (exists("final")) {
     ev_domain <- c(min(ev_domain[1], -0.05), max(ev_domain[2], 0.05))
     palette_ev <- scales::col_numeric("RdYlGn", domain = ev_domain)
 
-    reactable::reactable(
+    best_offers_widget <- reactable::reactable(
       best_offers %>%
         mutate(date = as.Date(date)),
       searchable = TRUE,
@@ -566,7 +700,8 @@ if (exists("final")) {
                           })
       ),
       highlight = TRUE
-    ) %>% print()
+    )
+    print(best_offers_widget)
   } else {
     message("No sportsbook lines available via nflreadr::load_lines for the requested slate.")
   }
@@ -581,3 +716,48 @@ verdict_line <- function(ci_tbl_row) {
 }
 message("\n=== Verdicts (Model – Market) ===")
 apply(ci_tbl, 1, function(r) message(verdict_line(as.list(r))))
+
+report_sections <- htmltools::tagList(
+  htmltools::tags$h1("NFL Model vs Market"),
+  htmltools::tags$h2("Overall (Model vs Market)"),
+  htmltools::HTML(gt::as_raw_html(overall_gt)),
+  htmltools::tags$h2("Week-block bootstrap CI (Model – Market)"),
+  htmltools::HTML(gt::as_raw_html(ci_gt))
+)
+
+if (!is.null(overall_blend_gt)) {
+  report_sections <- htmltools::tagAppendChildren(
+    report_sections,
+    htmltools::tags$h2("Overall (Blend vs Market)"),
+    htmltools::HTML(gt::as_raw_html(overall_blend_gt))
+  )
+}
+
+if (!is.null(ci_blend_gt)) {
+  report_sections <- htmltools::tagAppendChildren(
+    report_sections,
+    htmltools::tags$h2("Week-block bootstrap CI (Blend – Market)"),
+    htmltools::HTML(gt::as_raw_html(ci_blend_gt))
+  )
+}
+
+if (!is.null(bets_gt)) {
+  report_sections <- htmltools::tagAppendChildren(
+    report_sections,
+    htmltools::tags$h2("Best Bets vs Market"),
+    htmltools::HTML(gt::as_raw_html(bets_gt))
+  )
+}
+
+if (!is.null(best_offers_widget)) {
+  report_sections <- htmltools::tagAppendChildren(
+    report_sections,
+    htmltools::tags$h2("Best Available Odds"),
+    best_offers_widget
+  )
+}
+
+report_file <- file.path(getwd(), "NFLvsmarket_report.html")
+htmlwidgets::saveWidget(htmlwidgets::browsable(report_sections), report_file, selfcontained = TRUE)
+message(sprintf("Saved HTML report to: %s", report_file))
+try(utils::browseURL(report_file), silent = TRUE)
