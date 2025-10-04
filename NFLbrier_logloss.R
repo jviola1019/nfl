@@ -138,17 +138,16 @@ compare_to_market <- function(res, sched, peers = NULL, conf_level = 0.95, B = 1
     rbind(dB = b_diff / total_games, dL = ll_diff / total_games)
   }
 
-  alpha <- (1 - conf_level)/2
-  boot <- .bootstrap_deltas(wk_stats, B = B, seed = seed)
+  B <- 1000L
+  boot <- .bootstrap_deltas(wk_stats, B = B, seed = 123)
 
-  B_roll <- min(400L, max(200L, B))
-  rolling_week_bootstrap <- function(stats_tbl, window_sizes = c(8, 17), B = B_roll, seed = seed) {
+  rolling_week_bootstrap <- function(stats_tbl, window_sizes = c(8, 17), B = 400, seed = 123) {
     if (!nrow(stats_tbl)) return(tibble::tibble())
     purrr::map_dfr(window_sizes, function(win) {
       if (nrow(stats_tbl) < win) return(tibble::tibble())
       purrr::map_dfr(seq(win, nrow(stats_tbl)), function(end_idx) {
         sel <- stats_tbl[(end_idx - win + 1):end_idx, , drop = FALSE]
-        seed_offset <- if (is.null(seed)) NULL else seed + end_idx + win
+        seed_offset <- seed + end_idx + win
         boot_sub <- .bootstrap_deltas(sel, B = B, seed = seed_offset)
         total_games <- sum(sel$n_games)
         tibble::tibble(
@@ -157,11 +156,11 @@ compare_to_market <- function(res, sched, peers = NULL, conf_level = 0.95, B = 1
           end_week   = sel$week[nrow(sel)],
           games_in_window = total_games,
           dB_mean = mean(boot_sub["dB",], na.rm = TRUE),
-          dB_lo   = unname(stats::quantile(boot_sub["dB",], alpha, na.rm = TRUE)),
-          dB_hi   = unname(stats::quantile(boot_sub["dB",], 1 - alpha, na.rm = TRUE)),
+          dB_lo   = unname(stats::quantile(boot_sub["dB",], 0.025, na.rm = TRUE)),
+          dB_hi   = unname(stats::quantile(boot_sub["dB",], 0.975, na.rm = TRUE)),
           dL_mean = mean(boot_sub["dL",], na.rm = TRUE),
-          dL_lo   = unname(stats::quantile(boot_sub["dL",], alpha, na.rm = TRUE)),
-          dL_hi   = unname(stats::quantile(boot_sub["dL",], 1 - alpha, na.rm = TRUE))
+          dL_lo   = unname(stats::quantile(boot_sub["dL",], 0.025, na.rm = TRUE)),
+          dL_hi   = unname(stats::quantile(boot_sub["dL",], 0.975, na.rm = TRUE))
         )
       })
     })
@@ -169,132 +168,28 @@ compare_to_market <- function(res, sched, peers = NULL, conf_level = 0.95, B = 1
 
   rolling_ci <- rolling_week_bootstrap(wk_stats)
 
-  .paired_summary <- function(delta, conf = 0.95) {
-    delta <- stats::na.omit(delta)
-    n <- length(delta)
-    if (!n) {
-      return(list(
-        mean = NA_real_, lo = NA_real_, hi = NA_real_, se = NA_real_, sd = NA_real_,
-        n = 0L, df = NA_integer_, t_stat = NA_real_, p_value = NA_real_,
-        effect_size = NA_real_, conf_level = conf, contains_zero = NA,
-        required_n = NA_real_
-      ))
-    }
-    mu <- mean(delta)
-    if (n == 1L) {
-      se <- 0
-      sdv <- 0
-      ci_lo <- mu
-      ci_hi <- mu
-      t_stat <- NA_real_
-      p_val <- NA_real_
-    } else {
-      sdv <- stats::sd(delta)
-      se <- if (sdv > 0) sdv / sqrt(n) else 0
-      crit <- stats::qt(0.5 + conf/2, df = n - 1)
-      ci_lo <- mu - crit * se
-      ci_hi <- mu + crit * se
-      t_stat <- if (se > 0) mu / se else NA_real_
-      p_val <- if (se > 0) 2 * stats::pt(-abs(t_stat), df = n - 1) else NA_real_
-    }
-    if (n == 1L) {
-      sdv <- 0
-    } else if (!exists("sdv", inherits = FALSE)) {
-      sdv <- stats::sd(delta)
-    }
-    contains_zero <- !is.na(ci_lo) && !is.na(ci_hi) && ci_lo <= 0 && ci_hi >= 0
-    req_n <- if (!is.na(mu) && !is.na(sdv) && sdv > 0 && abs(mu) > 0) {
-      crit_norm <- stats::qnorm(0.5 + conf/2)
-      ceiling((crit_norm * sdv / abs(mu))^2)
-    } else {
-      NA_real_
-    }
-    list(
-      mean = mu,
-      lo = ci_lo,
-      hi = ci_hi,
-      se = se,
-      sd = sdv,
-      n = n,
-      df = if (n > 0) n - 1L else NA_integer_,
-      t_stat = t_stat,
-      p_value = p_val,
-      effect_size = if (!is.na(sdv) && sdv > 0) mu / sdv else NA_real_,
-      conf_level = conf,
-      contains_zero = contains_zero,
-      required_n = req_n
-    )
-  }
-
-  delta_logloss <- comp$ll_model - comp$ll_mkt
-  delta_brier <- comp$b_model - comp$b_mkt
-
-  paired_raw <- list(
-    LogLoss = delta_logloss,
-    Brier = delta_brier
-  )
-
-  paired_stats <- purrr::map(paired_raw, .paired_summary, conf = conf_level)
-
-  paired_ci <- purrr::map(paired_stats, ~c(mean = .x$mean, lo = .x$lo, hi = .x$hi))
-
   dBS <- c(
     mean = mean(boot["dB",], na.rm = TRUE),
-    lo   = unname(stats::quantile(boot["dB",], alpha, na.rm = TRUE)),
-    hi   = unname(stats::quantile(boot["dB",], 1 - alpha, na.rm = TRUE))
+    lo   = unname(quantile(boot["dB",], 0.025, na.rm = TRUE)),
+    hi   = unname(quantile(boot["dB",], 0.975, na.rm = TRUE))
   )
   dLL <- c(
     mean = mean(boot["dL",], na.rm = TRUE),
-    lo   = unname(stats::quantile(boot["dL",], alpha, na.rm = TRUE)),
-    hi   = unname(stats::quantile(boot["dL",], 1 - alpha, na.rm = TRUE))
+    lo   = unname(quantile(boot["dL",], 0.025, na.rm = TRUE)),
+    hi   = unname(quantile(boot["dL",], 0.975, na.rm = TRUE))
   )
-
-  cat(sprintf("\nΔLogLoss (model - market, week-block bootstrap): mean=%.6f, %.0f%% CI [%.6f, %.6f]\n",
-              dLL["mean"], conf_level * 100, dLL["lo"], dLL["hi"]))
-  cat(sprintf("ΔBrier2  (model - market, week-block bootstrap): mean=%.6f, %.0f%% CI [%.6f, %.6f]\n",
-              dBS["mean"], conf_level * 100, dBS["lo"], dBS["hi"]))
-
-  paired_tbl <- purrr::imap_dfr(paired_stats, function(stat, metric) {
-    tibble::tibble(
-      metric = metric,
-      mean = stat$mean,
-      lo = stat$lo,
-      hi = stat$hi,
-      se = stat$se,
-      sd = stat$sd,
-      n = stat$n,
-      df = stat$df,
-      t_stat = stat$t_stat,
-      p_value = stat$p_value,
-      effect_size = stat$effect_size,
-      contains_zero = stat$contains_zero,
-      required_n_for_significance = stat$required_n
-    )
-  })
-
-  if (nrow(paired_tbl)) {
-    cat(sprintf("ΔLogLoss (model - market, paired t): mean=%.6f, %.0f%% CI [%.6f, %.6f] (p=%.4f)\n",
-                paired_stats$LogLoss$mean, conf_level * 100,
-                paired_stats$LogLoss$lo, paired_stats$LogLoss$hi,
-                paired_stats$LogLoss$p_value))
-    cat(sprintf("ΔBrier2  (model - market, paired t): mean=%.6f, %.0f%% CI [%.6f, %.6f] (p=%.4f)\n",
-                paired_stats$Brier$mean, conf_level * 100,
-                paired_stats$Brier$lo, paired_stats$Brier$hi,
-                paired_stats$Brier$p_value))
-    needs_msg <- paired_tbl %>% dplyr::filter(isTRUE(contains_zero))
-    if (nrow(needs_msg)) {
-      cat("\nPaired-delta intervals include 0 because the observed mean differences are small relative to their variability.\n")
-      needs_msg %>%
-        dplyr::mutate(
-          explanation = dplyr::case_when(
-            is.na(required_n_for_significance) ~ "More data or lower-variance predictions are required.",
-            TRUE ~ sprintf("Approximately %d paired games would be needed to exclude 0 at %.0f%% confidence assuming identical variance.",
-                           as.integer(required_n_for_significance), conf_level * 100)
-          )
-        ) %>%
-        dplyr::select(metric, mean, sd, se, n, explanation) %>%
-        print()
-    }
+  
+  cat(sprintf("\nΔLogLoss (model - market, week-block bootstrap): mean=%.6f, 95%% CI [%.6f, %.6f]\n",
+              dLL["mean"], dLL["lo"], dLL["hi"]))
+  cat(sprintf("ΔBrier2  (model - market, week-block bootstrap): mean=%.6f, 95%% CI [%.6f, %.6f]\n",
+              dBS["mean"], dBS["lo"], dBS["hi"]))
+  if (is.finite(paired_dL["mean"])) {
+    cat(sprintf("ΔLogLoss (model - market, paired t): mean=%.6f, 95%% CI [%.6f, %.6f]\n",
+                paired_dL["mean"], paired_dL["lo"], paired_dL["hi"]))
+  }
+  if (is.finite(paired_dB["mean"])) {
+    cat(sprintf("ΔBrier2  (model - market, paired t): mean=%.6f, 95%% CI [%.6f, %.6f]\n",
+                paired_dB["mean"], paired_dB["lo"], paired_dB["hi"]))
   }
   # ---- END bootstrap CI block ----
   
@@ -333,101 +228,13 @@ compare_to_market <- function(res, sched, peers = NULL, conf_level = 0.95, B = 1
     print(latest_roll)
   }
 
-  peer_stats <- tibble::tibble()
-  if (!is.null(peers)) {
-    stopifnot(is.data.frame(peers))
-    base_cols <- c("game_id", "season", "week")
-    if (!all(base_cols %in% names(peers))) {
-      stop("`peers` must include game_id, season, and week columns.")
-    }
-    model_col <- .pick_col(peers, c("model", "model_name", "source", "name"))
-    prob_col <- .pick_col(peers, c("p_model", "prob", "p_home", "home_prob", "prediction", "pred", "p"))
-    if (is.na(model_col) || is.na(prob_col)) {
-      stop("`peers` must include a model identifier column and a probability column.")
-    }
-    peers_clean <- peers %>%
-      dplyr::transmute(
-        game_id, season, week,
-        model = as.character(.data[[model_col]]),
-        p_peer = .clamp01(as.numeric(.data[[prob_col]]))
-      ) %>%
-      dplyr::filter(!is.na(model), is.finite(p_peer))
-
-    base_comp <- comp %>%
-      dplyr::select(game_id, season, week, y2, p_mkt, b_mkt, ll_mkt,
-                    p_model_base = p_model, b_model_base = b_model, ll_model_base = ll_model)
-
-    peer_comp <- peers_clean %>%
-      dplyr::inner_join(base_comp, by = c("game_id", "season", "week")) %>%
-      dplyr::mutate(
-        b_peer = (p_peer - y2)^2,
-        ll_peer = -(y2 * log(p_peer) + (1 - y2) * log(1 - p_peer)),
-        dB_market = b_peer - b_mkt,
-        dL_market = ll_peer - ll_mkt,
-        dB_model  = b_peer - b_model_base,
-        dL_model  = ll_peer - ll_model_base
-      )
-
-    if (nrow(peer_comp)) {
-      peer_stats <- peer_comp %>%
-        dplyr::group_by(model) %>%
-        dplyr::group_modify(function(df, key) {
-          market_ll <- .paired_summary(df$dL_market, conf = conf_level)
-          market_br <- .paired_summary(df$dB_market, conf = conf_level)
-          model_ll  <- .paired_summary(df$dL_model, conf = conf_level)
-          model_br  <- .paired_summary(df$dB_model, conf = conf_level)
-          tibble::tibble(
-            n_games = nrow(df),
-            LogLoss = mean(df$ll_peer),
-            Brier = mean(df$b_peer),
-            market_LogLoss = mean(df$ll_mkt),
-            market_Brier = mean(df$b_mkt),
-            model_LogLoss = mean(df$ll_model_base),
-            model_Brier = mean(df$b_model_base),
-            delta_market_LogLoss = market_ll$mean,
-            delta_market_LogLoss_lo = market_ll$lo,
-            delta_market_LogLoss_hi = market_ll$hi,
-            delta_market_LogLoss_p = market_ll$p_value,
-            delta_market_LogLoss_effect = market_ll$effect_size,
-            delta_market_Brier = market_br$mean,
-            delta_market_Brier_lo = market_br$lo,
-            delta_market_Brier_hi = market_br$hi,
-            delta_market_Brier_p = market_br$p_value,
-            delta_market_Brier_effect = market_br$effect_size,
-            delta_model_LogLoss = model_ll$mean,
-            delta_model_LogLoss_lo = model_ll$lo,
-            delta_model_LogLoss_hi = model_ll$hi,
-            delta_model_LogLoss_p = model_ll$p_value,
-            delta_model_LogLoss_effect = model_ll$effect_size,
-            delta_model_Brier = model_br$mean,
-            delta_model_Brier_lo = model_br$lo,
-            delta_model_Brier_hi = model_br$hi,
-            delta_model_Brier_p = model_br$p_value,
-            delta_model_Brier_effect = model_br$effect_size
-          )
-        }) %>%
-        dplyr::ungroup()
-
-      cat("\nPeer model comparison (paired differences vs market and your model):\n")
-      print(peer_stats)
-    }
-  }
-
-  paired_dL <- if (!is.null(paired_ci$LogLoss)) paired_ci$LogLoss else c(mean = NA_real_, lo = NA_real_, hi = NA_real_)
-  paired_dB <- if (!is.null(paired_ci$Brier))   paired_ci$Brier   else c(mean = NA_real_, lo = NA_real_, hi = NA_real_)
-
   invisible(list(
     overall = overall,
     deltas = list(LogLoss = dLL, Brier = dBS),
-    paired = list(deltas = paired_raw, stats = paired_stats, ci = paired_ci),
-    paired_ci = paired_ci,
-    paired_stats = paired_tbl,
-    paired_dL = paired_dL,
-    paired_dB = paired_dB,
+    paired_ci = list(LogLoss = paired_dL, Brier = paired_dB),
     by_season = by_season,
     bins = bins,
     comp = comp,
-    rolling = rolling_ci,
-    peers = peer_stats
+    rolling = rolling_ci
   ))
 }
