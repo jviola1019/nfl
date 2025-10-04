@@ -1031,7 +1031,13 @@ get_hourly_weather <- function(lat, lon, date_iso, hours = c(13)) {
 if (!dir.exists(.wx_cache_dir)) dir.create(.wx_cache_dir, recursive = TRUE)
 
 safe_hourly <- function(lat, lon, date_iso) {
-  if (!is.finite(lat) || !is.finite(lon)) return(NULL)
+  # Guard against missing or non-finite inputs which can bubble up from
+  # incomplete stadium metadata or neutral-site games. `is.finite()` returns
+  # `NA` for `NA_real_`, which caused an error inside the `if` statement when
+  # this helper was called via `purrr::pmap()`.  Using `isTRUE(all(...))` keeps
+  # the check scalar and safely handles `NA`s.
+  if (!isTRUE(all(is.finite(c(lat, lon))))) return(NULL)
+  if (is.na(date_iso) || !nzchar(date_iso)) return(NULL)
   key  <- digest::digest(list(round(lat,4), round(lon,4), date_iso))
   path <- file.path(.wx_cache_dir, paste0(key, ".rds"))
   if (file.exists(path)) return(readRDS(path))
