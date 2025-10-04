@@ -1094,21 +1094,10 @@ weather_inputs <- week_slate %>%
     lon = as.numeric(lon)
   )
 
-# purrr::pmap() was still triggering "promise already under evaluation" for some
-# environments (particularly when knitting), so we fall back to an explicit loop
-# to keep the evaluation order simple and side-effect free.
-weather_lookup <- {
-  lat_vec  <- weather_inputs$lat
-  lon_vec  <- weather_inputs$lon
-  date_vec <- weather_inputs$date_iso
-  n <- length(lat_vec)
-  stopifnot(n == length(lon_vec), n == length(date_vec))
-  out <- vector("list", n)
-  for (i in seq_len(n)) {
-    out[[i]] <- safe_hourly(lat_vec[[i]], lon_vec[[i]], date_vec[[i]])
-  }
-  out
-}
+weather_lookup <- purrr::pmap(
+  list(weather_inputs$lat, weather_inputs$lon, weather_inputs$date_iso),
+  safe_hourly
+)
 
 weather_rows <- weather_inputs %>%
   mutate(.wx = weather_lookup) %>%
