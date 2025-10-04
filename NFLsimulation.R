@@ -91,7 +91,7 @@ SEED        <- 471
 set.seed(SEED)
 
 # ----- Priors / blending knobs -----
-GLMM_BLEND_W <- 0.35   # weight on GLMM μ vs your PPD×pace μ (0..1)
+GLMM_BLEND_W <- 0.25   # weight on GLMM μ vs your PPD×pace μ (0..1)
 
 # Meta-model and calibration controls for the market/model blend
 BLEND_META_MODEL    <- getOption("nfl_sim.blend_model",    default = "glmnet")
@@ -100,7 +100,7 @@ CALIBRATION_METHOD  <- getOption("nfl_sim.calibration",    default = "isotonic")
 
 # SoS weighting knobs
 USE_SOS            <- TRUE     # turn on/off SoS weighting
-SOS_STRENGTH       <- 0.60     # 0=no effect; 1=full strength; try 0.4–0.8
+SOS_STRENGTH       <- 0.50     # 0=no effect; 1=full strength; try 0.4–0.8
 
 # Recency weighting for recent form (exponential decay)
 USE_RECENCY_DECAY  <- TRUE
