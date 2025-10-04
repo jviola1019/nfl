@@ -170,15 +170,26 @@ compare_to_market <- function(res,
   boot <- .bootstrap_deltas(wk_stats, B = B, seed = seed)
 
   rolling_week_bootstrap <- function(stats_tbl, window_sizes = rolling_window_sizes, B = rolling_B, seed = seed) {
-    if (!nrow(stats_tbl) || is.null(window_sizes) || !length(window_sizes)) return(tibble::tibble())
-    purrr::map_dfr(window_sizes, function(win) {
-      if (is.na(win) || win <= 0 || nrow(stats_tbl) < win) return(tibble::tibble())
-      purrr::map_dfr(seq(win, nrow(stats_tbl)), function(end_idx) {
+    if (!nrow(stats_tbl) || is.null(window_sizes) || !length(window_sizes)) {
+      return(tibble::tibble())
+    }
+
+    out <- vector("list", length(window_sizes) * max(1, nrow(stats_tbl)))
+    out_idx <- 0L
+
+    for (win in window_sizes) {
+      if (is.na(win) || win <= 0 || nrow(stats_tbl) < win) {
+        next
+      }
+
+      for (end_idx in seq.int(win, nrow(stats_tbl))) {
         sel <- stats_tbl[(end_idx - win + 1):end_idx, , drop = FALSE]
         seed_offset <- if (is.null(seed)) NULL else seed + end_idx + win
         boot_sub <- .bootstrap_deltas(sel, B = B, seed = seed_offset)
         total_games <- sum(sel$n_games)
-        tibble::tibble(
+
+        out_idx <- out_idx + 1L
+        out[[out_idx]] <- tibble::tibble(
           window_weeks = win,
           end_season = sel$season[nrow(sel)],
           end_week   = sel$week[nrow(sel)],
@@ -190,8 +201,14 @@ compare_to_market <- function(res,
           dL_lo   = unname(stats::quantile(boot_sub["dL",], alpha, na.rm = TRUE)),
           dL_hi   = unname(stats::quantile(boot_sub["dL",], 1 - alpha, na.rm = TRUE))
         )
-      })
-    })
+      }
+    }
+
+    if (!out_idx) {
+      tibble::tibble()
+    } else {
+      out[seq_len(out_idx)] %>% dplyr::bind_rows()
+    }
   }
 
   rolling_ci <- rolling_week_bootstrap(wk_stats)
