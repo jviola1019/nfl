@@ -169,7 +169,14 @@ compare_to_market <- function(res,
   alpha <- (1 - conf_level)/2
   boot <- .bootstrap_deltas(wk_stats, B = B, seed = seed)
 
-  rolling_week_bootstrap <- function(stats_tbl, window_sizes = rolling_window_sizes, B = rolling_B, seed = seed) {
+  rolling_window_defaults <- rolling_window_sizes
+  rolling_B_default <- rolling_B
+  seed_default <- seed
+
+  rolling_week_bootstrap <- function(stats_tbl,
+                                     window_sizes = rolling_window_defaults,
+                                     B = rolling_B_default,
+                                     seed = seed_default) {
     if (!nrow(stats_tbl) || is.null(window_sizes) || !length(window_sizes)) {
       return(tibble::tibble())
     }
