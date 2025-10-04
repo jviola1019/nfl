@@ -179,10 +179,18 @@ compare_to_market <- function(res, sched) {
     hi   = unname(quantile(boot["dL",], 0.975, na.rm = TRUE))
   )
   
-  cat(sprintf("\nΔLogLoss (model - market): mean=%.6f, 95%% CI [%.6f, %.6f]\n",
+  cat(sprintf("\nΔLogLoss (model - market, week-block bootstrap): mean=%.6f, 95%% CI [%.6f, %.6f]\n",
               dLL["mean"], dLL["lo"], dLL["hi"]))
-  cat(sprintf("ΔBrier2  (model - market): mean=%.6f, 95%% CI [%.6f, %.6f]\n",
+  cat(sprintf("ΔBrier2  (model - market, week-block bootstrap): mean=%.6f, 95%% CI [%.6f, %.6f]\n",
               dBS["mean"], dBS["lo"], dBS["hi"]))
+  if (is.finite(paired_dL["mean"])) {
+    cat(sprintf("ΔLogLoss (model - market, paired t): mean=%.6f, 95%% CI [%.6f, %.6f]\n",
+                paired_dL["mean"], paired_dL["lo"], paired_dL["hi"]))
+  }
+  if (is.finite(paired_dB["mean"])) {
+    cat(sprintf("ΔBrier2  (model - market, paired t): mean=%.6f, 95%% CI [%.6f, %.6f]\n",
+                paired_dB["mean"], paired_dB["lo"], paired_dB["hi"]))
+  }
   # ---- END bootstrap CI block ----
   
   by_season <- comp %>%
@@ -214,13 +222,19 @@ compare_to_market <- function(res, sched) {
   if (nrow(rolling_ci)) {
     latest_roll <- rolling_ci %>%
       dplyr::group_by(window_weeks) %>%
-      dplyr::slice_tail(n = 1, with_ties = FALSE) %>%
+      dplyr::slice_tail(n = 1) %>%
       dplyr::ungroup()
     cat("\nRolling week-block bootstrap deltas (latest windows):\n")
     print(latest_roll)
   }
 
-  invisible(list(overall = overall, deltas = list(LogLoss = dLL, Brier = dBS),
-                 by_season = by_season, bins = bins, comp = comp,
-                 rolling = rolling_ci))
+  invisible(list(
+    overall = overall,
+    deltas = list(LogLoss = dLL, Brier = dBS),
+    paired_ci = list(LogLoss = paired_dL, Brier = paired_dB),
+    by_season = by_season,
+    bins = bins,
+    comp = comp,
+    rolling = rolling_ci
+  ))
 }
