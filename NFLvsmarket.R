@@ -390,17 +390,19 @@ overall_tbl <- comp %>%
   ) %>%
   summarise(
     n_weeks = n(),
-    n_games = sum(n_games),
-    Brier_model = weighted.mean(Brier_model, n_games),
-    Brier_mkt   = weighted.mean(Brier_mkt,   n_games),
-    LogL_model  = weighted.mean(LogL_model,  n_games),
-    LogL_mkt    = weighted.mean(LogL_mkt,    n_games),
+    Brier_model = stats::weighted.mean(Brier_model, n_games, na.rm = TRUE),
+    Brier_mkt   = stats::weighted.mean(Brier_mkt,   n_games, na.rm = TRUE),
+    LogL_model  = stats::weighted.mean(LogL_model,  n_games, na.rm = TRUE),
+    LogL_mkt    = stats::weighted.mean(LogL_mkt,    n_games, na.rm = TRUE),
+    total_games = sum(n_games),
     .groups = "drop"
   ) %>%
   mutate(
+    n_games = total_games,
     Brier_delta = Brier_model - Brier_mkt,
     LogL_delta  = LogL_model  - LogL_mkt
-  )
+  ) %>%
+  select(-total_games)
 
 message("\n=== Overall (Model vs Market) ===")
 print(overall_tbl)
@@ -422,17 +424,19 @@ if ("p_blend" %in% names(comp) && any(is.finite(comp$p_blend))) {
     ) %>%
     summarise(
       n_weeks = n(),
-      n_games = sum(n_games),
-      Brier_blend = weighted.mean(Brier_blend, n_games),
-      Brier_mkt   = weighted.mean(Brier_mkt,   n_games),
-      LogL_blend  = weighted.mean(LogL_blend,  n_games),
-      LogL_mkt    = weighted.mean(LogL_mkt,    n_games),
+      Brier_blend = stats::weighted.mean(Brier_blend, n_games, na.rm = TRUE),
+      Brier_mkt   = stats::weighted.mean(Brier_mkt,   n_games, na.rm = TRUE),
+      LogL_blend  = stats::weighted.mean(LogL_blend,  n_games, na.rm = TRUE),
+      LogL_mkt    = stats::weighted.mean(LogL_mkt,    n_games, na.rm = TRUE),
+      total_games = sum(n_games),
       .groups = "drop"
     ) %>%
     mutate(
+      n_games = total_games,
       Brier_delta = Brier_blend - Brier_mkt,
       LogL_delta  = LogL_blend  - LogL_mkt
-    )
+    ) %>%
+    select(-total_games)
   message("\n=== Overall (Blend vs Market) ===")
   print(overall_blend)
   
