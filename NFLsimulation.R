@@ -3038,7 +3038,7 @@ team_strength_tbl <- list(
   extract_team_metric(team_stats_off, c("success_rate_rush", "rush_success_rate", "rushing_success_rate"), "off_rush_sr"),
   extract_team_metric(team_stats_def, c("success_rate_rush", "rush_success_rate", "rushing_success_rate"), "def_rush_sr"),
   extract_team_metric(team_stats_def, c("pressure_rate", "pressures_per_dropback", "qb_hit_rate"), "def_pressure_rate"),
-  extract_team_metric(team_stats_off, c("pressure_rate_allowed", "pressure_rate", "pressures_per_dropback"), "off_pressure_rate")
+  extract_team_metric(team_stats_off, c("pressure_rate_allowed", "pressure_rate", "pressures_per_dropback"), "off_pressure_rate"),
   extract_team_metric(team_stats_def, c("success_rate", "series_success_rate", "sr"), "def_sr")
 ) %>%
   purrr::compact()
@@ -3200,7 +3200,7 @@ blend_design <- function(df) {
     "home_skill_avail_pen", "away_skill_avail_pen", "home_trench_avail_pen", "away_trench_avail_pen",
     "home_secondary_avail_pen", "away_secondary_avail_pen", "home_front7_avail_pen", "away_front7_avail_pen",
     "off_epa_edge", "def_epa_edge", "sr_edge", "net_epa_edge",
-    "pass_epa_edge", "rush_epa_edge", "pass_sr_edge", "rush_sr_edge", "pressure_rate_diff"
+    "pass_epa_edge", "rush_epa_edge", "pass_sr_edge", "rush_sr_edge", "pressure_rate_diff",
     "off_epa_edge", "def_epa_edge", "sr_edge", "net_epa_edge"
   ), names(df))
 
