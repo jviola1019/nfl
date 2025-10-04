@@ -39,9 +39,7 @@ FOCUS_MATCHUP <- NULL    # e.g., "SF @ KC" to print only one game in Best Bets
 
 american_to_prob <- function(odds) {
   odds <- suppressWarnings(as.numeric(odds))
-  out <- ifelse(odds < 0, (-odds)/((-odds)+100), 100/(odds+100))
-  out[!is.finite(out) | is.na(odds) | abs(odds) < 1] <- NA_real_
-  out
+  ifelse(odds < 0, (-odds)/((-odds)+100), 100/(odds+100))
 }
 prob_to_american <- function(p) {
   p <- .clp(p)
@@ -388,102 +386,70 @@ comp <- eval_df %>%
 
 # ------------------ Print headline table (Model vs Market) --------------------
 overall_tbl <- comp %>%
-  mutate(
-    p_model = .clp(p_model),
-    p_mkt   = .clp(p_mkt),
-    b_model = (p_model - y2)^2,
-    b_mkt   = (p_mkt - y2)^2,
-    ll_model = -(y2 * log(p_model) + (1 - y2) * log(1 - p_model)),
-    ll_mkt   = -(y2 * log(p_mkt)   + (1 - y2) * log(1 - p_mkt))
+  group_by(season, week) %>%
+  summarise(
+    n_games = n(),
+    Brier_model = brier(p_model, y2),
+    Brier_mkt   = brier(p_mkt,   y2),
+    LogL_model  = logloss(p_model, y2),
+    LogL_mkt    = logloss(p_mkt,   y2),
+    .groups = "drop"
   ) %>%
   summarise(
-    n_weeks = n_distinct(paste(season, week, sep = "-")),
-    n_games = n(),
-    Brier_model = mean(b_model, na.rm = TRUE),
-    Brier_mkt   = mean(b_mkt,   na.rm = TRUE),
-    LogL_model  = mean(ll_model, na.rm = TRUE),
-    LogL_mkt    = mean(ll_mkt,   na.rm = TRUE)
+    n_weeks = n(),
+    Brier_model = stats::weighted.mean(Brier_model, n_games, na.rm = TRUE),
+    Brier_mkt   = stats::weighted.mean(Brier_mkt,   n_games, na.rm = TRUE),
+    LogL_model  = stats::weighted.mean(LogL_model,  n_games, na.rm = TRUE),
+    LogL_mkt    = stats::weighted.mean(LogL_mkt,    n_games, na.rm = TRUE),
+    total_games = sum(n_games),
+    .groups = "drop"
   ) %>%
   mutate(
+    n_games = total_games,
     Brier_delta = Brier_model - Brier_mkt,
     LogL_delta  = LogL_model  - LogL_mkt
-  )
-
-overall_gt <- overall_tbl %>%
-  transmute(
-    Weeks = n_weeks,
-    Games = n_games,
-    `Brier (Model)` = Brier_model,
-    `Brier (Market)` = Brier_mkt,
-    `Brier Δ` = Brier_delta,
-    `LogLoss (Model)` = LogL_model,
-    `LogLoss (Market)` = LogL_mkt,
-    `LogLoss Δ` = LogL_delta
   ) %>%
-  gt() %>%
-  fmt_number(columns = c(`Brier (Model)`, `Brier (Market)`, `Brier Δ`), decimals = 3) %>%
-  fmt_number(columns = c(`LogLoss (Model)`, `LogLoss (Market)`, `LogLoss Δ`), decimals = 3) %>%
-  fmt_number(columns = c(Weeks, Games), decimals = 0)
+  select(-total_games)
 
 message("\n=== Overall (Model vs Market) ===")
-print(overall_gt)
+print(overall_tbl)
 
 ci_tbl <- bootstrap_week_ci(comp, p_col_model = "p_model", p_col_mkt = "p_mkt", n_boot = N_BOOT)
-ci_gt <- ci_tbl %>%
-  gt() %>%
-  fmt_number(columns = c(delta, lo, hi), decimals = 4)
 message("\n=== Week-block bootstrap CI (Model – Market) ===")
-print(ci_gt)
-
-overall_blend_gt <- NULL
-ci_blend_gt <- NULL
+print(ci_tbl)
 
 if ("p_blend" %in% names(comp) && any(is.finite(comp$p_blend))) {
   overall_blend <- comp %>%
-    mutate(
-      p_blend = .clp(p_blend),
-      p_mkt   = .clp(p_mkt),
-      b_blend = (p_blend - y2)^2,
-      b_mkt   = (p_mkt   - y2)^2,
-      ll_blend = -(y2 * log(p_blend) + (1 - y2) * log(1 - p_blend)),
-      ll_mkt   = -(y2 * log(p_mkt)   + (1 - y2) * log(1 - p_mkt))
+    group_by(season, week) %>%
+    summarise(
+      n_games = n(),
+      Brier_blend = brier(p_blend, y2),
+      Brier_mkt   = brier(p_mkt,   y2),
+      LogL_blend  = logloss(p_blend, y2),
+      LogL_mkt    = logloss(p_mkt,   y2),
+      .groups = "drop"
     ) %>%
     summarise(
-      n_weeks = n_distinct(paste(season, week, sep = "-")),
-      n_games = n(),
-      Brier_blend = mean(b_blend, na.rm = TRUE),
-      Brier_mkt   = mean(b_mkt,   na.rm = TRUE),
-      LogL_blend  = mean(ll_blend, na.rm = TRUE),
-      LogL_mkt    = mean(ll_mkt,   na.rm = TRUE)
+      n_weeks = n(),
+      Brier_blend = stats::weighted.mean(Brier_blend, n_games, na.rm = TRUE),
+      Brier_mkt   = stats::weighted.mean(Brier_mkt,   n_games, na.rm = TRUE),
+      LogL_blend  = stats::weighted.mean(LogL_blend,  n_games, na.rm = TRUE),
+      LogL_mkt    = stats::weighted.mean(LogL_mkt,    n_games, na.rm = TRUE),
+      total_games = sum(n_games),
+      .groups = "drop"
     ) %>%
     mutate(
+      n_games = total_games,
       Brier_delta = Brier_blend - Brier_mkt,
       LogL_delta  = LogL_blend  - LogL_mkt
-    )
-  overall_blend_gt <- overall_blend %>%
-    transmute(
-      Weeks = n_weeks,
-      Games = n_games,
-      `Brier (Blend)` = Brier_blend,
-      `Brier (Market)` = Brier_mkt,
-      `Brier Δ` = Brier_delta,
-      `LogLoss (Blend)` = LogL_blend,
-      `LogLoss (Market)` = LogL_mkt,
-      `LogLoss Δ` = LogL_delta
     ) %>%
-    gt() %>%
-    fmt_number(columns = c(`Brier (Blend)`, `Brier (Market)`, `Brier Δ`), decimals = 3) %>%
-    fmt_number(columns = c(`LogLoss (Blend)`, `LogLoss (Market)`, `LogLoss Δ`), decimals = 3) %>%
-    fmt_number(columns = c(Weeks, Games), decimals = 0)
+    select(-total_games)
   message("\n=== Overall (Blend vs Market) ===")
-  print(overall_blend_gt)
-
+  print(overall_blend)
+  
   ci_tbl_blend <- bootstrap_week_ci(comp, p_col_model = "p_blend", p_col_mkt = "p_mkt", n_boot = N_BOOT)
-  ci_blend_gt <- ci_tbl_blend %>%
-    gt() %>%
-    fmt_number(columns = c(delta, lo, hi), decimals = 4)
   message("\n=== Week-block bootstrap CI (Blend – Market) ===")
-  print(ci_blend_gt)
+  print(ci_tbl_blend)
 }
 
 # ------------------ Best Bets table for current slate -------------------------
@@ -609,7 +575,7 @@ build_best_bets <- function(final_df, sched_df, spread_mapper = NULL, focus_matc
       fair_ml_mkt = ifelse(is.finite(market_prob), prob_to_american(market_prob), NA_real_),
       ev_units = ifelse(is.finite(best_odds_num), expected_value_units(model_prob, best_odds_num), NA_real_)
     ) %>%
-    filter(is.finite(market_prob), is.finite(best_odds_num), !is.na(best_book)) %>%
+    filter(is.finite(market_prob)) %>%
     arrange(desc(edge))
 
   bets %>%
@@ -764,32 +730,7 @@ if (!is.null(best_offers_widget)) {
   )
 }
 
-save_report_html <- function(tag_list, file) {
-  if (!requireNamespace("htmlwidgets", quietly = TRUE)) {
-    htmltools::save_html(tag_list, file = file, background = "white")
-    return(invisible("htmltools"))
-  }
-
-  widget <- htmlwidgets::browsable(tag_list)
-  attempt <- tryCatch({
-    htmlwidgets::saveWidget(widget, file, selfcontained = TRUE)
-    NULL
-  }, error = function(e) e)
-
-  if (inherits(attempt, "error")) {
-    msg <- conditionMessage(attempt)
-    if (grepl("xfun", msg, fixed = TRUE) || grepl(">= 0.52", msg, fixed = TRUE)) {
-      libdir <- paste0(tools::file_path_sans_ext(basename(file)), "_files")
-      htmlwidgets::saveWidget(widget, file, selfcontained = FALSE, libdir = libdir)
-      return(invisible("htmlwidgets-libdir"))
-    }
-    stop(attempt)
-  }
-
-  invisible("htmlwidgets-selfcontained")
-}
-
 report_file <- file.path(getwd(), "NFLvsmarket_report.html")
-save_mode <- save_report_html(report_sections, report_file)
-message(sprintf("Saved HTML report to: %s (mode: %s)", report_file, save_mode))
+htmlwidgets::saveWidget(htmlwidgets::browsable(report_sections), report_file, selfcontained = TRUE)
+message(sprintf("Saved HTML report to: %s", report_file))
 try(utils::browseURL(report_file), silent = TRUE)
