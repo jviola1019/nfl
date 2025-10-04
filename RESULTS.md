@@ -81,3 +81,21 @@ those influences before the 2025 season.
    calibration) and alternative meta-models to close the observed scoring gap.
 3. Track the bootstrap deltas over rolling windows so you can detect when new
    features consistently deliver a statistically significant advantage.
+
+## Where to tune the current model
+
+`NFLsimulation.R` now ships with a `show_tuning_help()` helper that lists the
+highest-impact levers, the recommended ranges to test, and the metrics each knob
+typically influences.  Call the function without arguments to review the full
+table or supply a metric name—`show_tuning_help("ret_total")`, for example—to
+filter the guidance to the profit-focused adjustments.【F:NFLsimulation.R†L108-L154】
+
+When iterating toward a 55–57% win rate with a positive `ret_total`, start by
+exploring combinations of the GLMM blend weight, strength-of-schedule factor,
+and recency halflife: these determine how much the projection leans on priors
+versus recent form and will show up quickly in both the Brier/log-loss deltas
+and the realized hit rate.  Rebalance the rest/bye bonuses and injury scalars
+after the core blend is stable; they primarily move the tail games that can
+shift `ret_total` without derailing overall calibration.  Each sweep should be
+validated by re-running the backtest trio (`NFLsimulation.R`, `NFLvsmarket.R`,
+and `NFLbrier_logloss.R`) so the scoring and bankroll diagnostics stay aligned.

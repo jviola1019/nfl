@@ -98,16 +98,6 @@ BLEND_META_MODEL    <- getOption("nfl_sim.blend_model",    default = "glmnet")
 BLEND_ALPHA         <- getOption("nfl_sim.blend_alpha",    default = 0.25)
 CALIBRATION_METHOD  <- getOption("nfl_sim.calibration",    default = "isotonic")
 
-# Meta-model and calibration controls for the market/model blend
-BLEND_META_MODEL    <- getOption("nfl_sim.blend_model",    default = "glmnet")
-BLEND_ALPHA         <- getOption("nfl_sim.blend_alpha",    default = 0.25)
-CALIBRATION_METHOD  <- getOption("nfl_sim.calibration",    default = "isotonic")
-
-# Meta-model and calibration controls for the market/model blend
-BLEND_META_MODEL    <- getOption("nfl_sim.blend_model",    default = "glmnet")
-BLEND_ALPHA         <- getOption("nfl_sim.blend_alpha",    default = 0.25)
-CALIBRATION_METHOD  <- getOption("nfl_sim.calibration",    default = "isotonic")
-
 # SoS weighting knobs
 USE_SOS            <- TRUE     # turn on/off SoS weighting
 SOS_STRENGTH       <- 0.60     # 0=no effect; 1=full strength; try 0.4–0.8
@@ -136,17 +126,58 @@ TRENCH_AVAIL_POINT_PER_FLAG    <- 0.65
 SECONDARY_AVAIL_POINT_PER_FLAG <- 0.45
 FRONT7_AVAIL_POINT_PER_FLAG    <- 0.50
 
-# Player availability impact scalars (points per aggregated severity unit)
-SKILL_AVAIL_POINT_PER_FLAG     <- 0.55
-TRENCH_AVAIL_POINT_PER_FLAG    <- 0.65
-SECONDARY_AVAIL_POINT_PER_FLAG <- 0.45
-FRONT7_AVAIL_POINT_PER_FLAG    <- 0.50
+# Reference sheet for common tuning knobs.  Call `show_tuning_help()` from an
+# interactive session to review the levers and the metrics they typically move.
+.tuning_parameters <- tibble::tribble(
+  ~parameter, ~default, ~recommended_range, ~metrics_to_watch, ~notes,
+  "GLMM_BLEND_W", GLMM_BLEND_W, "0.25 – 0.55", "Win rate, Brier, log loss",
+    "Increase to trust the GLMM's structured priors; decrease to lean on pace + EPA base. Higher weights can steady calibration when market data are noisy but may cap upside if the priors lag current form.",
+  "SOS_STRENGTH", SOS_STRENGTH, "0.4 – 0.8", "Win rate, ret_total",
+    "Controls how aggressively schedule strength shapes opponent adjustments. Raising it helps when the model underrates teams with tough slates but can overshoot if weighted too heavily after upsets.",
+  "RECENCY_HALFLIFE", RECENCY_HALFLIFE, "2 – 5", "Win rate, Brier",
+    "Shorter halflife doubles down on the latest form; longer halflife smooths week-to-week noise. Use smaller values when injuries or scheme changes shift performance quickly.",
+  "REST_SHORT_PENALTY", REST_SHORT_PENALTY, "-1.0 – -0.4", "ret_total",
+    "More negative numbers punish teams on ≤6 days rest. Strengthen the penalty when the sim overestimates tired road teams.",
+  "REST_LONG_BONUS", REST_LONG_BONUS, "0.3 – 0.8", "Win rate",
+    "Boost for ≥9 days rest without a bye. Raising it can recover edge when the model undervalues extended prep time.",
+  "BYE_BONUS", BYE_BONUS, "0.6 – 1.4", "Win rate, ret_total",
+    "Adjust when bye-week teams fail to cover expected improvements. Higher values help capture coordinators' self-scouting gains but may inflate totals if stacked with other bonuses.",
+  "DOME_BONUS_TOTAL", DOME_BONUS_TOTAL, "0.4 – 1.2", "Totals, ret_total",
+    "Positive values lift scoring expectations indoors. Increase when indoor unders show value because the model stays too low on dome efficiency.",
+  "OUTDOOR_WIND_PEN", OUTDOOR_WIND_PEN, "-1.4 – -0.6", "Totals, Brier",
+    "More negative values cut totals in windy games. Tighten when the blend misses weather-driven unders; ease off if it overreacts to moderate breezes.",
+  "RAIN_SNOW_PEN", RAIN_SNOW_PEN, "-1.2 – -0.4", "Totals, log loss",
+    "Rain/snow adjustment applied via `game_modifiers`. Increase magnitude when sloppy games still go over the projected total.",
+  "SKILL_AVAIL_POINT_PER_FLAG", SKILL_AVAIL_POINT_PER_FLAG, "0.4 – 0.7", "Win rate, Brier",
+    "Translates aggregated WR/RB/TE injury flags into point adjustments. Raise when talent gaps fail to move projections enough; lower if the sim double-counts absences with market odds.",
+  "TRENCH_AVAIL_POINT_PER_FLAG", TRENCH_AVAIL_POINT_PER_FLAG, "0.5 – 0.8", "ret_total",
+    "Impacts OL/DL cluster injuries. Stronger penalties help when line mismatches drive ATS losses; weaker when the model overreacts to questionable tags.",
+  "SECONDARY_AVAIL_POINT_PER_FLAG", SECONDARY_AVAIL_POINT_PER_FLAG, "0.35 – 0.6", "Totals, log loss",
+    "Raise to bump overs when secondaries are depleted; reduce if the market already prices in those matchups and the model overstates shootout risk.",
+  "FRONT7_AVAIL_POINT_PER_FLAG", FRONT7_AVAIL_POINT_PER_FLAG, "0.35 – 0.65", "Totals, ret_total",
+    "Controls front-seven injury effects. Increase when run-stopping issues aren't reflected; decrease if defensive depth masks absences."
+)
 
-# Player availability impact scalars (points per aggregated severity unit)
-SKILL_AVAIL_POINT_PER_FLAG     <- 0.55
-TRENCH_AVAIL_POINT_PER_FLAG    <- 0.65
-SECONDARY_AVAIL_POINT_PER_FLAG <- 0.45
-FRONT7_AVAIL_POINT_PER_FLAG    <- 0.50
+show_tuning_help <- function(metric = NULL) {
+  stopifnot(length(metric) <= 1)
+  guide <- .tuning_parameters
+  if (!is.null(metric) && nzchar(metric)) {
+    metric_pattern <- stringr::str_to_lower(metric)
+    guide <- guide %>%
+      dplyr::filter(stringr::str_detect(stringr::str_to_lower(metrics_to_watch), metric_pattern))
+  }
+  if (nrow(guide) == 0) {
+    message("No tuning rows matched. Available metrics: ",
+            paste(sort(unique(.tuning_parameters$metrics_to_watch)), collapse = ", "))
+    return(invisible(guide))
+  }
+  print(guide)
+  invisible(guide)
+}
+
+if (interactive() && !isTRUE(getOption("nfl_sim.quiet_tuning_help", FALSE))) {
+  message("Tuning reference: run show_tuning_help() for parameter guidance or pass a metric name (e.g. 'ret_total').")
+}
 
 # Optional: per-game manual adjustments (apply to mu &/or sd after all calcs)
 # Columns:
@@ -1031,7 +1062,13 @@ get_hourly_weather <- function(lat, lon, date_iso, hours = c(13)) {
 if (!dir.exists(.wx_cache_dir)) dir.create(.wx_cache_dir, recursive = TRUE)
 
 safe_hourly <- function(lat, lon, date_iso) {
-  if (!is.finite(lat) || !is.finite(lon)) return(NULL)
+  # Guard against missing or non-finite inputs which can bubble up from
+  # incomplete stadium metadata or neutral-site games. `is.finite()` returns
+  # `NA` for `NA_real_`, which caused an error inside the `if` statement when
+  # this helper was called via `purrr::pmap()`.  Using `isTRUE(all(...))` keeps
+  # the check scalar and safely handles `NA`s.
+  if (!isTRUE(all(is.finite(c(lat, lon))))) return(NULL)
+  if (is.na(date_iso) || !nzchar(date_iso)) return(NULL)
   key  <- digest::digest(list(round(lat,4), round(lon,4), date_iso))
   path <- file.path(.wx_cache_dir, paste0(key, ".rds"))
   if (file.exists(path)) return(readRDS(path))
@@ -1046,14 +1083,35 @@ extract_first <- function(x, nm) {
   as.numeric(x[[nm]][1])
 }
 
-weather_rows <- week_slate %>%
+weather_inputs <- week_slate %>%
   mutate(
     venue_key = stringr::str_to_lower(stringr::str_replace_all(venue, "[^a-zA-Z0-9]+", " ")),
     date_iso  = format(as.Date(game_date), "%Y-%m-%d")
   ) %>%
   dplyr::left_join(stadium_coords %>% dplyr::select(venue_key, lat, lon, dome), by = "venue_key") %>%
-  mutate(lat = as.numeric(lat), lon = as.numeric(lon)) %>%
-  mutate(.wx = purrr::pmap(list(lat, lon, date_iso), safe_hourly)) %>%
+  mutate(
+    lat = as.numeric(lat),
+    lon = as.numeric(lon)
+  )
+
+# purrr::pmap() was still triggering "promise already under evaluation" for some
+# environments (particularly when knitting), so we fall back to an explicit loop
+# to keep the evaluation order simple and side-effect free.
+weather_lookup <- {
+  lat_vec  <- weather_inputs$lat
+  lon_vec  <- weather_inputs$lon
+  date_vec <- weather_inputs$date_iso
+  n <- length(lat_vec)
+  stopifnot(n == length(lon_vec), n == length(date_vec))
+  out <- vector("list", n)
+  for (i in seq_len(n)) {
+    out[[i]] <- safe_hourly(lat_vec[[i]], lon_vec[[i]], date_vec[[i]])
+  }
+  out
+}
+
+weather_rows <- weather_inputs %>%
+  mutate(.wx = weather_lookup) %>%
   transmute(
     game_id,
     wind_mph    = purrr::map_dbl(.wx, function(x) extract_first(x, "wind_mph")),
