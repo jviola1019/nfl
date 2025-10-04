@@ -168,24 +168,6 @@ compare_to_market <- function(res, sched) {
 
   rolling_ci <- rolling_week_bootstrap(wk_stats)
 
-  .paired_ci <- function(x, conf = 0.95) {
-    x <- stats::na.omit(x)
-    n <- length(x)
-    if (!n) {
-      return(c(mean = NA_real_, lo = NA_real_, hi = NA_real_))
-    }
-    mu <- mean(x)
-    if (n == 1L) {
-      return(c(mean = mu, lo = mu, hi = mu))
-    }
-    se <- stats::sd(x)/sqrt(n)
-    crit <- stats::qt(0.5 + conf/2, df = n - 1)
-    c(mean = mu, lo = mu - crit * se, hi = mu + crit * se)
-  }
-
-  paired_dB <- .paired_ci(comp$b_model - comp$b_mkt)
-  paired_dL <- .paired_ci(comp$ll_model - comp$ll_mkt)
-
   dBS <- c(
     mean = mean(boot["dB",], na.rm = TRUE),
     lo   = unname(quantile(boot["dB",], 0.025, na.rm = TRUE)),
