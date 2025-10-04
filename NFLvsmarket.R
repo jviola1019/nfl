@@ -295,6 +295,7 @@ market_probs_from_sched <- function(sched_df, spread_mapper = NULL) {
         ph = american_to_prob(.data[[ml_h]]),
         pa = american_to_prob(.data[[ml_a]])
       ) %>%
+      filter(is.finite(ph), is.finite(pa)) %>%
       mutate(den = ph + pa,
              p_home_mkt_2w = .clp(ifelse(is.finite(den) & den > 0, ph/den, NA_real_))) %>%
       select(game_id, season, week, p_home_mkt_2w)
@@ -364,11 +365,14 @@ bootstrap_week_ci <- function(df, p_col_model, p_col_mkt, y_col = "y2",
 # ------------------ Assemble evaluation dataset -------------------------------
 stopifnot("per_game" %in% names(res))
 
+market_prob_col <- pick_col(res$per_game, c("p_home_mkt_2w","p_mkt","market_prob_home","p_mkt_2w","home_p_mkt","p2_market","market_p_home"))
+
 eval_df <- res$per_game %>%
   # keep just what we need
   transmute(game_id, season, week,
             p_model = .clp(p2_cal),
-            p_blend = if ("p_blend" %in% names(res$per_game)) .clp(p_blend) else NA_real_) %>%
+            p_blend = if ("p_blend" %in% names(res$per_game)) .clp(p_blend) else NA_real_,
+            p_mkt_res = if (!is.na(market_prob_col)) .clp(.data[[market_prob_col]]) else NA_real_) %>%
   inner_join(outcomes, by = c("game_id","season","week"))
 
 # Market probs (closing ML preferred; else spread mapping)
@@ -376,8 +380,9 @@ spread_mapper <- learn_spread_map(sched)  # may return NULL -> script falls back
 mkt_df <- market_probs_from_sched(sched, spread_mapper = spread_mapper)
 
 comp <- eval_df %>%
-  inner_join(mkt_df, by = c("game_id","season","week")) %>%
-  mutate(p_mkt = .clp(p_home_mkt_2w))
+  left_join(mkt_df, by = c("game_id","season","week")) %>%
+  mutate(p_mkt = dplyr::coalesce(p_mkt_res, .clp(p_home_mkt_2w))) %>%
+  filter(is.finite(p_mkt))
 
 # ------------------ Print headline table (Model vs Market) --------------------
 overall_tbl <- comp %>%
