@@ -89,13 +89,36 @@ compare_to_market <- function(res, sched) {
     dplyr::transmute(game_id, season, week, p_model = .clamp01(.data[[pcol]])) %>%
     dplyr::inner_join(mkt_tbl,  by = c("game_id","season","week")) %>%
     dplyr::inner_join(outcomes, by = c("game_id","season","week")) %>%
-    dplyr::transmute(game_id, season, week, p_model, p_mkt = .clamp01(p_home_mkt_2w), y2)
+    dplyr::transmute(
+      game_id, season, week,
+      p_model = .clamp01(p_model),
+      p_mkt   = .clamp01(p_home_mkt_2w),
+      y2
+    ) %>%
+    dplyr::mutate(
+      b_model = (p_model - y2)^2,
+      b_mkt   = (p_mkt - y2)^2,
+      ll_model = -(y2 * log(p_model) + (1 - y2) * log(1 - p_model)),
+      ll_mkt   = -(y2 * log(p_mkt)   + (1 - y2) * log(1 - p_mkt))
+    )
+
+  wk_stats <- comp %>%
+    dplyr::group_by(season, week) %>%
+    dplyr::summarise(
+      n_games = dplyr::n(),
+      b_model_sum = sum(b_model),
+      b_mkt_sum   = sum(b_mkt),
+      ll_model_sum = sum(ll_model),
+      ll_mkt_sum   = sum(ll_mkt),
+      .groups = "drop"
+    ) %>%
+    dplyr::arrange(season, week)
   
   overall <- tibble::tibble(
-    model_Brier2 = brier2(comp$p_model, comp$y2),
-    mkt_Brier2   = brier2(comp$p_mkt,   comp$y2),
-    model_LogL2  = logloss2(comp$p_model, comp$y2),
-    mkt_LogL2    = logloss2(comp$p_mkt,   comp$y2),
+    model_Brier2 = mean(comp$b_model, na.rm = TRUE),
+    mkt_Brier2   = mean(comp$b_mkt,   na.rm = TRUE),
+    model_LogL2  = mean(comp$ll_model, na.rm = TRUE),
+    mkt_LogL2    = mean(comp$ll_mkt,   na.rm = TRUE),
     n_games      = nrow(comp)
   ) %>%
     dplyr::mutate(
@@ -103,43 +126,35 @@ compare_to_market <- function(res, sched) {
       d_LogL2  = model_LogL2  - mkt_LogL2
     )
   # ---- Week-block bootstrap CIs for deltas (model - market) ----
-  set.seed(123)
-  wk_keys <- comp %>% dplyr::distinct(season, week)
+  .bootstrap_deltas <- function(stats_tbl, B, seed) {
+    if (!nrow(stats_tbl)) return(matrix(numeric(), nrow = 2L, dimnames = list(c("dB", "dL"), NULL)))
+    if (!is.null(seed)) set.seed(seed)
+    n_weeks <- nrow(stats_tbl)
+    idx_mat <- matrix(sample.int(n_weeks, size = n_weeks * B, replace = TRUE), nrow = n_weeks, ncol = B)
+    games_mat <- matrix(stats_tbl$n_games[idx_mat], nrow = n_weeks, ncol = B)
+    total_games <- colSums(games_mat)
+    b_diff <- colSums(matrix(stats_tbl$b_model_sum[idx_mat] - stats_tbl$b_mkt_sum[idx_mat], nrow = n_weeks, ncol = B))
+    ll_diff <- colSums(matrix(stats_tbl$ll_model_sum[idx_mat] - stats_tbl$ll_mkt_sum[idx_mat], nrow = n_weeks, ncol = B))
+    rbind(dB = b_diff / total_games, dL = ll_diff / total_games)
+  }
+
   B <- 1000L
-  boot <- replicate(B, {
-    samp <- wk_keys[sample(nrow(wk_keys), replace = TRUE), ]
-    jj   <- comp %>% dplyr::inner_join(samp, by = c("season","week"))
-    c(
-      dB = brier2(jj$p_model, jj$y2) - brier2(jj$p_mkt, jj$y2),
-      dL = logloss2(jj$p_model, jj$y2) - logloss2(jj$p_mkt, jj$y2)
-    )
-  })
+  boot <- .bootstrap_deltas(wk_stats, B = B, seed = 123)
 
-  rolling_week_bootstrap <- function(comp_df, window_sizes = c(8, 17), B = 400, seed = 123) {
-    wk_tbl <- comp_df %>% dplyr::distinct(season, week) %>% dplyr::arrange(season, week) %>% dplyr::mutate(idx = dplyr::row_number())
-    if (!nrow(wk_tbl)) return(tibble::tibble())
-
+  rolling_week_bootstrap <- function(stats_tbl, window_sizes = c(8, 17), B = 400, seed = 123) {
+    if (!nrow(stats_tbl)) return(tibble::tibble())
     purrr::map_dfr(window_sizes, function(win) {
-      if (nrow(wk_tbl) < win) return(tibble::tibble())
-      purrr::map_dfr(seq(win, nrow(wk_tbl)), function(end_idx) {
-        sel <- wk_tbl[(end_idx - win + 1):end_idx, , drop = FALSE]
-        sub <- comp_df %>% dplyr::inner_join(sel %>% dplyr::select(season, week), by = c("season", "week"))
-        if (!nrow(sub)) return(tibble::tibble())
-        set.seed(seed + end_idx + win)
-        wk_sub <- sel
-        boot_sub <- replicate(B, {
-          samp <- wk_sub[sample(nrow(wk_sub), replace = TRUE), , drop = FALSE]
-          jj <- comp_df %>% dplyr::inner_join(samp, by = c("season", "week"))
-          c(
-            dB = brier2(jj$p_model, jj$y2) - brier2(jj$p_mkt, jj$y2),
-            dL = logloss2(jj$p_model, jj$y2) - logloss2(jj$p_mkt, jj$y2)
-          )
-        })
+      if (nrow(stats_tbl) < win) return(tibble::tibble())
+      purrr::map_dfr(seq(win, nrow(stats_tbl)), function(end_idx) {
+        sel <- stats_tbl[(end_idx - win + 1):end_idx, , drop = FALSE]
+        seed_offset <- seed + end_idx + win
+        boot_sub <- .bootstrap_deltas(sel, B = B, seed = seed_offset)
+        total_games <- sum(sel$n_games)
         tibble::tibble(
           window_weeks = win,
           end_season = sel$season[nrow(sel)],
           end_week   = sel$week[nrow(sel)],
-          games_in_window = nrow(sub),
+          games_in_window = total_games,
           dB_mean = mean(boot_sub["dB",], na.rm = TRUE),
           dB_lo   = unname(stats::quantile(boot_sub["dB",], 0.025, na.rm = TRUE)),
           dB_hi   = unname(stats::quantile(boot_sub["dB",], 0.975, na.rm = TRUE)),
@@ -151,7 +166,25 @@ compare_to_market <- function(res, sched) {
     })
   }
 
-  rolling_ci <- rolling_week_bootstrap(comp)
+  rolling_ci <- rolling_week_bootstrap(wk_stats)
+
+  .paired_ci <- function(x, conf = 0.95) {
+    x <- stats::na.omit(x)
+    n <- length(x)
+    if (!n) {
+      return(c(mean = NA_real_, lo = NA_real_, hi = NA_real_))
+    }
+    mu <- mean(x)
+    if (n == 1L) {
+      return(c(mean = mu, lo = mu, hi = mu))
+    }
+    se <- stats::sd(x)/sqrt(n)
+    crit <- stats::qt(0.5 + conf/2, df = n - 1)
+    c(mean = mu, lo = mu - crit * se, hi = mu + crit * se)
+  }
+
+  paired_dB <- .paired_ci(comp$b_model - comp$b_mkt)
+  paired_dL <- .paired_ci(comp$ll_model - comp$ll_mkt)
 
   dBS <- c(
     mean = mean(boot["dB",], na.rm = TRUE),
@@ -164,19 +197,27 @@ compare_to_market <- function(res, sched) {
     hi   = unname(quantile(boot["dL",], 0.975, na.rm = TRUE))
   )
   
-  cat(sprintf("\nΔLogLoss (model - market): mean=%.6f, 95%% CI [%.6f, %.6f]\n",
+  cat(sprintf("\nΔLogLoss (model - market, week-block bootstrap): mean=%.6f, 95%% CI [%.6f, %.6f]\n",
               dLL["mean"], dLL["lo"], dLL["hi"]))
-  cat(sprintf("ΔBrier2  (model - market): mean=%.6f, 95%% CI [%.6f, %.6f]\n",
+  cat(sprintf("ΔBrier2  (model - market, week-block bootstrap): mean=%.6f, 95%% CI [%.6f, %.6f]\n",
               dBS["mean"], dBS["lo"], dBS["hi"]))
+  if (is.finite(paired_dL["mean"])) {
+    cat(sprintf("ΔLogLoss (model - market, paired t): mean=%.6f, 95%% CI [%.6f, %.6f]\n",
+                paired_dL["mean"], paired_dL["lo"], paired_dL["hi"]))
+  }
+  if (is.finite(paired_dB["mean"])) {
+    cat(sprintf("ΔBrier2  (model - market, paired t): mean=%.6f, 95%% CI [%.6f, %.6f]\n",
+                paired_dB["mean"], paired_dB["lo"], paired_dB["hi"]))
+  }
   # ---- END bootstrap CI block ----
   
   by_season <- comp %>%
     dplyr::group_by(season) %>%
     dplyr::summarise(
-      model_Brier2 = brier2(p_model, y2),
-      mkt_Brier2   = brier2(p_mkt,   y2),
-      model_LogL2  = logloss2(p_model, y2),
-      mkt_LogL2    = logloss2(p_mkt,   y2),
+      model_Brier2 = mean(b_model),
+      mkt_Brier2   = mean(b_mkt),
+      model_LogL2  = mean(ll_model),
+      mkt_LogL2    = mean(ll_mkt),
       n_games      = dplyr::n(), .groups = "drop"
     ) %>%
     dplyr::mutate(
@@ -199,13 +240,19 @@ compare_to_market <- function(res, sched) {
   if (nrow(rolling_ci)) {
     latest_roll <- rolling_ci %>%
       dplyr::group_by(window_weeks) %>%
-      dplyr::slice_tail(n = 1, with_ties = FALSE) %>%
+      dplyr::slice_tail(n = 1) %>%
       dplyr::ungroup()
     cat("\nRolling week-block bootstrap deltas (latest windows):\n")
     print(latest_roll)
   }
 
-  invisible(list(overall = overall, deltas = list(LogLoss = dLL, Brier = dBS),
-                 by_season = by_season, bins = bins, comp = comp,
-                 rolling = rolling_ci))
+  invisible(list(
+    overall = overall,
+    deltas = list(LogLoss = dLL, Brier = dBS),
+    paired_ci = list(LogLoss = paired_dL, Brier = paired_dB),
+    by_season = by_season,
+    bins = bins,
+    comp = comp,
+    rolling = rolling_ci
+  ))
 }
