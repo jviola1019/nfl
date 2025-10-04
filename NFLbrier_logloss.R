@@ -1,4 +1,4 @@
-compare_to_market <- function(res, sched) {
+compare_to_market <- function(res, sched, peers = NULL, conf_level = 0.95, B = 1000L, seed = 123) {
   stopifnot(is.list(res), is.data.frame(sched))
   # --- helpers (scoped to this function) ---
   .clamp01 <- function(x, eps = 1e-12) pmin(pmax(x, eps), 1 - eps)
