@@ -25,11 +25,11 @@ suppressPackageStartupMessages({
 
 xfun_meets_min <- tryCatch({
   if (!requireNamespace("xfun", quietly = TRUE)) {
-    TRUE
+    FALSE
   } else {
     utils::packageVersion("xfun") >= "0.52"
   }
-}, error = function(e) TRUE)
+}, error = function(e) FALSE)
 
 has_namespace <- function(pkg, needs_new_xfun = FALSE) {
   if (needs_new_xfun && !xfun_meets_min) {
