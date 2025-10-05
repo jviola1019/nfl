@@ -23,22 +23,49 @@ suppressPackageStartupMessages({
   library(glue)
 })
 
-gt_available <- tryCatch(requireNamespace("gt", quietly = TRUE), error = function(e) FALSE)
-reactable_available <- tryCatch(requireNamespace("reactable", quietly = TRUE), error = function(e) FALSE)
-htmlwidgets_available <- tryCatch(requireNamespace("htmlwidgets", quietly = TRUE), error = function(e) FALSE)
-htmltools_available <- tryCatch(requireNamespace("htmltools", quietly = TRUE), error = function(e) FALSE)
+xfun_meets_min <- tryCatch({
+  if (!requireNamespace("xfun", quietly = TRUE)) {
+    TRUE
+  } else {
+    utils::packageVersion("xfun") >= "0.52"
+  }
+}, error = function(e) TRUE)
+
+has_namespace <- function(pkg, needs_new_xfun = FALSE) {
+  if (needs_new_xfun && !xfun_meets_min) {
+    return(FALSE)
+  }
+  tryCatch(requireNamespace(pkg, quietly = TRUE), error = function(e) FALSE)
+}
+
+gt_available <- has_namespace("gt", needs_new_xfun = TRUE)
+reactable_available <- has_namespace("reactable")
+htmlwidgets_available <- has_namespace("htmlwidgets", needs_new_xfun = TRUE)
+htmltools_available <- has_namespace("htmltools", needs_new_xfun = TRUE)
 
 if (!gt_available) {
-  message("Package 'gt' is not available (or requires a newer 'xfun'); falling back to plain data-frame output for tables.")
+  if (!xfun_meets_min) {
+    message("Package 'gt' skipped because 'xfun' >= 0.52 is unavailable; using plain tables instead.")
+  } else {
+    message("Package 'gt' is not available; falling back to data-frame output for tables.")
+  }
 }
 if (!reactable_available) {
   message("Package 'reactable' is not available; skipping interactive odds table.")
 }
 if (!htmlwidgets_available) {
-  message("Package 'htmlwidgets' is not available; HTML report will be saved without widget dependencies.")
+  if (!xfun_meets_min) {
+    message("Package 'htmlwidgets' skipped because 'xfun' >= 0.52 is unavailable; report will omit widgets.")
+  } else {
+    message("Package 'htmlwidgets' is not available; HTML report will be saved without widget dependencies.")
+  }
 }
 if (!htmltools_available) {
-  message("Package 'htmltools' is not available (or requires a newer 'xfun'); will write a simplified HTML report.")
+  if (!xfun_meets_min) {
+    message("Package 'htmltools' skipped because 'xfun' >= 0.52 is unavailable; writing simplified HTML report.")
+  } else {
+    message("Package 'htmltools' is not available; will write a simplified HTML report.")
+  }
 }
 
 # -------------------------- Config knobs --------------------------------------
@@ -256,9 +283,11 @@ learn_spread_map <- function(sched_df) {
   sp_col <- pick_col(sched_df, c("close_spread","spread_close","home_spread_close",
                                  "spread_line","spread","home_spread"))
   ml_h   <- pick_col(sched_df, c("home_ml_close","ml_home_close","moneyline_home_close",
-                                 "home_moneyline_close","home_ml","ml_home","moneyline_home"))
+                                 "home_moneyline_close","home_ml","ml_home","moneyline_home",
+                                 "home_moneyline"))
   ml_a   <- pick_col(sched_df, c("away_ml_close","ml_away_close","moneyline_away_close",
-                                 "away_moneyline_close","away_ml","ml_away","moneyline_away"))
+                                 "away_moneyline_close","away_ml","ml_away","moneyline_away",
+                                 "away_moneyline"))
   if (is.na(sp_col)) return(NULL)
   
   df <- sched_df %>%
@@ -299,9 +328,11 @@ market_probs_from_sched <- function(sched_df, spread_mapper = NULL) {
   sp_col <- pick_col(sched_df, c("close_spread","spread_close","home_spread_close",
                                  "spread_line","spread","home_spread"))
   ml_h   <- pick_col(sched_df, c("home_ml_close","ml_home_close","moneyline_home_close",
-                                 "home_moneyline_close","home_ml","ml_home","moneyline_home"))
+                                 "home_moneyline_close","home_ml","ml_home","moneyline_home",
+                                 "home_moneyline"))
   ml_a   <- pick_col(sched_df, c("away_ml_close","ml_away_close","moneyline_away_close",
-                                 "away_moneyline_close","away_ml","ml_away","moneyline_away"))
+                                 "away_moneyline_close","away_ml","ml_away","moneyline_away",
+                                 "away_moneyline"))
   
   base <- sched_df %>%
     filter(game_type %in% c("REG","Regular")) %>%
