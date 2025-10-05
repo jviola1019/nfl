@@ -108,7 +108,7 @@ CALIBRATION_METHOD  <- getOption("nfl_sim.calibration",    default = "isotonic")
 
 # SoS weighting knobs
 USE_SOS            <- TRUE     # turn on/off SoS weighting
-SOS_STRENGTH       <- 0.50     # 0=no effect; 1=full strength; try 0.4–0.8
+SOS_STRENGTH       <- 0.30     # 0=no effect; 1=full strength; try 0.4–0.8
 
 # Recency weighting for recent form (exponential decay)
 USE_RECENCY_DECAY  <- TRUE
