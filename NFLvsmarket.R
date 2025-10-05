@@ -21,12 +21,12 @@ suppressPackageStartupMessages({
   library(nflreadr)
   library(scales)
   library(glue)
-  library(htmltools)
 })
 
 gt_available <- tryCatch(requireNamespace("gt", quietly = TRUE), error = function(e) FALSE)
 reactable_available <- tryCatch(requireNamespace("reactable", quietly = TRUE), error = function(e) FALSE)
 htmlwidgets_available <- tryCatch(requireNamespace("htmlwidgets", quietly = TRUE), error = function(e) FALSE)
+htmltools_available <- tryCatch(requireNamespace("htmltools", quietly = TRUE), error = function(e) FALSE)
 
 if (!gt_available) {
   message("Package 'gt' is not available (or requires a newer 'xfun'); falling back to plain data-frame output for tables.")
@@ -36,6 +36,9 @@ if (!reactable_available) {
 }
 if (!htmlwidgets_available) {
   message("Package 'htmlwidgets' is not available; HTML report will be saved without widget dependencies.")
+}
+if (!htmltools_available) {
+  message("Package 'htmltools' is not available (or requires a newer 'xfun'); will write a simplified HTML report.")
 }
 
 # -------------------------- Config knobs --------------------------------------
@@ -247,6 +250,8 @@ outcomes <- sched %>%
   )
 
 # ------------------ Learn spread -> 2-way home-win probability ----------------
+spread_map_notice_emitted <- FALSE
+
 learn_spread_map <- function(sched_df) {
   sp_col <- pick_col(sched_df, c("close_spread","spread_close","home_spread_close",
                                  "spread_line","spread","home_spread"))
@@ -269,7 +274,10 @@ learn_spread_map <- function(sched_df) {
     filter(is.finite(spread), is.finite(p_home))
   
   if (nrow(df) < 400) {
-    warning("Not enough ML+spread history to learn map; will fall back to Normal SD.")
+    if (!spread_map_notice_emitted) {
+      message("Not enough ML+spread history to learn map; falling back to Normal SD heuristic.")
+      spread_map_notice_emitted <<- TRUE
+    }
     return(NULL)
   }
   
@@ -406,7 +414,12 @@ mkt_df <- market_probs_from_sched(sched, spread_mapper = spread_mapper)
 
 comp <- eval_df %>%
   left_join(mkt_df, by = c("game_id","season","week")) %>%
-  mutate(p_mkt = dplyr::coalesce(p_mkt_res, .clp(p_home_mkt_2w))) %>%
+  mutate(
+    p_mkt = dplyr::coalesce(
+      if ("p_home_mkt_2w" %in% names(.)) .clp(p_home_mkt_2w) else NA_real_,
+      .clp(p_mkt_res)
+    )
+  ) %>%
   filter(is.finite(p_mkt))
 
 model_candidates <- tibble::tibble(
@@ -824,73 +837,107 @@ verdict_line <- function(ci_tbl_row) {
 message("\n=== Verdicts (Model – Market) ===")
 apply(ci_tbl, 1, function(r) message(verdict_line(as.list(r))))
 
-preformatted_df <- function(df) {
-  htmltools::tags$pre(paste0(utils::capture.output(print(df)), collapse = "\n"))
-}
+if (htmltools_available) {
+  preformatted_df <- function(df) {
+    htmltools::tags$pre(paste0(utils::capture.output(print(df)), collapse = "\n"))
+  }
 
-report_sections <- htmltools::tagList(htmltools::tags$h1("NFL Model vs Market"))
+  report_sections <- htmltools::tagList(htmltools::tags$h1("NFL Model vs Market"))
 
-report_sections <- htmltools::tagAppendChildren(
-  report_sections,
-  htmltools::tags$h2("Overall (Model vs Market)"),
-  if (!is.null(overall_gt)) htmltools::HTML(gt::as_raw_html(overall_gt)) else preformatted_df(overall_tbl)
-)
-
-report_sections <- htmltools::tagAppendChildren(
-  report_sections,
-  htmltools::tags$h2("Week-block bootstrap CI (Model – Market)"),
-  if (!is.null(ci_gt)) htmltools::HTML(gt::as_raw_html(ci_gt)) else preformatted_df(ci_tbl)
-)
-
-if (!is.null(overall_blend)) {
   report_sections <- htmltools::tagAppendChildren(
     report_sections,
-    htmltools::tags$h2("Overall (Blend vs Market)"),
-    if (!is.null(overall_blend_gt)) htmltools::HTML(gt::as_raw_html(overall_blend_gt)) else preformatted_df(overall_blend)
+    htmltools::tags$h2("Overall (Model vs Market)"),
+    if (!is.null(overall_gt)) htmltools::HTML(gt::as_raw_html(overall_gt)) else preformatted_df(overall_tbl)
   )
-}
 
-if (!is.null(ci_tbl_blend)) {
   report_sections <- htmltools::tagAppendChildren(
     report_sections,
-    htmltools::tags$h2("Week-block bootstrap CI (Blend – Market)"),
-    if (!is.null(ci_blend_gt)) htmltools::HTML(gt::as_raw_html(ci_blend_gt)) else preformatted_df(ci_tbl_blend)
+    htmltools::tags$h2("Week-block bootstrap CI (Model – Market)"),
+    if (!is.null(ci_gt)) htmltools::HTML(gt::as_raw_html(ci_gt)) else preformatted_df(ci_tbl)
   )
-}
 
-if (!is.null(bets_gt)) {
-  report_sections <- htmltools::tagAppendChildren(
-    report_sections,
-    htmltools::tags$h2("Best Bets vs Market"),
-    htmltools::HTML(gt::as_raw_html(bets_gt))
-  )
-} else if (exists("bets_table") && nrow(bets_table)) {
-  report_sections <- htmltools::tagAppendChildren(
-    report_sections,
-    htmltools::tags$h2("Best Bets vs Market"),
-    preformatted_df(bets_table)
-  )
-}
+  if (!is.null(overall_blend)) {
+    report_sections <- htmltools::tagAppendChildren(
+      report_sections,
+      htmltools::tags$h2("Overall (Blend vs Market)"),
+      if (!is.null(overall_blend_gt)) htmltools::HTML(gt::as_raw_html(overall_blend_gt)) else preformatted_df(overall_blend)
+    )
+  }
 
-if (!is.null(best_offers_widget)) {
-  report_sections <- htmltools::tagAppendChildren(
-    report_sections,
-    htmltools::tags$h2("Best Available Odds"),
-    best_offers_widget
-  )
-} else if (exists("best_offers") && nrow(best_offers)) {
-  report_sections <- htmltools::tagAppendChildren(
-    report_sections,
-    htmltools::tags$h2("Best Available Odds"),
-    preformatted_df(best_offers)
-  )
-}
+  if (!is.null(ci_tbl_blend)) {
+    report_sections <- htmltools::tagAppendChildren(
+      report_sections,
+      htmltools::tags$h2("Week-block bootstrap CI (Blend – Market)"),
+      if (!is.null(ci_blend_gt)) htmltools::HTML(gt::as_raw_html(ci_blend_gt)) else preformatted_df(ci_tbl_blend)
+    )
+  }
 
-report_file <- file.path(getwd(), "NFLvsmarket_report.html")
-if (htmlwidgets_available) {
-  htmlwidgets::saveWidget(htmlwidgets::browsable(report_sections), report_file, selfcontained = TRUE)
+  if (!is.null(bets_gt)) {
+    report_sections <- htmltools::tagAppendChildren(
+      report_sections,
+      htmltools::tags$h2("Best Bets vs Market"),
+      htmltools::HTML(gt::as_raw_html(bets_gt))
+    )
+  } else if (exists("bets_table") && nrow(bets_table)) {
+    report_sections <- htmltools::tagAppendChildren(
+      report_sections,
+      htmltools::tags$h2("Best Bets vs Market"),
+      preformatted_df(bets_table)
+    )
+  }
+
+  if (!is.null(best_offers_widget)) {
+    report_sections <- htmltools::tagAppendChildren(
+      report_sections,
+      htmltools::tags$h2("Best Available Odds"),
+      best_offers_widget
+    )
+  } else if (exists("best_offers") && nrow(best_offers)) {
+    report_sections <- htmltools::tagAppendChildren(
+      report_sections,
+      htmltools::tags$h2("Best Available Odds"),
+      preformatted_df(best_offers)
+    )
+  }
+
+  report_file <- file.path(getwd(), "NFLvsmarket_report.html")
+  if (htmlwidgets_available) {
+    htmlwidgets::saveWidget(htmlwidgets::browsable(report_sections), report_file, selfcontained = TRUE)
+  } else {
+    htmltools::save_html(report_sections, file = report_file)
+  }
+  message(sprintf("Saved HTML report to: %s", report_file))
+  try(utils::browseURL(report_file), silent = TRUE)
 } else {
-  htmltools::save_html(report_sections, file = report_file)
+  capture_df <- function(df) paste0(utils::capture.output(print(df)), collapse = "\n")
+  add_section <- function(acc, title, body_lines) {
+    if (length(body_lines) == 0) return(acc)
+    c(acc, sprintf("<h2>%s</h2>", title), "<pre>", body_lines, "</pre>")
+  }
+
+  html_lines <- c("<html>", "<head><meta charset=\"UTF-8\"></head>", "<body>",
+                  "<h1>NFL Model vs Market</h1>")
+  html_lines <- add_section(html_lines, "Overall (Model vs Market)", capture_df(overall_tbl))
+  html_lines <- add_section(html_lines, "Week-block bootstrap CI (Model – Market)", capture_df(ci_tbl))
+
+  if (!is.null(overall_blend)) {
+    html_lines <- add_section(html_lines, "Overall (Blend vs Market)", capture_df(overall_blend))
+  }
+  if (!is.null(ci_tbl_blend)) {
+    html_lines <- add_section(html_lines, "Week-block bootstrap CI (Blend – Market)", capture_df(ci_tbl_blend))
+  }
+
+  if (exists("bets_table") && nrow(bets_table)) {
+    html_lines <- add_section(html_lines, "Best Bets vs Market", capture_df(bets_table))
+  }
+  if (exists("best_offers") && nrow(best_offers)) {
+    html_lines <- add_section(html_lines, "Best Available Odds", capture_df(best_offers))
+  }
+
+  html_lines <- c(html_lines, "</body>", "</html>")
+
+  report_file <- file.path(getwd(), "NFLvsmarket_report.html")
+  writeLines(html_lines, con = report_file)
+  message(sprintf("Saved simplified HTML report to: %s", report_file))
+  try(utils::browseURL(report_file), silent = TRUE)
 }
-message(sprintf("Saved HTML report to: %s", report_file))
-try(utils::browseURL(report_file), silent = TRUE)
