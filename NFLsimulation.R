@@ -19,11 +19,30 @@ suppressPackageStartupMessages({
   library(dplyr, warn.conflicts = FALSE)
 })
 
-gt_available <- tryCatch(requireNamespace("gt", quietly = TRUE), error = function(e) FALSE)
-reactable_available <- tryCatch(requireNamespace("reactable", quietly = TRUE), error = function(e) FALSE)
+xfun_meets_min <- tryCatch({
+  if (!requireNamespace("xfun", quietly = TRUE)) {
+    TRUE
+  } else {
+    utils::packageVersion("xfun") >= "0.52"
+  }
+}, error = function(e) TRUE)
+
+has_namespace <- function(pkg, needs_new_xfun = FALSE) {
+  if (needs_new_xfun && !xfun_meets_min) {
+    return(FALSE)
+  }
+  tryCatch(requireNamespace(pkg, quietly = TRUE), error = function(e) FALSE)
+}
+
+gt_available <- has_namespace("gt", needs_new_xfun = TRUE)
+reactable_available <- has_namespace("reactable")
 
 if (!gt_available) {
-  message("Package 'gt' is not available (or requires a newer 'xfun'); skipping gt-based tables.")
+  if (!xfun_meets_min) {
+    message("Package 'gt' skipped because 'xfun' >= 0.52 is unavailable; falling back to simple tables.")
+  } else {
+    message("Package 'gt' is not available; skipping gt-based tables.")
+  }
 }
 if (!reactable_available) {
   message("Package 'reactable' is not available; interactive slate table will be skipped.")
@@ -2809,32 +2828,6 @@ score_weeks <- function(start_season, end_season, weeks = NULL, trials = 40000L)
 }
 american_to_prob <- function(odds) ifelse(odds < 0, (-odds)/((-odds)+100), 100/(odds+100))
 
-# --- POWER de-vig helpers (place directly ABOVE market_probs_from_sched) ---
-
-pow_devig_home <- function(ph, pa, tau = 1) {
-  ph <- pmin(pmax(ph, 1e-12), 1-1e-12)
-  pa <- pmin(pmax(pa, 1e-12), 1-1e-12)
-  num <- ph^tau
-  den <- ph^tau + pa^tau
-  ifelse(is.finite(den) & den > 0, num/den, NA_real_)
-}
-
-fit_tau <- function(ph, pa, y, loss = c("logloss","brier")) {
-  loss <- match.arg(loss)
-  f <- function(tau) {
-    p <- pow_devig_home(ph, pa, tau)
-    p <- pmin(pmax(p, 1e-12), 1-1e-12)
-    if (loss == "logloss") {
-      -mean(y*log(p) + (1-y)*log(1-p))
-    } else {
-      mean((p - y)^2)
-    }
-  }
-  # Practical box for τ
-  optimize(f, interval = c(0.6, 1.4))$minimum
-}
-
-
 fit_spread_to_prob <- function(df) {
   sp <- .pick_col2(df, c("close_spread","spread_close","home_spread_close",
                          "spread_line","spread","home_spread","spread_favorite"))
@@ -2918,44 +2911,47 @@ market_probs_from_sched <- function(sched_df) {
   .clp <- function(x, eps=1e-12) pmin(pmax(x, eps), 1-eps)
   .pick <- function(df, cands){ nm <- intersect(cands, names(df)); if (length(nm)) nm[1] else NA_character_ }
   american_to_prob <- function(odds) ifelse(odds < 0, (-odds)/((-odds)+100), 100/(odds+100))
-  
-  # 1) Closing moneylines first — now using power de-vig with fitted τ
+
+  # Closing moneylines preferred; fall back to spread-derived probabilities
   ml_home <- .pick(sched_df, c("home_ml_close","ml_home_close","moneyline_home_close","home_moneyline_close",
                                "home_ml","ml_home","moneyline_home","home_moneyline"))
   ml_away <- .pick(sched_df, c("away_ml_close","ml_away_close","moneyline_away_close","away_moneyline_close",
                                "away_ml","ml_away","moneyline_away","away_moneyline"))
-  
-  # also pick score columns to build historical outcomes for τ-fit
-  hp <- .pick(sched_df, c("home_score","home_points","score_home","home_pts"))
-  ap <- .pick(sched_df, c("away_score","away_points","score_away","away_pts"))
-  
+  sp_col <- .pick(sched_df, c("close_spread","spread_close","home_spread_close",
+                              "spread_line","spread","home_spread","spread_favorite"))
+
   if (!is.na(ml_home) && !is.na(ml_away)) {
     mm <- sched_df %>%
       dplyr::transmute(
         game_id, season, week,
-        ph = american_to_prob(suppressWarnings(as.numeric(.data[[ml_home]]))),
-        pa = american_to_prob(suppressWarnings(as.numeric(.data[[ml_away]]))),
-        # y is only for completed games; future games will be NA here (that’s fine)
-        y  = if (!is.na(hp) && !is.na(ap))
-          as.integer(suppressWarnings(as.numeric(.data[[hp]])) >
-                       suppressWarnings(as.numeric(.data[[ap]])))
-        else NA_integer_
+        p_home_raw = american_to_prob(suppressWarnings(as.numeric(.data[[ml_home]]))),
+        p_away_raw = american_to_prob(suppressWarnings(as.numeric(.data[[ml_away]])))
       )
-    
-    # Fit τ on completed games only; fall back to τ=1 if not enough data yet
-    hist <- mm %>% dplyr::filter(is.finite(ph), is.finite(pa), !is.na(y))
-    tau  <- if (nrow(hist) >= 500) fit_tau(hist$ph, hist$pa, hist$y, loss = "logloss") else 1
-    
     out <- mm %>%
       dplyr::mutate(
-        p_home_mkt_2w = pmin(pmax(pow_devig_home(ph, pa, tau), 1e-12), 1-1e-12)
+        den = p_home_raw + p_away_raw,
+        p_home_mkt_2w = .clp(ifelse(is.finite(den) & den > 0, p_home_raw/den, NA_real_))
       ) %>%
       dplyr::filter(is.finite(p_home_mkt_2w)) %>%
       dplyr::select(game_id, season, week, p_home_mkt_2w)
-    
+
     if (nrow(out)) return(out)
   }
-  
+
+  if (!is.na(sp_col)) {
+    out <- sched_df %>%
+      dplyr::transmute(
+        game_id, season, week,
+        home_spread = suppressWarnings(as.numeric(.data[[sp_col]]))
+      ) %>%
+      dplyr::filter(is.finite(home_spread)) %>%
+      dplyr::mutate(p_home_mkt_2w = .clp(map_spread_prob(home_spread))) %>%
+      dplyr::filter(is.finite(p_home_mkt_2w)) %>%
+      dplyr::select(game_id, season, week, p_home_mkt_2w)
+
+    if (nrow(out)) return(out)
+  }
+
   stop("No closing moneyline or spread column to derive market probabilities.")
 }
 
@@ -3649,17 +3645,31 @@ pretty_df <- final |>
   ) |>
   dplyr::mutate(
     dow      = lubridate::wday(date, label = TRUE, abbr = TRUE),
-    
-    # FAVORITE **from calibrated 3-way**
-    fav_team = dplyr::if_else(home_win_prob_blend >= away_win_prob_blend, home_team, away_team),
-    fav_prob = pmax(home_win_prob_blend, away_win_prob_blend),
-    
-    win_tier = dplyr::case_when(
-      fav_prob < 0.55 ~ "Coin flip (<55%)",
-      fav_prob < 0.65 ~ "Lean (55–65%)",
-      fav_prob < 0.75 ~ "Strong (65–75%)",
-      TRUE            ~ "Heavy (75%+)"
+
+    # Model-only favorite and probabilities (calibrated 3-way)
+    fav_team_model = dplyr::if_else(home_win_prob_cal >= away_win_prob_cal, home_team, away_team),
+    fav_prob_model = pmax(home_win_prob_cal, away_win_prob_cal),
+    win_tier_model = dplyr::case_when(
+      fav_prob_model < 0.55 ~ "Coin flip (<55%)",
+      fav_prob_model < 0.65 ~ "Lean (55–65%)",
+      fav_prob_model < 0.75 ~ "Strong (65–75%)",
+      TRUE                  ~ "Heavy (75%+)"
     ),
+
+    # Blended (model ⊕ market) favorite/probabilities for comparison
+    fav_team_blend = dplyr::if_else(home_win_prob_blend >= away_win_prob_blend, home_team, away_team),
+    fav_prob_blend = pmax(home_win_prob_blend, away_win_prob_blend),
+    win_tier_blend = dplyr::case_when(
+      fav_prob_blend < 0.55 ~ "Coin flip (<55%)",
+      fav_prob_blend < 0.65 ~ "Lean (55–65%)",
+      fav_prob_blend < 0.75 ~ "Strong (65–75%)",
+      TRUE                  ~ "Heavy (75%+)"
+    ),
+
+    # Preserve legacy names for downstream usage (now explicitly model-based)
+    fav_team = fav_team_model,
+    fav_prob = fav_prob_model,
+    win_tier = win_tier_model,
     total_bucket = dplyr::case_when(
       total_mean >= 50 ~ "Shootout (50+)",
       total_mean <= 41 ~ "Grinder (≤41)",
@@ -3680,12 +3690,18 @@ rt_df <- pretty_df %>%
     Day = as.character(dow),
     Date = format(date, "%b %d"),
     Matchup = matchup,
-    Favorite = fav_team,                 # already computed earlier in pretty_df
-    `Fav Win% (3W)` = fav_prob,          # already computed earlier in pretty_df
-    `Home% (3-way)` = home_win_prob_blend,
-    `Away% (3-way)` = away_win_prob_blend,
-    `Home% (2-way)` = home_p_2w_blend,
-    `Away% (2-way)` = 1 - home_p_2w_blend,
+    `Favorite (Model)` = fav_team,
+    `Favorite (Blend)` = fav_team_blend,
+    `Fav Win% (Model 3W)` = fav_prob,
+    `Fav Win% (Blend 3W)` = fav_prob_blend,
+    `Home% (Model 3-way)` = home_win_prob_cal,
+    `Away% (Model 3-way)` = away_win_prob_cal,
+    `Home% (Blend 3-way)` = home_win_prob_blend,
+    `Away% (Blend 3-way)` = away_win_prob_blend,
+    `Home% (Model 2-way)` = home_p_2w_cal,
+    `Away% (Model 2-way)` = away_p_2w_cal,
+    `Home% (Blend 2-way)` = home_p_2w_blend,
+    `Away% (Blend 2-way)` = 1 - home_p_2w_blend,
     `Tie%`      = tie_prob,
     `Proj Home` = proj_home_score,
     `Proj Away` = proj_away_score,
@@ -3711,10 +3727,10 @@ if (reactable_available) {
     defaultPageSize = 25,
     striped = TRUE,
     highlight = TRUE,
-    defaultSorted = list("Date" = "asc", "Fav Win% (3W)" = "desc"),
+    defaultSorted = list("Date" = "asc", "Fav Win% (Model 3W)" = "desc"),
     groupBy = "Day",
     columns = list(
-      `Fav Win% (3W)` = reactable::colDef(
+      `Fav Win% (Model 3W)` = reactable::colDef(
         format = reactable::colFormat(percent = TRUE, digits = 1),
         align = "center",
         style = function(value) list(
@@ -3722,11 +3738,16 @@ if (reactable_available) {
           color = if (is.na(value) || value < 0.72) "black" else "white"
         )
       ),
-      `Home% (3-way)` = reactable::colDef(format = reactable::colFormat(percent = TRUE, digits = 1), align = "center"),
-      `Away% (3-way)` = reactable::colDef(format = reactable::colFormat(percent = TRUE, digits = 1), align = "center"),
+      `Fav Win% (Blend 3W)` = reactable::colDef(format = reactable::colFormat(percent = TRUE, digits = 1), align = "center"),
+      `Home% (Model 3-way)` = reactable::colDef(format = reactable::colFormat(percent = TRUE, digits = 1), align = "center"),
+      `Away% (Model 3-way)` = reactable::colDef(format = reactable::colFormat(percent = TRUE, digits = 1), align = "center"),
+      `Home% (Blend 3-way)` = reactable::colDef(format = reactable::colFormat(percent = TRUE, digits = 1), align = "center"),
+      `Away% (Blend 3-way)` = reactable::colDef(format = reactable::colFormat(percent = TRUE, digits = 1), align = "center"),
       `Tie%`          = reactable::colDef(format = reactable::colFormat(percent = TRUE, digits = 2), align = "center"),
-      `Home% (2-way)` = reactable::colDef(format = reactable::colFormat(percent = TRUE, digits = 1), align = "center"),
-      `Away% (2-way)` = reactable::colDef(format = reactable::colFormat(percent = TRUE, digits = 1), align = "center"),
+      `Home% (Model 2-way)` = reactable::colDef(format = reactable::colFormat(percent = TRUE, digits = 1), align = "center"),
+      `Away% (Model 2-way)` = reactable::colDef(format = reactable::colFormat(percent = TRUE, digits = 1), align = "center"),
+      `Home% (Blend 2-way)` = reactable::colDef(format = reactable::colFormat(percent = TRUE, digits = 1), align = "center"),
+      `Away% (Blend 2-way)` = reactable::colDef(format = reactable::colFormat(percent = TRUE, digits = 1), align = "center"),
       `Total (μ)`     = reactable::colDef(
         format = reactable::colFormat(digits = 1),
         align = "center",
@@ -3734,7 +3755,8 @@ if (reactable_available) {
       ),
       `Proj Home` = reactable::colDef(align = "center"),
       `Proj Away` = reactable::colDef(align = "center"),
-      Favorite    = reactable::colDef(align = "center"),
+      `Favorite (Model)` = reactable::colDef(align = "center"),
+      `Favorite (Blend)` = reactable::colDef(align = "center"),
       Date        = reactable::colDef(align = "center"),
       Day         = reactable::colDef(align = "center")
     ),
