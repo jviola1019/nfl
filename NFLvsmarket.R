@@ -406,7 +406,12 @@ mkt_df <- market_probs_from_sched(sched, spread_mapper = spread_mapper)
 
 comp <- eval_df %>%
   left_join(mkt_df, by = c("game_id","season","week")) %>%
-  mutate(p_mkt = dplyr::coalesce(p_mkt_res, .clp(p_home_mkt_2w))) %>%
+  mutate(
+    p_mkt = dplyr::coalesce(
+      if ("p_home_mkt_2w" %in% names(.)) .clp(p_home_mkt_2w) else NA_real_,
+      .clp(p_mkt_res)
+    )
+  ) %>%
   filter(is.finite(p_mkt))
 
 model_candidates <- tibble::tibble(
