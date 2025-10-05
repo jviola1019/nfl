@@ -402,7 +402,47 @@ if (nrow(week_slate) == 0) stop(sprintf("No games found for %s Wk %s.", SEASON, 
 teams_on_slate <- sort(unique(c(week_slate$home_team, week_slate$away_team)))
 
 # ───────────────────────── INJURIES (schema-agnostic + safe) ──────────────────
-inj_all <- nflreadr::load_injuries(
+safe_load_injuries <- function(seasons, ...) {
+  seasons <- sort(unique(seasons))
+  if (!length(seasons)) {
+    return(tibble())
+  }
+
+  missing <- integer(0)
+  pieces <- lapply(seasons, function(season) {
+    tryCatch(
+      nflreadr::load_injuries(seasons = season, ...),
+      error = function(e) {
+        msg <- conditionMessage(e)
+        if (grepl("404", msg, fixed = TRUE)) {
+          missing <<- c(missing, season)
+          message(sprintf(
+            "Injury release for season %s is unavailable yet; skipping it.",
+            season
+          ))
+          return(tibble())
+        }
+        stop(e)
+      }
+    )
+  })
+
+  injuries <- dplyr::bind_rows(pieces)
+
+  if (length(missing)) {
+    warning(
+      sprintf(
+        "Injury releases missing for seasons: %s. Downstream metrics will omit those seasons.",
+        paste(missing, collapse = ", ")
+      ),
+      call. = FALSE
+    )
+  }
+
+  injuries
+}
+
+inj_all <- safe_load_injuries(
   seasons = sort(unique(sched$season)),
   file_type = getOption("nflreadr.prefer", default = "rds")
 )
@@ -792,7 +832,7 @@ if (isTRUE(getOption("live_refresh", FALSE))) {
   old_cache <- getOption("nflreadr.cache", TRUE)
   options(nflreadr.cache = FALSE)
   pbp_hist <- nflreadr::load_pbp(seasons = seasons_pbp)
-  inj_all  <- nflreadr::load_injuries(
+  inj_all  <- safe_load_injuries(
     seasons  = SEASON,
     file_type = getOption("nflreadr.prefer", default = "rds")
   )
