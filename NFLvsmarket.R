@@ -256,9 +256,11 @@ learn_spread_map <- function(sched_df) {
   sp_col <- pick_col(sched_df, c("close_spread","spread_close","home_spread_close",
                                  "spread_line","spread","home_spread"))
   ml_h   <- pick_col(sched_df, c("home_ml_close","ml_home_close","moneyline_home_close",
-                                 "home_moneyline_close","home_ml","ml_home","moneyline_home"))
+                                 "home_moneyline_close","home_ml","ml_home","moneyline_home",
+                                 "home_moneyline"))
   ml_a   <- pick_col(sched_df, c("away_ml_close","ml_away_close","moneyline_away_close",
-                                 "away_moneyline_close","away_ml","ml_away","moneyline_away"))
+                                 "away_moneyline_close","away_ml","ml_away","moneyline_away",
+                                 "away_moneyline"))
   if (is.na(sp_col)) return(NULL)
   
   df <- sched_df %>%
@@ -299,9 +301,11 @@ market_probs_from_sched <- function(sched_df, spread_mapper = NULL) {
   sp_col <- pick_col(sched_df, c("close_spread","spread_close","home_spread_close",
                                  "spread_line","spread","home_spread"))
   ml_h   <- pick_col(sched_df, c("home_ml_close","ml_home_close","moneyline_home_close",
-                                 "home_moneyline_close","home_ml","ml_home","moneyline_home"))
+                                 "home_moneyline_close","home_ml","ml_home","moneyline_home",
+                                 "home_moneyline"))
   ml_a   <- pick_col(sched_df, c("away_ml_close","ml_away_close","moneyline_away_close",
-                                 "away_moneyline_close","away_ml","ml_away","moneyline_away"))
+                                 "away_moneyline_close","away_ml","ml_away","moneyline_away",
+                                 "away_moneyline"))
   
   base <- sched_df %>%
     filter(game_type %in% c("REG","Regular")) %>%
