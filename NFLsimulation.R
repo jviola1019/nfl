@@ -8,9 +8,7 @@ suppressPackageStartupMessages({
   library(tidyverse)
   library(lubridate)
   library(nflreadr)
-  library(gt)
   library(scales)
-  library(reactable)
   library(digest)
   library(glmmTMB)   # NB GLMM
   library(nnet)      # multinomial calibration
@@ -20,6 +18,16 @@ suppressPackageStartupMessages({
   options(live_refresh = TRUE)
   library(dplyr, warn.conflicts = FALSE)
 })
+
+gt_available <- tryCatch(requireNamespace("gt", quietly = TRUE), error = function(e) FALSE)
+reactable_available <- tryCatch(requireNamespace("reactable", quietly = TRUE), error = function(e) FALSE)
+
+if (!gt_available) {
+  message("Package 'gt' is not available (or requires a newer 'xfun'); skipping gt-based tables.")
+}
+if (!reactable_available) {
+  message("Package 'reactable' is not available; interactive slate table will be skipped.")
+}
 
 # Only define if it doesn't already exist
 if (!exists(".get_this_file", inherits = FALSE)) {
@@ -3654,49 +3662,53 @@ print(
 )
 
 
-# Render reactable
-reactable::reactable(
-  rt_df,
-  searchable = TRUE,
-  pagination = TRUE,
-  defaultPageSize = 25,
-  striped = TRUE,
-  highlight = TRUE,
-  defaultSorted = list("Date" = "asc", "Fav Win% (3W)" = "desc"),
-  groupBy = "Day",
-  columns = list(
-    `Fav Win% (3W)` = colDef(
-      format = colFormat(percent = TRUE, digits = 1),
-      align = "center",
-      style = function(value) list(
-        background = pal_fav(value),
-        color = if (is.na(value) || value < 0.72) "black" else "white"
-      )
+if (reactable_available) {
+  # Render reactable
+  reactable::reactable(
+    rt_df,
+    searchable = TRUE,
+    pagination = TRUE,
+    defaultPageSize = 25,
+    striped = TRUE,
+    highlight = TRUE,
+    defaultSorted = list("Date" = "asc", "Fav Win% (3W)" = "desc"),
+    groupBy = "Day",
+    columns = list(
+      `Fav Win% (3W)` = reactable::colDef(
+        format = reactable::colFormat(percent = TRUE, digits = 1),
+        align = "center",
+        style = function(value) list(
+          background = pal_fav(value),
+          color = if (is.na(value) || value < 0.72) "black" else "white"
+        )
+      ),
+      `Home% (3-way)` = reactable::colDef(format = reactable::colFormat(percent = TRUE, digits = 1), align = "center"),
+      `Away% (3-way)` = reactable::colDef(format = reactable::colFormat(percent = TRUE, digits = 1), align = "center"),
+      `Tie%`          = reactable::colDef(format = reactable::colFormat(percent = TRUE, digits = 2), align = "center"),
+      `Home% (2-way)` = reactable::colDef(format = reactable::colFormat(percent = TRUE, digits = 1), align = "center"),
+      `Away% (2-way)` = reactable::colDef(format = reactable::colFormat(percent = TRUE, digits = 1), align = "center"),
+      `Total (μ)`     = reactable::colDef(
+        format = reactable::colFormat(digits = 1),
+        align = "center",
+        style = function(value) list(background = pal_total(value), color = "black")
+      ),
+      `Proj Home` = reactable::colDef(align = "center"),
+      `Proj Away` = reactable::colDef(align = "center"),
+      Favorite    = reactable::colDef(align = "center"),
+      Date        = reactable::colDef(align = "center"),
+      Day         = reactable::colDef(align = "center")
     ),
-    `Home% (3-way)` = colDef(format = colFormat(percent = TRUE, digits = 1), align = "center"),
-    `Away% (3-way)` = colDef(format = colFormat(percent = TRUE, digits = 1), align = "center"),
-    `Tie%`          = colDef(format = colFormat(percent = TRUE, digits = 2), align = "center"),
-    `Home% (2-way)` = colDef(format = colFormat(percent = TRUE, digits = 1), align = "center"),
-    `Away% (2-way)` = colDef(format = colFormat(percent = TRUE, digits = 1), align = "center"),
-    `Total (μ)`     = colDef(
-      format = colFormat(digits = 1),
-      align = "center",
-      style = function(value) list(background = pal_total(value), color = "black")
-    ),
-    `Proj Home` = colDef(align = "center"),
-    `Proj Away` = colDef(align = "center"),
-    Favorite    = colDef(align = "center"),
-    Date        = colDef(align = "center"),
-    Day         = colDef(align = "center")
-  ),
-  theme = reactable::reactableTheme(
-    borderColor = "#e5e7eb",
-    stripedColor = "#f9fafb",
-    highlightColor = "#eef2ff",
-    cellPadding = "8px 10px",
-    tableStyle = list(fontFamily = "system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif")
+    theme = reactable::reactableTheme(
+      borderColor = "#e5e7eb",
+      stripedColor = "#f9fafb",
+      highlightColor = "#eef2ff",
+      cellPadding = "8px 10px",
+      tableStyle = list(fontFamily = "system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif")
+    )
   )
-)
+} else {
+  message("Interactive slate table skipped because 'reactable' is not available.")
+}
 
 log_dir <- file.path(getwd(), "run_logs")
 if (!dir.exists(log_dir)) dir.create(log_dir, recursive = TRUE)
