@@ -3646,9 +3646,9 @@ pretty_df <- final |>
   dplyr::mutate(
     dow      = lubridate::wday(date, label = TRUE, abbr = TRUE),
 
-    # Model-only favorite and probabilities direct from the simulation
-    fav_team_model = dplyr::if_else(home_win_prob >= away_win_prob, home_team, away_team),
-    fav_prob_model = pmax(home_win_prob, away_win_prob),
+    # Model-only favorite and probabilities (calibrated 3-way)
+    fav_team_model = dplyr::if_else(home_win_prob_cal >= away_win_prob_cal, home_team, away_team),
+    fav_prob_model = pmax(home_win_prob_cal, away_win_prob_cal),
     win_tier_model = dplyr::case_when(
       fav_prob_model < 0.55 ~ "Coin flip (<55%)",
       fav_prob_model < 0.65 ~ "Lean (55–65%)",
@@ -3694,12 +3694,12 @@ rt_df <- pretty_df %>%
     `Favorite (Blend)` = fav_team_blend,
     `Fav Win% (Model 3W)` = fav_prob,
     `Fav Win% (Blend 3W)` = fav_prob_blend,
-    `Home% (Model 3-way)` = home_win_prob,
-    `Away% (Model 3-way)` = away_win_prob,
+    `Home% (Model 3-way)` = home_win_prob_cal,
+    `Away% (Model 3-way)` = away_win_prob_cal,
     `Home% (Blend 3-way)` = home_win_prob_blend,
     `Away% (Blend 3-way)` = away_win_prob_blend,
-    `Home% (Model 2-way)` = home_p_2w_raw,
-    `Away% (Model 2-way)` = away_p_2w_raw,
+    `Home% (Model 2-way)` = home_p_2w_cal,
+    `Away% (Model 2-way)` = away_p_2w_cal,
     `Home% (Blend 2-way)` = home_p_2w_blend,
     `Away% (Blend 2-way)` = 1 - home_p_2w_blend,
     `Tie%`      = tie_prob,
