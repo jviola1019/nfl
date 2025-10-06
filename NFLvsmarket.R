@@ -99,6 +99,14 @@ expected_value_units <- function(prob, odds) {
   ifelse(is.finite(dec), prob * (dec - 1) - (1 - prob), NA_real_)
 }
 
+safe_weighted_mean <- function(x, w) {
+  keep <- is.finite(x) & is.finite(w)
+  if (!any(keep)) {
+    return(NA_real_)
+  }
+  stats::weighted.mean(x[keep], w[keep], na.rm = TRUE)
+}
+
 format_line <- function(x) {
   ifelse(
     is.na(x),
@@ -458,16 +466,19 @@ comp <- eval_df %>%
     p_mkt = dplyr::coalesce(
       if ("p_home_mkt_2w" %in% names(.)) .clp(p_home_mkt_2w) else NA_real_,
       .clp(p_mkt_res)
-    )
+    ),
+    prob_model = .clp(p_model),
+    prob_blend = if ("p_blend" %in% names(.)) .clp(p_blend) else NA_real_
   ) %>%
   filter(is.finite(p_mkt))
 
-prob_source <- if (any(is.finite(comp$p_blend))) "p_blend" else "p_model"
-model_label <- if (prob_source == "p_blend") "Blend" else "Model"
+prob_has_blend <- any(is.finite(comp$prob_blend))
+prob_source <- if (prob_has_blend) "p_blend" else "p_model"
+model_label <- if (prob_has_blend) "Blend" else "Model"
 comp <- comp %>%
   mutate(
-    prob_eval = if (prob_source == "p_blend")
-      dplyr::coalesce(.clp(p_blend), .clp(p_model)) else .clp(p_model)
+    prob_eval = if (prob_has_blend)
+      dplyr::coalesce(prob_blend, prob_model) else prob_model
   )
 
 metrics_eval <- score_metrics(comp$prob_eval, comp$y2)
@@ -480,75 +491,119 @@ message(sprintf(
 preferred_final_prob_col <- if (prob_source == "p_blend") "home_p_2w_blend" else "home_p_2w_cal"
 
 # ------------------ Print headline table (preferred vs Market) ---------------
-overall_tbl <- comp %>%
+overall_weekly <- comp %>%
   group_by(season, week) %>%
   summarise(
     n_games = n(),
-    Brier_eval = brier(prob_eval, y2),
+    Brier_model = brier(prob_model, y2),
+    LogL_model  = logloss(prob_model, y2),
+    Brier_blend = if (prob_has_blend) brier(prob_blend, y2) else NA_real_,
+    LogL_blend  = if (prob_has_blend) logloss(prob_blend, y2) else NA_real_,
     Brier_mkt   = brier(p_mkt,   y2),
-    LogL_eval  = logloss(prob_eval, y2),
     LogL_mkt    = logloss(p_mkt,   y2),
     .groups = "drop"
-  ) %>%
+  )
+
+overall_tbl <- overall_weekly %>%
   summarise(
     n_weeks = n(),
-    Brier_eval = stats::weighted.mean(Brier_eval, n_games, na.rm = TRUE),
-    Brier_mkt   = stats::weighted.mean(Brier_mkt,   n_games, na.rm = TRUE),
-    LogL_eval  = stats::weighted.mean(LogL_eval,  n_games, na.rm = TRUE),
-    LogL_mkt    = stats::weighted.mean(LogL_mkt,    n_games, na.rm = TRUE),
-    total_games = sum(n_games),
+    n_games = sum(n_games),
+    Brier_model = safe_weighted_mean(Brier_model, n_games),
+    LogL_model  = safe_weighted_mean(LogL_model,  n_games),
+    Brier_blend = if (prob_has_blend) safe_weighted_mean(Brier_blend, n_games) else NA_real_,
+    LogL_blend  = if (prob_has_blend) safe_weighted_mean(LogL_blend,  n_games) else NA_real_,
+    Brier_mkt   = safe_weighted_mean(Brier_mkt,   n_games),
+    LogL_mkt    = safe_weighted_mean(LogL_mkt,    n_games),
+    Brier_model_median = stats::median(Brier_model, na.rm = TRUE),
+    LogL_model_median  = stats::median(LogL_model, na.rm = TRUE),
+    Brier_blend_median = if (prob_has_blend) stats::median(Brier_blend, na.rm = TRUE) else NA_real_,
+    LogL_blend_median  = if (prob_has_blend) stats::median(LogL_blend, na.rm = TRUE) else NA_real_,
+    Brier_mkt_median   = stats::median(Brier_mkt, na.rm = TRUE),
+    LogL_mkt_median    = stats::median(LogL_mkt, na.rm = TRUE),
     .groups = "drop"
   ) %>%
   mutate(
-    n_games = total_games
-  ) %>%
-  select(-total_games)
+    Brier_model_delta = Brier_model - Brier_mkt,
+    LogL_model_delta  = LogL_model  - LogL_mkt,
+    Brier_blend_delta = if (prob_has_blend) Brier_blend - Brier_mkt else NA_real_,
+    LogL_blend_delta  = if (prob_has_blend) LogL_blend  - LogL_mkt else NA_real_,
+    Brier_model_delta_median = Brier_model_median - Brier_mkt_median,
+    LogL_model_delta_median  = LogL_model_median  - LogL_mkt_median,
+    Brier_blend_delta_median = if (prob_has_blend) Brier_blend_median - Brier_mkt_median else NA_real_,
+    LogL_blend_delta_median  = if (prob_has_blend) LogL_blend_median  - LogL_mkt_median else NA_real_
+  )
 
-if (model_label == "Blend") {
-  overall_tbl <- overall_tbl %>%
-    rename(
-      Brier_blend = Brier_eval,
-      LogL_blend = LogL_eval
-    ) %>%
-    mutate(
-      Brier_delta = Brier_blend - Brier_mkt,
-      LogL_delta  = LogL_blend  - LogL_mkt
-    )
-} else {
-  overall_tbl <- overall_tbl %>%
-    rename(
-      Brier_model = Brier_eval,
-      LogL_model = LogL_eval
-    ) %>%
-    mutate(
-      Brier_delta = Brier_model - Brier_mkt,
-      LogL_delta  = LogL_model  - LogL_mkt
-    )
-}
+overall_display_label <- if (prob_has_blend) "Model & Blend" else model_label
 
-message(sprintf("\n=== Overall (%s vs Market) ===", model_label))
+overall_tbl <- overall_tbl %>%
+  select(any_of(c(
+    "n_weeks", "n_games",
+    "Brier_model", if (prob_has_blend) "Brier_blend", "Brier_mkt",
+    "Brier_model_delta", if (prob_has_blend) "Brier_blend_delta",
+    "Brier_model_median", if (prob_has_blend) "Brier_blend_median", "Brier_mkt_median",
+    "Brier_model_delta_median", if (prob_has_blend) "Brier_blend_delta_median",
+    "LogL_model", if (prob_has_blend) "LogL_blend", "LogL_mkt",
+    "LogL_model_delta", if (prob_has_blend) "LogL_blend_delta",
+    "LogL_model_median", if (prob_has_blend) "LogL_blend_median", "LogL_mkt_median",
+    "LogL_model_delta_median", if (prob_has_blend) "LogL_blend_delta_median"
+  )))
+
+message(sprintf("\n=== Overall (%s vs Market) ===", overall_display_label))
 print(overall_tbl)
 
-ci_tbl <- bootstrap_week_ci(comp, p_col_model = "prob_eval", p_col_mkt = "p_mkt", n_boot = N_BOOT, model_label = model_label)
-message(sprintf("\n=== Week-block bootstrap CI (%s – Market) ===", model_label))
+ci_tbl_model <- bootstrap_week_ci(comp, p_col_model = "prob_model", p_col_mkt = "p_mkt", n_boot = N_BOOT, model_label = "Model")
+ci_tbl_blend <- if (prob_has_blend) {
+  bootstrap_week_ci(comp, p_col_model = "prob_blend", p_col_mkt = "p_mkt", n_boot = N_BOOT, model_label = "Blend")
+} else {
+  tibble::tibble()
+}
+
+ci_tbl <- dplyr::bind_rows(ci_tbl_model, ci_tbl_blend)
+ci_display_label <- if (prob_has_blend) "Model & Blend" else model_label
+message(sprintf("\n=== Week-block bootstrap CI (%s – Market) ===", ci_display_label))
 print(ci_tbl)
 
 overall_gt <- NULL
 ci_gt <- NULL
 
 if (gt_available) {
+  num_cols <- names(overall_tbl)[vapply(overall_tbl, is.numeric, logical(1))]
   overall_gt <- overall_tbl %>%
     gt::gt() %>%
-    gt::fmt_number(
-      columns = c(
-        intersect(c("Brier_model", "Brier_blend"), names(overall_tbl)),
-        "Brier_mkt", "Brier_delta",
-        intersect(c("LogL_model", "LogL_blend"), names(overall_tbl)),
-        "LogL_mkt", "LogL_delta"
-      ),
-      decimals = 6
+    gt::fmt_number(columns = setdiff(num_cols, c("n_weeks", "n_games")), decimals = 6) %>%
+    gt::fmt_number(columns = c("n_weeks", "n_games"), decimals = 0) %>%
+    gt::tab_spanner(
+      label = "Brier (Mean)",
+      columns = intersect(c("Brier_model", "Brier_blend", "Brier_mkt"), names(overall_tbl))
     ) %>%
-    gt::fmt_number(columns = "n_games", decimals = 0)
+    gt::tab_spanner(
+      label = "Brier Δ (Mean)",
+      columns = intersect(c("Brier_model_delta", "Brier_blend_delta"), names(overall_tbl))
+    ) %>%
+    gt::tab_spanner(
+      label = "Brier (Median)",
+      columns = intersect(c("Brier_model_median", "Brier_blend_median", "Brier_mkt_median"), names(overall_tbl))
+    ) %>%
+    gt::tab_spanner(
+      label = "Brier Δ (Median)",
+      columns = intersect(c("Brier_model_delta_median", "Brier_blend_delta_median"), names(overall_tbl))
+    ) %>%
+    gt::tab_spanner(
+      label = "LogLoss (Mean)",
+      columns = intersect(c("LogL_model", "LogL_blend", "LogL_mkt"), names(overall_tbl))
+    ) %>%
+    gt::tab_spanner(
+      label = "LogLoss Δ (Mean)",
+      columns = intersect(c("LogL_model_delta", "LogL_blend_delta"), names(overall_tbl))
+    ) %>%
+    gt::tab_spanner(
+      label = "LogLoss (Median)",
+      columns = intersect(c("LogL_model_median", "LogL_blend_median", "LogL_mkt_median"), names(overall_tbl))
+    ) %>%
+    gt::tab_spanner(
+      label = "LogLoss Δ (Median)",
+      columns = intersect(c("LogL_model_delta_median", "LogL_blend_delta_median"), names(overall_tbl))
+    )
 
   ci_gt <- ci_tbl %>%
     gt::gt() %>%
@@ -745,15 +800,27 @@ if (exists("final")) {
         `EV (1u)` = ev_units,
         `Fair ML (Model)` = fair_ml_model,
         `Fair ML (Market)` = fair_ml_mkt,
-        `Model Source` = model_source
+        `Model Source` = model_source,
+        `Value Tier` = dplyr::case_when(
+          `EV (1u)` >= 0.05 ~ "High Value",
+          `EV (1u)` >= 0.02 ~ "Worth Watching",
+          `EV (1u)` >= 0     ~ "Lean",
+          TRUE ~ "Pass"
+        )
       ) %>%
       select(date, matchup, `Side`, `Edge`, `Model`, `Market`, `Best Odds`, `Best Book`, `EV (1u)`,
-             `Fair ML (Model)`, `Fair ML (Market)`, `Model Source`)
+             `Value Tier`, `Fair ML (Model)`, `Fair ML (Market)`, `Model Source`)
 
     edge_domain <- range(bets_table$`Edge`, na.rm = TRUE)
     if (!all(is.finite(edge_domain))) edge_domain <- c(-0.1, 0.1)
     edge_domain <- c(min(edge_domain[1], -0.1), max(edge_domain[2], 0.1))
     palette_edge <- scales::col_numeric("RdYlGn", domain = edge_domain)
+    tier_colors <- c(
+      "High Value" = "#006d2c",
+      "Worth Watching" = "#31a354",
+      "Lean" = "#fd8d3c",
+      "Pass" = "#de2d26"
+    )
 
     if (gt_available) {
       bets_gt <- bets_table %>%
@@ -772,6 +839,16 @@ if (exists("final")) {
         gt::data_color(
           columns = `Edge`,
           colors = function(x) palette_edge(scales::squish(x, edge_domain))
+        ) %>%
+        gt::text_transform(
+          locations = gt::cells_body(columns = `Value Tier`),
+          fn = function(x) {
+            purrr::map_chr(x, function(val) {
+              col <- tier_colors[[val]]
+              if (is.null(col)) col <- "#6c757d"
+              glue::glue("<span style=\"display:inline-block;padding:4px 8px;border-radius:12px;background:{col};color:white;font-weight:600;\">{val}</span>")
+            })
+          }
         )
 
       print(bets_gt)
@@ -898,25 +975,185 @@ if (htmltools_available) {
   message(sprintf("Saved HTML report to: %s", report_file))
   try(utils::browseURL(report_file), silent = TRUE)
 } else {
-  capture_df <- function(df) paste0(utils::capture.output(print(df)), collapse = "\n")
-  add_section <- function(acc, title, body_lines) {
-    if (length(body_lines) == 0) return(acc)
-    c(acc, sprintf("<h2>%s</h2>", title), "<pre>", body_lines, "</pre>")
+  html_escape <- function(text) {
+    text <- as.character(text)
+    text <- gsub("&", "&amp;", text, fixed = TRUE)
+    text <- gsub("<", "&lt;", text, fixed = TRUE)
+    text <- gsub(">", "&gt;", text, fixed = TRUE)
+    text <- gsub('"', "&quot;", text, fixed = TRUE)
+    text
   }
 
-  html_lines <- c("<html>", "<head><meta charset=\"UTF-8\"></head>", "<body>",
-                  "<h1>NFL Model vs Market</h1>")
-  html_lines <- add_section(html_lines, sprintf("Overall (%s vs Market)", model_label), capture_df(overall_tbl))
-  html_lines <- add_section(html_lines, sprintf("Week-block bootstrap CI (%s – Market)", model_label), capture_df(ci_tbl))
+  df_to_html_table <- function(df, classes = "data-table", row_class = NULL, escape_cols = names(df)) {
+    if (!nrow(df)) return(character())
+    headers <- paste0("<tr>", paste0(sprintf("<th>%s</th>", html_escape(names(df))), collapse = ""), "</tr>")
+    rows <- purrr::map_chr(seq_len(nrow(df)), function(i) {
+      cells <- purrr::map_chr(seq_along(df), function(j) {
+        col_name <- names(df)[j]
+        raw_value <- df[[j]][i]
+        if (is.na(raw_value)) {
+          value <- "—"
+        } else {
+          value <- as.character(raw_value)
+          if (!nzchar(value)) value <- "—"
+        }
+        if (col_name %in% escape_cols) {
+          value <- html_escape(value)
+        }
+        sprintf("<td>%s</td>", value)
+      })
+      row_cls <- if (!is.null(row_class) && length(row_class) >= i) row_class[i] else ""
+      if (nzchar(row_cls)) {
+        sprintf("<tr class=\"%s\">%s</tr>", row_cls, paste0(cells, collapse = ""))
+      } else {
+        sprintf("<tr>%s</tr>", paste0(cells, collapse = ""))
+      }
+    })
+    c(sprintf("<table class=\"%s\">", classes), headers, rows, "</table>")
+  }
+
+  format_overall_for_html <- function(df) {
+    if (!nrow(df)) return(df)
+    df_fmt <- df
+    num_cols <- setdiff(names(df_fmt)[vapply(df_fmt, is.numeric, logical(1))], c("n_weeks", "n_games"))
+    if (length(num_cols)) {
+      df_fmt <- df_fmt %>%
+        mutate(across(all_of(num_cols), ~ ifelse(is.na(.), NA_character_, formatC(., format = "f", digits = 6))))
+    }
+    for (col in intersect(c("n_weeks", "n_games"), names(df_fmt))) {
+      df_fmt[[col]] <- ifelse(is.na(df[[col]]), "—", formatC(df[[col]], format = "d"))
+    }
+    df_fmt %>% mutate(across(everything(), as.character))
+  }
+
+  format_ci_for_html <- function(df) {
+    if (!nrow(df)) return(df)
+    df %>% mutate(
+      across(where(is.numeric), ~ ifelse(is.na(.), NA_character_, formatC(., format = "f", digits = 6)))
+    ) %>% mutate(across(everything(), as.character))
+  }
+
+  format_best_bets_for_html <- function(df) {
+    if (!nrow(df)) return(df)
+    df %>%
+      mutate(
+        date = format(as.Date(date), "%a %b %d"),
+        `Edge` = ifelse(is.na(`Edge`), NA_character_, scales::percent(`Edge`, accuracy = 0.1)),
+        `Model` = ifelse(is.na(`Model`), NA_character_, scales::percent(`Model`, accuracy = 0.1)),
+        `Market` = ifelse(is.na(`Market`), NA_character_, scales::percent(`Market`, accuracy = 0.1)),
+        `Best Odds` = ifelse(is.na(`Best Odds`), "—", sprintf("%+d", as.integer(round(`Best Odds`)))),
+        `EV (1u)` = ifelse(is.na(`EV (1u)`), NA_character_, formatC(`EV (1u)`, format = "f", digits = 3)),
+        `Fair ML (Model)` = ifelse(is.na(`Fair ML (Model)`), "—", sprintf("%+d", as.integer(round(`Fair ML (Model)`)))),
+        `Fair ML (Market)` = ifelse(is.na(`Fair ML (Market)`), "—", sprintf("%+d", as.integer(round(`Fair ML (Market)`)))),
+        `Model Source` = ifelse(is.na(`Model Source`), "—", `Model Source`),
+        `Value Tier` = dplyr::case_when(
+          `Value Tier` == "High Value" ~ "<span class=\"tag tier-high\">High Value</span>",
+          `Value Tier` == "Worth Watching" ~ "<span class=\"tag tier-medium\">Worth Watching</span>",
+          `Value Tier` == "Lean" ~ "<span class=\"tag tier-lean\">Lean</span>",
+          `Value Tier` == "Pass" ~ "<span class=\"tag tier-pass\">Pass</span>",
+          TRUE ~ "<span class=\"tag tier-unknown\">N/A</span>"
+        ),
+        tier_class = dplyr::case_when(
+          grepl("High Value", `Value Tier`) ~ "tier-row-high",
+          grepl("Worth Watching", `Value Tier`) ~ "tier-row-medium",
+          grepl("Lean", `Value Tier`) ~ "tier-row-lean",
+          grepl("Pass", `Value Tier`) ~ "tier-row-pass",
+          TRUE ~ ""
+        )
+      ) %>%
+      mutate(across(everything(), as.character))
+  }
+
+  format_best_offers_for_html <- function(df) {
+    if (!nrow(df)) return(df)
+    df %>%
+      mutate(
+        date = format(as.Date(date), "%a %b %d"),
+        model_prob = ifelse(is.na(model_prob), NA_character_, scales::percent(model_prob, accuracy = 0.1)),
+        market_prob = ifelse(is.na(market_prob), NA_character_, scales::percent(market_prob, accuracy = 0.1)),
+        odds = ifelse(is.na(odds_fmt), "—", odds_fmt),
+        edge = ifelse(is.na(edge), NA_character_, scales::percent(edge, accuracy = 0.1)),
+        ev_units = ifelse(is.na(ev_units), NA_character_, formatC(ev_units, format = "f", digits = 3))
+      ) %>%
+      select(date, matchup, bet_bucket, selection, odds, book, model_prob, market_prob, edge, ev_units, everything(), -odds_fmt) %>%
+      mutate(across(everything(), as.character))
+  }
+
+  bets_table_fmt <- NULL
+  bets_row_classes <- NULL
+  bets_grouped_html <- character()
 
   if (exists("bets_table") && nrow(bets_table)) {
-    html_lines <- add_section(html_lines, "Best Bets vs Market", capture_df(bets_table))
-  }
-  if (exists("best_offers") && nrow(best_offers)) {
-    html_lines <- add_section(html_lines, "Best Available Odds", capture_df(best_offers))
+    bets_table_fmt <- format_best_bets_for_html(bets_table)
+    bets_row_classes <- bets_table_fmt$tier_class
+    bets_table_fmt <- bets_table_fmt %>% select(-tier_class)
+
+    bet_split <- split(bets_table_fmt, paste0(bets_table_fmt$date, " · ", bets_table_fmt$matchup))
+    bets_row_split <- split(bets_row_classes, paste0(bets_table_fmt$date, " · ", bets_table_fmt$matchup))
+    bets_grouped_html <- purrr::imap(bet_split, function(df_sub, key) {
+      df_render <- df_sub %>% select(-matchup)
+      rows <- df_to_html_table(df_render, classes = "data-table bets-table", row_class = bets_row_split[[key]], escape_cols = setdiff(names(df_render), "Value Tier"))
+      c(sprintf("<div class=\"game-section\"><h3>%s</h3>", html_escape(key)), rows, "</div>")
+    }) %>% purrr::flatten_chr()
   }
 
-  html_lines <- c(html_lines, "</body>", "</html>")
+  best_offers_fmt <- NULL
+  if (exists("best_offers") && nrow(best_offers)) {
+    best_offers_fmt <- format_best_offers_for_html(best_offers)
+  }
+
+  html_lines <- c(
+    "<!DOCTYPE html>",
+    "<html>",
+    "<head>",
+    "<meta charset=\"UTF-8\">",
+    "<title>NFL Model vs Market</title>",
+    "<style>",
+    "body { font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; margin: 0; padding: 0; background: #0b162a; color: #f5f7fa; line-height: 1.6; }",
+    "header { background: linear-gradient(135deg, #0b162a, #12294f); padding: 32px 5vw 24px; box-shadow: 0 4px 12px rgba(0,0,0,0.4); }",
+    "header h1 { margin: 0; font-size: 2.4rem; letter-spacing: 0.05em; text-transform: uppercase; }",
+    "main { padding: 24px 5vw 60px; }",
+    "section { margin-bottom: 32px; background: rgba(255,255,255,0.05); border-radius: 18px; padding: 24px; box-shadow: 0 10px 24px rgba(0,0,0,0.25); }",
+    "section h2 { margin-top: 0; font-size: 1.6rem; letter-spacing: 0.04em; text-transform: uppercase; color: #ffb81c; }",
+    "section h3 { margin: 0 0 12px; font-size: 1.25rem; color: #9ad1ff; }",
+    ".game-section { margin-bottom: 18px; padding: 16px 18px; background: rgba(11, 22, 42, 0.65); border-radius: 14px; border: 1px solid rgba(255,255,255,0.08); }",
+    ".game-section:last-child { margin-bottom: 0; }",
+    "table.data-table { width: 100%; border-collapse: collapse; overflow: hidden; border-radius: 12px; }",
+    "table.data-table th { text-align: left; padding: 12px 14px; background: rgba(255,255,255,0.12); text-transform: uppercase; font-size: 0.8rem; letter-spacing: 0.08em; }",
+    "table.data-table td { padding: 12px 14px; border-bottom: 1px solid rgba(255,255,255,0.1); font-size: 0.95rem; }",
+    "table.data-table tr:nth-child(even) { background: rgba(255,255,255,0.04); }",
+    "table.data-table tr:hover { background: rgba(255,255,255,0.12); transition: background 0.2s ease-in-out; }",
+    "table.data-table tr.tier-row-high { border-left: 6px solid #00c853; }",
+    "table.data-table tr.tier-row-medium { border-left: 6px solid #31a354; }",
+    "table.data-table tr.tier-row-lean { border-left: 6px solid #ffa000; }",
+    "table.data-table tr.tier-row-pass { border-left: 6px solid #e53935; opacity: 0.8; }",
+    "span.tag { display: inline-block; padding: 4px 10px; border-radius: 999px; font-size: 0.8rem; font-weight: 600; color: #0b162a; background: #f0f4f8; text-transform: uppercase; letter-spacing: 0.05em; }",
+    ".tier-high { background: #00c853; color: #0b162a; }",
+    ".tier-medium { background: #31a354; color: #0b162a; }",
+    ".tier-lean { background: #ffa000; color: #0b162a; }",
+    ".tier-pass { background: #e53935; color: #fff; }",
+    ".tier-unknown { background: #607d8b; color: #fff; }",
+    "@media (max-width: 900px) { table.data-table th, table.data-table td { padding: 10px; font-size: 0.85rem; } section { padding: 18px; } }",
+    "</style>",
+    "</head>",
+    "<body>",
+    "<header><h1>NFL Model vs Market</h1></header>",
+    "<main>"
+  )
+
+  html_lines <- c(html_lines, "<section>", sprintf("<h2>Overall (%s vs Market)</h2>", html_escape(overall_display_label)), df_to_html_table(format_overall_for_html(overall_tbl)), "</section>")
+
+  html_lines <- c(html_lines, "<section>", sprintf("<h2>Week-block bootstrap CI (%s – Market)</h2>", html_escape(ci_display_label)), df_to_html_table(format_ci_for_html(ci_tbl)), "</section>")
+
+  if (length(bets_grouped_html)) {
+    html_lines <- c(html_lines, "<section>", "<h2>Best Bets vs Market</h2>", bets_grouped_html, "</section>")
+  }
+
+  if (!is.null(best_offers_fmt) && nrow(best_offers_fmt)) {
+    html_lines <- c(html_lines, "<section>", "<h2>Best Available Odds</h2>", df_to_html_table(best_offers_fmt, classes = "data-table offers-table"), "</section>")
+  }
+
+  html_lines <- c(html_lines, "</main>", "</body>", "</html>")
 
   report_file <- file.path(getwd(), "NFLvsmarket_report.html")
   writeLines(html_lines, con = report_file)
