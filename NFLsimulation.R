@@ -115,10 +115,9 @@ clamp <- function(x, lo, hi) pmin(pmax(x, lo), hi)
 # a league-wide prior before mapping to a 2-way win chance.  This keeps a
 # 2-point median edge from translating into an implausible 70% win probability
 # while still letting large gaps push probabilities toward the extremes.
-MARGIN_PROB_PRIOR_SD     <- 6.5   # empirically tuned vs. 2015-2023 results
-MARGIN_PROB_MIN_SD       <- 4.5   # minimum effective spread volatility (points)
-MARGIN_PROB_MAX_SD       <- 18.0  # cap to avoid runaway certainty on blowouts
-MARGIN_PROB_PRIOR_WEIGHT <- 400   # pseudo-sample weight when blending shrink vs. empirical sims
+MARGIN_PROB_PRIOR_SD <- 6.5   # empirically tuned vs. 2015-2023 results
+MARGIN_PROB_MIN_SD   <- 4.5   # minimum effective spread volatility (points)
+MARGIN_PROB_MAX_SD   <- 18.0  # cap to avoid runaway certainty on blowouts
 
 margin_probs_from_summary <- function(margin_mean, margin_sd, tie_prob) {
   mm <- ifelse(is.finite(margin_mean), margin_mean, 0)
@@ -143,92 +142,6 @@ margin_probs_from_summary <- function(margin_mean, margin_sd, tie_prob) {
     home_p_2w     = home_p_2w,
     away_p_2w     = 1 - home_p_2w,
     sd_effective  = sd_eff
-  )
-}
-
-empirical_probs_from_scores <- function(home_scores, away_scores) {
-  home_scores <- as.numeric(home_scores)
-  away_scores <- as.numeric(away_scores)
-  ok <- is.finite(home_scores) & is.finite(away_scores)
-  n_obs <- sum(ok)
-  if (n_obs == 0) {
-    return(list(
-      home_win_3w = 1/3,
-      away_win_3w = 1/3,
-      tie_3w      = 1/3,
-      home_p_2w   = 0.5,
-      away_p_2w   = 0.5,
-      two_way_mass = 2/3,
-      n_obs = 0
-    ))
-  }
-
-  home_scores <- home_scores[ok]
-  away_scores <- away_scores[ok]
-  home_wins <- mean(home_scores > away_scores)
-  away_wins <- mean(away_scores > home_scores)
-  tie_prob  <- 1 - home_wins - away_wins
-
-  home_wins <- clamp(home_wins, 0, 1)
-  away_wins <- clamp(away_wins, 0, 1)
-  tie_prob  <- clamp(tie_prob, 0, 1)
-
-  two_way_mass <- clamp(home_wins + away_wins, 1e-9, 1)
-
-  list(
-    home_win_3w = home_wins,
-    away_win_3w = away_wins,
-    tie_3w      = tie_prob,
-    home_p_2w   = clamp(home_wins / two_way_mass, 1e-6, 1 - 1e-6),
-    away_p_2w   = clamp(away_wins / two_way_mass, 1e-6, 1 - 1e-6),
-    two_way_mass = two_way_mass,
-    n_obs = n_obs
-  )
-}
-
-blend_empirical_with_prior <- function(emp, prior, prior_weight = MARGIN_PROB_PRIOR_WEIGHT) {
-  emp_weight   <- max(emp$n_obs, 0)
-  prior_weight <- max(prior_weight, 0)
-
-  home_w <- emp$home_win_3w * emp_weight + prior$home_win_prob * prior_weight
-  away_w <- emp$away_win_3w * emp_weight + prior$away_win_prob * prior_weight
-  tie_w  <- emp$tie_3w      * emp_weight + prior$tie_prob      * prior_weight
-
-  total_w <- home_w + away_w + tie_w
-  if (!is.finite(total_w) || total_w <= 0) {
-    home3 <- emp$home_win_3w
-    away3 <- emp$away_win_3w
-    tie3  <- emp$tie_3w
-  } else {
-    home3 <- home_w / total_w
-    away3 <- away_w / total_w
-    tie3  <- tie_w  / total_w
-  }
-
-  home3 <- clamp(home3, 0, 1)
-  away3 <- clamp(away3, 0, 1)
-  tie3  <- clamp(tie3, 0, 1)
-
-  norm <- home3 + away3 + tie3
-  if (!is.finite(norm) || norm <= 0) {
-    home3 <- emp$home_win_3w
-    away3 <- emp$away_win_3w
-    tie3  <- emp$tie_3w
-    norm  <- home3 + away3 + tie3
-  }
-  home3 <- home3 / norm
-  away3 <- away3 / norm
-  tie3  <- tie3  / norm
-
-  two_way_mass <- clamp(home3 + away3, 1e-9, 1)
-
-  list(
-    home_3w = home3,
-    away_3w = away3,
-    tie_3w  = tie3,
-    home_2w = clamp(home3 / two_way_mass, 1e-6, 1 - 1e-6),
-    away_2w = clamp(away3 / two_way_mass, 1e-6, 1 - 1e-6),
-    two_way_mass = two_way_mass
   )
 }
 
@@ -2045,17 +1958,14 @@ week_inputs_and_sim_2w <- function(cut_season, cut_week, n_trials = CALIB_TRIALS
       mean(sims$tie)
     )
 
-    emp_probs <- empirical_probs_from_scores(sims$home, sims$away)
-    blend_probs <- blend_empirical_with_prior(emp_probs, prob_info)
-
     tibble::tibble(
       game_id   = g$game_id[i],
       home_team = g$home_team[i],
       away_team = g$away_team[i],
-      p_home_2w_sim = blend_probs$home_2w,
-      p_home_3w_sim = blend_probs$home_3w,
-      p_away_3w_sim = blend_probs$away_3w,
-      p_tie_3w_sim  = blend_probs$tie_3w,
+      p_home_2w_sim = prob_info$home_p_2w,
+      p_home_3w_sim = prob_info$home_win_prob,
+      p_away_3w_sim = prob_info$away_win_prob,
+      p_tie_3w_sim  = prob_info$tie_prob,
       margin_mean_sim = mean(sims$margin),
       margin_sd_sim   = prob_info$sd_effective,
       # outcome as 3-way label
@@ -2571,16 +2481,14 @@ build_final_safe <- function(resolved_list, games_ready) {
       margin_sd_raw <- stats::sd(sims$margin)
       tie_prob      <- mean(sims$tie)
       prob_info     <- margin_probs_from_summary(margin_mean, margin_sd_raw, tie_prob)
-      emp_probs     <- empirical_probs_from_scores(sims$home, sims$away)
-      blend_probs   <- blend_empirical_with_prior(emp_probs, prob_info)
 
       tibble::tibble(
         season  = g$season,
         week    = g$week,
         date    = as.Date(g$game_date),
         matchup = paste0(g$away_team, " @ ", g$home_team),
-        proj_away_score = round(median(sims$away)),
-        proj_home_score = round(median(sims$home)),
+        proj_away_score = round(mean(sims$away)),
+        proj_home_score = round(mean(sims$home)),
         away_mean_pts   = mean(sims$away),
         home_mean_pts   = mean(sims$home),
         total_mean      = mean(sims$total),
@@ -2602,9 +2510,9 @@ build_final_safe <- function(resolved_list, games_ready) {
         total_ci_hi     = qfun(sims$total, 0.975),
         margin_ci_lo    = qfun(sims$margin, 0.025),
         margin_ci_hi    = qfun(sims$margin, 0.975),
-        home_win_prob   = blend_probs$home_3w,
-        away_win_prob   = blend_probs$away_3w,
-        tie_prob        = blend_probs$tie_3w,
+        home_win_prob   = prob_info$home_win_prob,
+        away_win_prob   = prob_info$away_win_prob,
+        tie_prob        = prob_info$tie_prob,
         mu_home_used    = g$mu_home,
         mu_away_used    = g$mu_away,
         sd_home_used    = g$sd_home,
