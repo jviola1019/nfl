@@ -299,8 +299,14 @@ learn_spread_map <- function(sched_df) {
       pa = if (!is.na(ml_h) && !is.na(ml_a))
         american_to_prob(.data[[ml_a]]) else NA_real_
     ) %>%
-    mutate(p_home = ifelse(is.finite(ph+pa) & (ph+pa) > 0, ph/(ph+pa), NA_real_)) %>%
-    filter(is.finite(spread), is.finite(p_home))
+    mutate(
+      p_home = ifelse(is.finite(ph + pa) & (ph + pa) > 0, ph/(ph + pa), NA_real_)
+    ) %>%
+    filter(is.finite(spread), is.finite(p_home)) %>%
+    mutate(
+      weight = pmax(1L, round(1000 * abs(p_home - 0.5))),
+      success = pmin(pmax(round(p_home * weight), 0L), weight)
+    )
   
   if (nrow(df) < 400) {
     if (!spread_map_notice_emitted) {
@@ -311,8 +317,8 @@ learn_spread_map <- function(sched_df) {
   }
   
   # Use flexible logistic polynomial (3rd degree) to map spread -> p_home_2w
-  fit <- glm(p_home ~ poly(spread, 3, raw = TRUE),
-             data = df, family = binomial(), weights = pmax(1, round(1000*abs(p_home-0.5))))
+  fit <- glm(cbind(success, weight - success) ~ poly(spread, 3, raw = TRUE),
+             data = df, family = binomial())
   list(
     predict = function(sp) {
       sp <- as.numeric(sp)
@@ -402,7 +408,7 @@ score_metrics <- function(p, y) {
 }
 
 bootstrap_week_ci <- function(df, p_col_model, p_col_mkt, y_col = "y2",
-                              n_boot = 2000, seed = 42) {
+                              n_boot = 2000, seed = 42, model_label = "Model") {
   set.seed(seed)
   weeks <- df %>% distinct(season, week)
   Brier_d <- numeric(n_boot)
@@ -414,10 +420,11 @@ bootstrap_week_ci <- function(df, p_col_model, p_col_mkt, y_col = "y2",
     Brier_d[b] <- brier(tmp[[p_col_model]], tmp[[y_col]]) - brier(tmp[[p_col_mkt]], tmp[[y_col]])
     LogL_d[b]  <- logloss(tmp[[p_col_model]], tmp[[y_col]]) - logloss(tmp[[p_col_mkt]], tmp[[y_col]])
   }
-  
+
   ci <- function(v) quantile(v, c(0.025, 0.975), na.rm = TRUE)
   tibble(
-    metric = c("Brier (Model - Market)","LogLoss (Model - Market)"),
+    metric = c(sprintf("Brier (%s - Market)", model_label),
+               sprintf("LogLoss (%s - Market)", model_label)),
     delta  = c(mean(Brier_d), mean(LogL_d)),
     lo     = c(ci(Brier_d)[1], ci(LogL_d)[1]),
     hi     = c(ci(Brier_d)[2], ci(LogL_d)[2]),
@@ -433,10 +440,12 @@ market_prob_col <- pick_col(res$per_game, c("p_home_mkt_2w","p_mkt","market_prob
 
 eval_df <- res$per_game %>%
   # keep just what we need
-  transmute(game_id, season, week,
-            p_model = .clp(p2_cal),
-            p_blend = if ("p_blend" %in% names(res$per_game)) .clp(p_blend) else NA_real_,
-            p_mkt_res = if (!is.na(market_prob_col)) .clp(.data[[market_prob_col]]) else NA_real_) %>%
+  transmute(
+    game_id, season, week,
+    p_model = .clp(p2_cal),
+    p_blend = if ("p_blend" %in% names(res$per_game)) .clp(p_blend) else NA_real_,
+    p_mkt_res = if (!is.na(market_prob_col)) .clp(.data[[market_prob_col]]) else NA_real_
+  ) %>%
   inner_join(outcomes, by = c("game_id","season","week"))
 
 # Market probs (closing ML preferred; else spread mapping)
@@ -453,137 +462,97 @@ comp <- eval_df %>%
   ) %>%
   filter(is.finite(p_mkt))
 
-model_candidates <- tibble::tibble(
-  column = c("p_model", "p_blend"),
-  label = c("Model", "Blend")
-) %>%
-  dplyr::filter(.data$column %in% names(comp)) %>%
-  dplyr::mutate(has_data = purrr::map_lgl(.data$column, ~ any(is.finite(comp[[.x]])))) %>%
-  dplyr::filter(.data$has_data)
-
-best_prob_choice <- NULL
-if (nrow(model_candidates)) {
-  model_scores <- model_candidates %>%
-    dplyr::mutate(metrics = purrr::map(.data$column, ~ score_metrics(comp[[.x]], comp$y2))) %>%
-    tidyr::unnest_wider(metrics)
-
-  best_prob_choice <- model_scores %>%
-    dplyr::arrange(.data$brier, .data$logloss) %>%
-    dplyr::slice(1)
-
-  message(sprintf(
-    "Best-bet probabilities sourced from %s column (Brier=%.6f, LogLoss=%.6f).",
-    best_prob_choice$label, best_prob_choice$brier, best_prob_choice$logloss
-  ))
-}
-
-preferred_final_prob_col <- NULL
-if (!is.null(best_prob_choice)) {
-  preferred_final_prob_col <- dplyr::case_when(
-    best_prob_choice$column == "p_blend" ~ "home_p_2w_blend",
-    best_prob_choice$column == "p_model" ~ "home_p_2w_cal",
-    TRUE ~ NA_character_
+prob_source <- if (any(is.finite(comp$p_blend))) "p_blend" else "p_model"
+model_label <- if (prob_source == "p_blend") "Blend" else "Model"
+comp <- comp %>%
+  mutate(
+    prob_eval = if (prob_source == "p_blend")
+      dplyr::coalesce(.clp(p_blend), .clp(p_model)) else .clp(p_model)
   )
-  if (is.na(preferred_final_prob_col)) {
-    preferred_final_prob_col <- NULL
-  }
-}
 
-# ------------------ Print headline table (Model vs Market) --------------------
+metrics_eval <- score_metrics(comp$prob_eval, comp$y2)
+fmt_metric <- function(x) ifelse(is.finite(x), sprintf("%.6f", x), "NA")
+message(sprintf(
+  "Best-bet probabilities sourced from %s column (Brier=%s, LogLoss=%s).",
+  model_label, fmt_metric(metrics_eval$brier), fmt_metric(metrics_eval$logloss)
+))
+
+preferred_final_prob_col <- if (prob_source == "p_blend") "home_p_2w_blend" else "home_p_2w_cal"
+
+# ------------------ Print headline table (preferred vs Market) ---------------
 overall_tbl <- comp %>%
   group_by(season, week) %>%
   summarise(
     n_games = n(),
-    Brier_model = brier(p_model, y2),
+    Brier_eval = brier(prob_eval, y2),
     Brier_mkt   = brier(p_mkt,   y2),
-    LogL_model  = logloss(p_model, y2),
+    LogL_eval  = logloss(prob_eval, y2),
     LogL_mkt    = logloss(p_mkt,   y2),
     .groups = "drop"
   ) %>%
   summarise(
     n_weeks = n(),
-    Brier_model = stats::weighted.mean(Brier_model, n_games, na.rm = TRUE),
+    Brier_eval = stats::weighted.mean(Brier_eval, n_games, na.rm = TRUE),
     Brier_mkt   = stats::weighted.mean(Brier_mkt,   n_games, na.rm = TRUE),
-    LogL_model  = stats::weighted.mean(LogL_model,  n_games, na.rm = TRUE),
+    LogL_eval  = stats::weighted.mean(LogL_eval,  n_games, na.rm = TRUE),
     LogL_mkt    = stats::weighted.mean(LogL_mkt,    n_games, na.rm = TRUE),
     total_games = sum(n_games),
     .groups = "drop"
   ) %>%
   mutate(
-    n_games = total_games,
-    Brier_delta = Brier_model - Brier_mkt,
-    LogL_delta  = LogL_model  - LogL_mkt
+    n_games = total_games
   ) %>%
   select(-total_games)
 
-message("\n=== Overall (Model vs Market) ===")
+if (model_label == "Blend") {
+  overall_tbl <- overall_tbl %>%
+    rename(
+      Brier_blend = Brier_eval,
+      LogL_blend = LogL_eval
+    ) %>%
+    mutate(
+      Brier_delta = Brier_blend - Brier_mkt,
+      LogL_delta  = LogL_blend  - LogL_mkt
+    )
+} else {
+  overall_tbl <- overall_tbl %>%
+    rename(
+      Brier_model = Brier_eval,
+      LogL_model = LogL_eval
+    ) %>%
+    mutate(
+      Brier_delta = Brier_model - Brier_mkt,
+      LogL_delta  = LogL_model  - LogL_mkt
+    )
+}
+
+message(sprintf("\n=== Overall (%s vs Market) ===", model_label))
 print(overall_tbl)
 
-ci_tbl <- bootstrap_week_ci(comp, p_col_model = "p_model", p_col_mkt = "p_mkt", n_boot = N_BOOT)
-message("\n=== Week-block bootstrap CI (Model – Market) ===")
+ci_tbl <- bootstrap_week_ci(comp, p_col_model = "prob_eval", p_col_mkt = "p_mkt", n_boot = N_BOOT, model_label = model_label)
+message(sprintf("\n=== Week-block bootstrap CI (%s – Market) ===", model_label))
 print(ci_tbl)
 
 overall_gt <- NULL
 ci_gt <- NULL
-overall_blend <- NULL
-ci_tbl_blend <- NULL
-overall_blend_gt <- NULL
-ci_blend_gt <- NULL
 
 if (gt_available) {
   overall_gt <- overall_tbl %>%
     gt::gt() %>%
-    gt::fmt_number(columns = c("Brier_model", "Brier_mkt", "Brier_delta", "LogL_model", "LogL_mkt", "LogL_delta"), decimals = 6) %>%
+    gt::fmt_number(
+      columns = c(
+        intersect(c("Brier_model", "Brier_blend"), names(overall_tbl)),
+        "Brier_mkt", "Brier_delta",
+        intersect(c("LogL_model", "LogL_blend"), names(overall_tbl)),
+        "LogL_mkt", "LogL_delta"
+      ),
+      decimals = 6
+    ) %>%
     gt::fmt_number(columns = "n_games", decimals = 0)
 
   ci_gt <- ci_tbl %>%
     gt::gt() %>%
     gt::fmt_number(columns = c("delta", "lo", "hi"), decimals = 6)
-}
-
-if ("p_blend" %in% names(comp) && any(is.finite(comp$p_blend))) {
-  overall_blend <- comp %>%
-    group_by(season, week) %>%
-    summarise(
-      n_games = n(),
-      Brier_blend = brier(p_blend, y2),
-      Brier_mkt   = brier(p_mkt,   y2),
-      LogL_blend  = logloss(p_blend, y2),
-      LogL_mkt    = logloss(p_mkt,   y2),
-      .groups = "drop"
-    ) %>%
-    summarise(
-      n_weeks = n(),
-      Brier_blend = stats::weighted.mean(Brier_blend, n_games, na.rm = TRUE),
-      Brier_mkt   = stats::weighted.mean(Brier_mkt,   n_games, na.rm = TRUE),
-      LogL_blend  = stats::weighted.mean(LogL_blend,  n_games, na.rm = TRUE),
-      LogL_mkt    = stats::weighted.mean(LogL_mkt,    n_games, na.rm = TRUE),
-      total_games = sum(n_games),
-      .groups = "drop"
-    ) %>%
-    mutate(
-      n_games = total_games,
-      Brier_delta = Brier_blend - Brier_mkt,
-      LogL_delta  = LogL_blend  - LogL_mkt
-    ) %>%
-    select(-total_games)
-  message("\n=== Overall (Blend vs Market) ===")
-  print(overall_blend)
-  
-  ci_tbl_blend <- bootstrap_week_ci(comp, p_col_model = "p_blend", p_col_mkt = "p_mkt", n_boot = N_BOOT)
-  message("\n=== Week-block bootstrap CI (Blend – Market) ===")
-  print(ci_tbl_blend)
-
-  if (gt_available) {
-    overall_blend_gt <- overall_blend %>%
-      gt::gt() %>%
-      gt::fmt_number(columns = c("Brier_blend", "Brier_mkt", "Brier_delta", "LogL_blend", "LogL_mkt", "LogL_delta"), decimals = 6) %>%
-      gt::fmt_number(columns = "n_games", decimals = 0)
-
-    ci_blend_gt <- ci_tbl_blend %>%
-      gt::gt() %>%
-      gt::fmt_number(columns = c("delta", "lo", "hi"), decimals = 6)
-  }
 }
 
 # ------------------ Best Bets table for current slate -------------------------
@@ -861,12 +830,17 @@ if (exists("final")) {
 }
 
 # ------------------ Plain “win/lose” verdict line (nice & loud) ---------------
-verdict_line <- function(ci_tbl_row) {
-  sprintf("%s: Δ=%.4f  (95%% CI: [%.4f, %.4f])  → %s",
-          ci_tbl_row$metric, ci_tbl_row$delta, ci_tbl_row$lo, ci_tbl_row$hi, ci_tbl_row$verdict)
+verdict_line <- function(metric, delta, lo, hi, verdict, digits = 4, ...) {
+  fmt <- function(x) ifelse(is.finite(x), formatC(x, format = "f", digits = digits), "NA")
+  sprintf("%s: Δ=%s  (95%% CI: [%s, %s])  → %s",
+          metric, fmt(delta), fmt(lo), fmt(hi), verdict)
 }
-message("\n=== Verdicts (Model – Market) ===")
-apply(ci_tbl, 1, function(r) message(verdict_line(as.list(r))))
+message(sprintf("\n=== Verdicts (%s – Market) ===", model_label))
+if (nrow(ci_tbl)) {
+  purrr::pwalk(ci_tbl, function(metric, delta, lo, hi, verdict, ...) {
+    message(verdict_line(metric, delta, lo, hi, verdict))
+  })
+}
 
 if (htmltools_available) {
   preformatted_df <- function(df) {
@@ -877,31 +851,15 @@ if (htmltools_available) {
 
   report_sections <- htmltools::tagAppendChildren(
     report_sections,
-    htmltools::tags$h2("Overall (Model vs Market)"),
+    htmltools::tags$h2(sprintf("Overall (%s vs Market)", model_label)),
     if (!is.null(overall_gt)) htmltools::HTML(gt::as_raw_html(overall_gt)) else preformatted_df(overall_tbl)
   )
 
   report_sections <- htmltools::tagAppendChildren(
     report_sections,
-    htmltools::tags$h2("Week-block bootstrap CI (Model – Market)"),
+    htmltools::tags$h2(sprintf("Week-block bootstrap CI (%s – Market)", model_label)),
     if (!is.null(ci_gt)) htmltools::HTML(gt::as_raw_html(ci_gt)) else preformatted_df(ci_tbl)
   )
-
-  if (!is.null(overall_blend)) {
-    report_sections <- htmltools::tagAppendChildren(
-      report_sections,
-      htmltools::tags$h2("Overall (Blend vs Market)"),
-      if (!is.null(overall_blend_gt)) htmltools::HTML(gt::as_raw_html(overall_blend_gt)) else preformatted_df(overall_blend)
-    )
-  }
-
-  if (!is.null(ci_tbl_blend)) {
-    report_sections <- htmltools::tagAppendChildren(
-      report_sections,
-      htmltools::tags$h2("Week-block bootstrap CI (Blend – Market)"),
-      if (!is.null(ci_blend_gt)) htmltools::HTML(gt::as_raw_html(ci_blend_gt)) else preformatted_df(ci_tbl_blend)
-    )
-  }
 
   if (!is.null(bets_gt)) {
     report_sections <- htmltools::tagAppendChildren(
@@ -948,15 +906,8 @@ if (htmltools_available) {
 
   html_lines <- c("<html>", "<head><meta charset=\"UTF-8\"></head>", "<body>",
                   "<h1>NFL Model vs Market</h1>")
-  html_lines <- add_section(html_lines, "Overall (Model vs Market)", capture_df(overall_tbl))
-  html_lines <- add_section(html_lines, "Week-block bootstrap CI (Model – Market)", capture_df(ci_tbl))
-
-  if (!is.null(overall_blend)) {
-    html_lines <- add_section(html_lines, "Overall (Blend vs Market)", capture_df(overall_blend))
-  }
-  if (!is.null(ci_tbl_blend)) {
-    html_lines <- add_section(html_lines, "Week-block bootstrap CI (Blend – Market)", capture_df(ci_tbl_blend))
-  }
+  html_lines <- add_section(html_lines, sprintf("Overall (%s vs Market)", model_label), capture_df(overall_tbl))
+  html_lines <- add_section(html_lines, sprintf("Week-block bootstrap CI (%s – Market)", model_label), capture_df(ci_tbl))
 
   if (exists("bets_table") && nrow(bets_table)) {
     html_lines <- add_section(html_lines, "Best Bets vs Market", capture_df(bets_table))
