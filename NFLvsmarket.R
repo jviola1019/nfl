@@ -99,6 +99,14 @@ expected_value_units <- function(prob, odds) {
   ifelse(is.finite(dec), prob * (dec - 1) - (1 - prob), NA_real_)
 }
 
+safe_weighted_mean <- function(x, w) {
+  keep <- is.finite(x) & is.finite(w)
+  if (!any(keep)) {
+    return(NA_real_)
+  }
+  stats::weighted.mean(x[keep], w[keep], na.rm = TRUE)
+}
+
 format_line <- function(x) {
   ifelse(
     is.na(x),
