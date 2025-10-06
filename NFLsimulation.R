@@ -3738,23 +3738,12 @@ rt_df <- pretty_df %>%
     Day = as.character(dow),
     Date = format(date, "%b %d"),
     Matchup = matchup,
-    `Favorite (Model)` = fav_team,
-    `Favorite (Blend)` = fav_team_blend,
-    `Fav Win% (Model 3W)` = fav_prob,
-    `Fav Win% (Blend 3W)` = fav_prob_blend,
-    `Home% (Model 3-way)` = home_win_prob_cal,
-    `Away% (Model 3-way)` = away_win_prob_cal,
     `Home% (Blend 3-way)` = home_win_prob_blend,
     `Away% (Blend 3-way)` = away_win_prob_blend,
-    `Home% (Model 2-way)` = home_p_2w_cal,
-    `Away% (Model 2-way)` = away_p_2w_cal,
     `Home% (Blend 2-way)` = home_p_2w_blend,
     `Away% (Blend 2-way)` = 1 - home_p_2w_blend,
-    `Tie%`      = tie_prob,
-    `Proj Home` = proj_home_score,
-    `Proj Away` = proj_away_score,
-    `Total (μ)` = total_mean,
-    Category
+    `Home Median` = home_median_pts,
+    `Away Median` = away_median_pts
   )
 
 # spot-check a few probabilities
@@ -3775,10 +3764,10 @@ if (reactable_available) {
     defaultPageSize = 25,
     striped = TRUE,
     highlight = TRUE,
-    defaultSorted = list("Date" = "asc", "Fav Win% (Model 3W)" = "desc"),
+    defaultSorted = list("Date" = "asc", "Home% (Blend 3-way)" = "desc"),
     groupBy = "Day",
     columns = list(
-      `Fav Win% (Model 3W)` = reactable::colDef(
+      `Home% (Blend 3-way)` = reactable::colDef(
         format = reactable::colFormat(percent = TRUE, digits = 1),
         align = "center",
         style = function(value) list(
@@ -3786,25 +3775,17 @@ if (reactable_available) {
           color = if (is.na(value) || value < 0.72) "black" else "white"
         )
       ),
-      `Fav Win% (Blend 3W)` = reactable::colDef(format = reactable::colFormat(percent = TRUE, digits = 1), align = "center"),
-      `Home% (Model 3-way)` = reactable::colDef(format = reactable::colFormat(percent = TRUE, digits = 1), align = "center"),
-      `Away% (Model 3-way)` = reactable::colDef(format = reactable::colFormat(percent = TRUE, digits = 1), align = "center"),
-      `Home% (Blend 3-way)` = reactable::colDef(format = reactable::colFormat(percent = TRUE, digits = 1), align = "center"),
       `Away% (Blend 3-way)` = reactable::colDef(format = reactable::colFormat(percent = TRUE, digits = 1), align = "center"),
-      `Tie%`          = reactable::colDef(format = reactable::colFormat(percent = TRUE, digits = 2), align = "center"),
-      `Home% (Model 2-way)` = reactable::colDef(format = reactable::colFormat(percent = TRUE, digits = 1), align = "center"),
-      `Away% (Model 2-way)` = reactable::colDef(format = reactable::colFormat(percent = TRUE, digits = 1), align = "center"),
       `Home% (Blend 2-way)` = reactable::colDef(format = reactable::colFormat(percent = TRUE, digits = 1), align = "center"),
       `Away% (Blend 2-way)` = reactable::colDef(format = reactable::colFormat(percent = TRUE, digits = 1), align = "center"),
-      `Total (μ)`     = reactable::colDef(
+      `Home Median` = reactable::colDef(
         format = reactable::colFormat(digits = 1),
-        align = "center",
-        style = function(value) list(background = pal_total(value), color = "black")
+        align = "center"
       ),
-      `Proj Home` = reactable::colDef(align = "center"),
-      `Proj Away` = reactable::colDef(align = "center"),
-      `Favorite (Model)` = reactable::colDef(align = "center"),
-      `Favorite (Blend)` = reactable::colDef(align = "center"),
+      `Away Median` = reactable::colDef(
+        format = reactable::colFormat(digits = 1),
+        align = "center"
+      ),
       Date        = reactable::colDef(align = "center"),
       Day         = reactable::colDef(align = "center")
     ),
