@@ -2736,6 +2736,7 @@ score_weeks_fast <- function(start_season, end_season, weeks = NULL) {
       p2_raw, p2_cal,
       pH_raw = p_home_3w_sim, pA_raw = p_away_3w_sim, pT_raw = p_tie_3w_sim,
       pH_cal = H_cal,          pA_cal = A_cal,          pT_cal = T_cal,
+      p_blend = NA_real_,
       y2 = y_home, y3
     )
   
@@ -2801,6 +2802,7 @@ score_one_week <- function(season, week, trials = 40000L) {
         p2_raw, p2_cal,
         pH_raw = p_home_3w_sim, pA_raw = p_away_3w_sim, pT_raw = p_tie_3w_sim,
         pH_cal = H_cal, pA_cal = A_cal, pT_cal = T_cal,
+        p_blend = NA_real_,
         y2 = y2, y3 = y3
       )
   )
@@ -3751,16 +3753,22 @@ res <- if (exists("calib_sim_df")) {
 # We create res_blend by overwriting p2_cal with the blended p for the same games.
 
 if (exists("res") && exists("blend_oos") && nrow(blend_oos)) {
-  res_blend <- res
-  res_blend$per_game <- res$per_game %>%
+  res$per_game <- res$per_game %>%
     dplyr::left_join(
-      blend_oos %>% dplyr::select(game_id, season, week, p_blend),
+      blend_oos %>% dplyr::select(game_id, season, week, p_blend_hist = p_blend),
       by = c("game_id","season","week")
     ) %>%
     dplyr::mutate(
+      p_blend = ifelse(is.finite(p_blend_hist), p_blend_hist, p2_cal)
+    ) %>%
+    dplyr::select(-p_blend_hist)
+
+  res_blend <- res
+  res_blend$per_game <- res$per_game %>%
+    dplyr::mutate(
       p2_cal = ifelse(is.finite(p_blend), p_blend, p2_cal) # overwrite with blend where available
     )
-  
+
   cat("\n=== Blended vs market (paired, week-block bootstrap) ===\n")
   cmp_blend <- compare_to_market(res_blend, sched)
   # cmp_blend$overall$... has Brier/LogLoss and deltas; 95% CIs printed by the function
