@@ -685,14 +685,11 @@ bootstrap_week_ci <- function(df, p_col_model, p_col_mkt, y_col = "y2",
 # ------------------ Assemble evaluation dataset -------------------------------
 stopifnot("per_game" %in% names(res))
 
-blend_sources <- list()
-if (exists("final") && inherits(final, "data.frame")) {
-  blend_sources <- c(blend_sources, list(final))
+if (!"p_blend" %in% names(res$per_game)) {
+  stop("res$per_game must include a 'p_blend' column containing blended probabilities.")
 }
 
-res_per_game <- derive_blend_probability(res$per_game, extra_blend_sources = blend_sources)
-
-market_prob_col <- pick_col(res_per_game, c("p_home_mkt_2w","p_mkt","market_prob_home","p_mkt_2w","home_p_mkt","p2_market","market_p_home"))
+market_prob_col <- pick_col(res$per_game, c("p_home_mkt_2w","p_mkt","market_prob_home","p_mkt_2w","home_p_mkt","p2_market","market_p_home"))
 
 eval_df <- res_per_game %>%
   # keep just what we need
