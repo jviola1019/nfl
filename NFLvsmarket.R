@@ -1408,3 +1408,4 @@ if (htmltools_available) {
   message(sprintf("Saved simplified HTML report to: %s", report_file))
   try(utils::browseURL(report_file), silent = TRUE)
 }
+
