@@ -73,7 +73,6 @@ if (!htmltools_available) {
 FINAL_RDS <- NULL        # e.g., FINAL_RDS <- "final_latest.rds"
 N_BOOT    <- 2000        # bootstrap resamples for week-block CIs
 FOCUS_MATCHUP <- NULL    # e.g., "SF @ KC" to print only one game in Best Bets
-MODEL_ML_VIG_HOLD <- 0.10  # target vig/hold applied when quoting model moneylines
 
 # -------------------------- Helpers -------------------------------------------
 .clp <- function(x, eps=1e-12) pmin(pmax(x, eps), 1-eps)
@@ -87,14 +86,6 @@ american_to_prob <- function(odds) {
 prob_to_american <- function(p) {
   p <- .clp(p)
   ifelse(p >= 0.5, -round(100 * p/(1-p)), round(100 * (1-p)/p))
-}
-
-apply_vigged_prob <- function(prob, hold = 0.10) {
-  if (!is.finite(prob)) return(NA_real_)
-  if (!is.finite(hold) || hold <= 0) {
-    return(.clp(prob))
-  }
-  .clp(prob * (1 + hold))
 }
 
 american_to_decimal <- function(odds) {
@@ -604,8 +595,10 @@ overall_weekly <- comp %>%
   group_by(season, week) %>%
   summarise(
     n_games = n(),
-    Brier_model = brier(prob_eval, y2),
-    LogL_model  = logloss(prob_eval, y2),
+    Brier_model = brier(prob_model, y2),
+    LogL_model  = logloss(prob_model, y2),
+    Brier_blend = if (prob_has_blend) brier(prob_blend, y2) else NA_real_,
+    LogL_blend  = if (prob_has_blend) logloss(prob_blend, y2) else NA_real_,
     Brier_mkt   = brier(p_mkt,   y2),
     LogL_mkt    = logloss(p_mkt,   y2),
     .groups = "drop"
@@ -628,9 +621,27 @@ overall_tbl <- overall_weekly %>%
   mutate(
     Brier_model_delta = Brier_model - Brier_mkt,
     LogL_model_delta  = LogL_model  - LogL_mkt,
+    Brier_blend_delta = if (prob_has_blend) Brier_blend - Brier_mkt else NA_real_,
+    LogL_blend_delta  = if (prob_has_blend) LogL_blend  - LogL_mkt else NA_real_,
     Brier_model_delta_median = Brier_model_median - Brier_mkt_median,
-    LogL_model_delta_median  = LogL_model_median  - LogL_mkt_median
+    LogL_model_delta_median  = LogL_model_median  - LogL_mkt_median,
+    Brier_blend_delta_median = if (prob_has_blend) Brier_blend_median - Brier_mkt_median else NA_real_,
+    LogL_blend_delta_median  = if (prob_has_blend) LogL_blend_median  - LogL_mkt_median else NA_real_
   )
+
+if (prob_has_blend) {
+  overall_tbl <- overall_tbl %>%
+    mutate(
+      Brier_model = Brier_blend,
+      LogL_model = LogL_blend,
+      Brier_model_delta = Brier_blend_delta,
+      LogL_model_delta = LogL_blend_delta,
+      Brier_model_median = Brier_blend_median,
+      LogL_model_median = LogL_blend_median,
+      Brier_model_delta_median = Brier_blend_delta_median,
+      LogL_model_delta_median = LogL_blend_delta_median
+    )
+}
 
 overall_display_label <- model_label
 
@@ -650,14 +661,15 @@ overall_tbl <- overall_tbl %>%
 message(sprintf("\n=== Overall (%s vs Market) ===", overall_display_label))
 print(overall_tbl)
 
-ci_tbl <- bootstrap_week_ci(
-  comp,
-  p_col_model = "prob_eval",
-  p_col_mkt = "p_mkt",
-  n_boot = N_BOOT,
-  model_label = model_label
-)
-ci_display_label <- model_label
+ci_tbl_model <- bootstrap_week_ci(comp, p_col_model = "prob_model", p_col_mkt = "p_mkt", n_boot = N_BOOT, model_label = "Model")
+ci_tbl_blend <- if (prob_has_blend) {
+  bootstrap_week_ci(comp, p_col_model = "prob_blend", p_col_mkt = "p_mkt", n_boot = N_BOOT, model_label = "Blend")
+} else {
+  tibble::tibble()
+}
+
+ci_tbl <- dplyr::bind_rows(ci_tbl_model, ci_tbl_blend)
+ci_display_label <- if (prob_has_blend) "Model & Blend" else model_label
 message(sprintf("\n=== Week-block bootstrap CI (%s – Market) ===", ci_display_label))
 print(ci_tbl)
 
@@ -814,8 +826,7 @@ build_best_bets <- function(final_df, sched_df, spread_mapper = NULL, focus_matc
       model_prob = .clp(model_prob),
       market_prob = ifelse(is.finite(market_prob), .clp(market_prob), NA_real_),
       side = paste0(team, " ML"),
-      model_prob_vig = apply_vigged_prob(model_prob, hold = MODEL_ML_VIG_HOLD),
-      fair_ml_model = prob_to_american(model_prob_vig),
+      fair_ml_model = prob_to_american(model_prob),
       fair_ml_mkt   = ifelse(is.finite(market_prob), prob_to_american(market_prob), NA_real_)
     )
 
