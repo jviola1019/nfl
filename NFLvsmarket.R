@@ -599,7 +599,7 @@ if (!"p_blend" %in% names(res$per_game)) {
 
 market_prob_col <- pick_col(res$per_game, c("p_home_mkt_2w","p_mkt","market_prob_home","p_mkt_2w","home_p_mkt","p2_market","market_p_home"))
 
-eval_df <- res$per_game %>%
+eval_df <- res_per_game %>%
   # keep just what we need
   transmute(
     game_id, season, week,
