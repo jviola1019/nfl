@@ -149,6 +149,98 @@ safe_weighted_mean <- function(x, w) {
   stats::weighted.mean(x[keep], w[keep], na.rm = TRUE)
 }
 
+first_valid_column <- function(df, candidates) {
+  for (nm in candidates) {
+    if (nm %in% names(df)) {
+      col <- df[[nm]]
+      if (is.numeric(col) && any(is.finite(col))) {
+        return(nm)
+      }
+    }
+  }
+  NA_character_
+}
+
+derive_blend_probability <- function(df, extra_blend_sources = list()) {
+  if (!is.list(extra_blend_sources)) {
+    extra_blend_sources <- list(extra_blend_sources)
+  }
+
+  augmented <- df
+  join_keys <- intersect(c("game_id", "season", "week"), names(df))
+
+  if (length(join_keys)) {
+    for (src in extra_blend_sources) {
+      if (is.null(src) || !inherits(src, "data.frame")) next
+
+      blend_cols <- names(src)[grepl("_blend$", names(src))]
+      if (!length(blend_cols)) next
+
+      src_keys <- intersect(join_keys, names(src))
+      if (!length(src_keys)) next
+
+      new_cols <- setdiff(blend_cols, names(augmented))
+      if (!length(new_cols)) next
+
+      extra <- src %>%
+        dplyr::select(dplyr::any_of(c(src_keys, new_cols))) %>%
+        distinct()
+
+      if (!nrow(extra)) next
+
+      augmented <- augmented %>%
+        left_join(extra, by = src_keys, relationship = "many-to-one")
+    }
+  }
+
+  if ("p_blend" %in% names(augmented)) {
+    return(augmented %>% mutate(p_blend = .clp(p_blend)))
+  }
+
+  home_priority <- c("home_p_2w_blend", "home_p_blend")
+  home_candidates <- unique(c(
+    intersect(home_priority, names(augmented)),
+    grep("^home_.*_blend$", names(augmented), value = TRUE)
+  ))
+  home_col <- first_valid_column(augmented, home_candidates)
+  if (!is.na(home_col)) {
+    message(sprintf(
+      "res$per_game missing p_blend; using '%s' as the blended home win probability.",
+      home_col
+    ))
+    return(augmented %>% mutate(p_blend = .clp(.data[[home_col]])))
+  }
+
+  away_priority <- c("away_p_2w_blend", "away_p_blend")
+  away_candidates <- unique(c(
+    intersect(away_priority, names(augmented)),
+    grep("^away_.*_blend$", names(augmented), value = TRUE)
+  ))
+  away_col <- first_valid_column(augmented, away_candidates)
+  if (!is.na(away_col)) {
+    message(sprintf(
+      "res$per_game missing p_blend; using 1 - '%s' as the blended home win probability.",
+      away_col
+    ))
+    return(augmented %>% mutate(p_blend = .clp(1 - .data[[away_col]])))
+  }
+
+  other_candidates <- setdiff(
+    grep("_blend$", names(augmented), value = TRUE),
+    c("p_blend", home_candidates, away_candidates)
+  )
+  other_col <- first_valid_column(augmented, other_candidates)
+  if (!is.na(other_col)) {
+    message(sprintf(
+      "res$per_game missing p_blend; using '%s' as the blended probability source.",
+      other_col
+    ))
+    return(augmented %>% mutate(p_blend = .clp(.data[[other_col]])))
+  }
+
+  stop("res$per_game must include a blend probability column (one ending in '_blend').")
+}
+
 format_line <- function(x) {
   ifelse(
     is.na(x),
