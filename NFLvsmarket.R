@@ -138,6 +138,70 @@ safe_load_lines <- function(seasons) {
   tryCatch(nflreadr::load_lines(seasons = seasons), error = function(e) NULL)
 }
 
+normalize_provider <- function(x) {
+  if (is.null(x)) return(character())
+  gsub("[^a-z]", "", tolower(trimws(as.character(x))))
+}
+
+market_probs_from_lines <- function(lines_df, sched_df, provider = "ESPN BET") {
+  if (is.null(lines_df) || !nrow(lines_df)) return(tibble())
+
+  provider_col <- pick_col(lines_df, c("provider", "book", "bookmaker", "sportsbook"))
+  bet_col      <- pick_col(lines_df, c("bet_type", "market_type", "type", "wager_type"))
+  side_col     <- pick_col(lines_df, c("side", "team", "participant", "selection"))
+  odds_col     <- pick_col(lines_df, c("american_odds", "odds_american", "price", "line_price", "odds"))
+  ts_col       <- pick_col(lines_df, c("timestamp", "last_update", "line_timestamp", "updated_at", "lastUpdated"))
+  alt_col      <- pick_col(lines_df, c("is_alternate", "alternate", "is_alt", "alt_line"))
+
+  if (is.na(provider_col) || is.na(bet_col) || is.na(side_col) ||
+      is.na(odds_col) || !"game_id" %in% names(lines_df)) {
+    return(tibble())
+  }
+
+  base <- sched_df %>%
+    filter(game_type %in% c("REG", "Regular")) %>%
+    transmute(game_id, season, week, home_team, away_team)
+
+  target_provider <- normalize_provider(provider)
+  if (!nzchar(target_provider)) return(tibble())
+
+  lines_df %>%
+    mutate(provider_norm = normalize_provider(.data[[provider_col]])) %>%
+    filter(provider_norm == target_provider, game_id %in% base$game_id) %>%
+    transmute(
+      game_id,
+      bet_type = tolower(as.character(.data[[bet_col]])),
+      side_raw = .data[[side_col]],
+      odds = suppressWarnings(as.numeric(.data[[odds_col]])),
+      is_alt = if (!is.na(alt_col)) as.logical(.data[[alt_col]]) else FALSE,
+      ts_raw = if (!is.na(ts_col)) .data[[ts_col]] else NA,
+      provider_norm
+    ) %>%
+    left_join(base, by = "game_id") %>%
+    mutate(
+      side = standardize_side(side_raw, home_team, away_team),
+      ts_num = suppressWarnings(as.numeric(lubridate::ymd_hms(ts_raw, quiet = TRUE)))
+    ) %>%
+    mutate(ts_num = ifelse(is.na(ts_num), suppressWarnings(as.numeric(as.POSIXct(ts_raw, tz = "UTC"))), ts_num)) %>%
+    mutate(ts_num = ifelse(is.na(ts_num), as.numeric(dplyr::row_number()), ts_num)) %>%
+    filter(grepl("moneyline", bet_type), !is.na(side), side %in% c("home", "away"),
+           is.finite(odds), !isTRUE(is_alt)) %>%
+    group_by(game_id, side) %>%
+    arrange(dplyr::desc(ts_num)) %>%
+    slice_head(n = 1) %>%
+    ungroup() %>%
+    select(game_id, season, week, side, odds) %>%
+    tidyr::pivot_wider(names_from = side, values_from = odds, names_prefix = "odds_") %>%
+    mutate(
+      ph = american_to_prob(odds_home),
+      pa = american_to_prob(odds_away),
+      den = ph + pa,
+      p_home_mkt_2w = .clp(ifelse(is.finite(den) & den > 0, ph/den, NA_real_))
+    ) %>%
+    select(game_id, season, week, p_home_mkt_2w) %>%
+    filter(is.finite(p_home_mkt_2w))
+}
+
 closing_spreads_tbl <- function(sched_df) {
   sp_col <- pick_col(sched_df, c("close_spread","spread_close","home_spread_close","spread_line","spread","home_spread"))
   if (is.na(sp_col)) return(tibble(game_id = character(), home_main_spread = numeric()))
@@ -338,7 +402,7 @@ learn_spread_map <- function(sched_df) {
 }
 
 # ------------------ Market probs from schedule (ML first, else spread map) ----
-market_probs_from_sched <- function(sched_df, spread_mapper = NULL) {
+market_probs_from_sched <- function(sched_df, spread_mapper = NULL, lines_df = NULL, provider = "ESPN BET") {
   sp_col <- pick_col(sched_df, c("close_spread","spread_close","home_spread_close",
                                  "spread_line","spread","home_spread"))
   ml_h   <- pick_col(sched_df, c("home_ml_close","ml_home_close","moneyline_home_close",
@@ -347,55 +411,89 @@ market_probs_from_sched <- function(sched_df, spread_mapper = NULL) {
   ml_a   <- pick_col(sched_df, c("away_ml_close","ml_away_close","moneyline_away_close",
                                  "away_moneyline_close","away_ml","ml_away","moneyline_away",
                                  "away_moneyline"))
-  
+
   base <- sched_df %>%
     filter(game_type %in% c("REG","Regular")) %>%
     transmute(game_id, season, week)
-  
-  # 1) Moneyline (preferred)
+
+  ml_tbl <- tibble::tibble(game_id = character(), season = integer(), week = integer(), p_home_mkt_2w_ml = numeric())
   if (!is.na(ml_h) && !is.na(ml_a)) {
-    out <- sched_df %>%
+    ml_tbl <- sched_df %>%
       transmute(
         game_id, season, week,
         ph = american_to_prob(.data[[ml_h]]),
         pa = american_to_prob(.data[[ml_a]])
       ) %>%
       filter(is.finite(ph), is.finite(pa)) %>%
-      mutate(den = ph + pa,
-             p_home_mkt_2w = .clp(ifelse(is.finite(den) & den > 0, ph/den, NA_real_))) %>%
-      select(game_id, season, week, p_home_mkt_2w)
-    if (sum(is.finite(out$p_home_mkt_2w)) > 0) return(out)
+      mutate(
+        den = ph + pa,
+        p_home_mkt_2w_ml = .clp(ifelse(is.finite(den) & den > 0, ph/den, NA_real_))
+      ) %>%
+      select(game_id, season, week, p_home_mkt_2w_ml)
   }
-  
-  # 2) Spread → probability mapping
+
+  spread_tbl <- tibble::tibble(game_id = character(), season = integer(), week = integer(), p_home_mkt_2w_spread = numeric())
   if (!is.na(sp_col)) {
-    if (is.null(spread_mapper)) spread_mapper <- learn_spread_map(sched_df)
-    
+    spreads_df <- sched_df %>%
+      transmute(
+        game_id, season, week,
+        home_spread = suppressWarnings(as.numeric(.data[[sp_col]]))
+      )
+
+    if (is.null(spread_mapper)) {
+      spread_mapper <- learn_spread_map(sched_df)
+    }
+
     if (!is.null(spread_mapper)) {
-      out <- sched_df %>%
-        transmute(
-          game_id, season, week,
-          home_spread = suppressWarnings(as.numeric(.data[[sp_col]]))
-        ) %>%
-        mutate(p_home_mkt_2w = spread_mapper$predict(home_spread)) %>%
-        select(game_id, season, week, p_home_mkt_2w)
-      return(out)
+      spread_tbl <- spreads_df %>%
+        mutate(p_home_mkt_2w_spread = spread_mapper$predict(home_spread)) %>%
+        select(game_id, season, week, p_home_mkt_2w_spread)
     } else {
-      # Fallback: Normal with fixed SD (industry heuristic). Keep as last resort.
       SD_MARGIN <- 13.86
-      out <- sched_df %>%
-        transmute(
-          game_id, season, week,
-          home_spread = suppressWarnings(as.numeric(.data[[sp_col]]))
-        ) %>%
+      spread_tbl <- spreads_df %>%
         filter(is.finite(home_spread)) %>%
-        mutate(p_home_mkt_2w = .clp(pnorm(-home_spread / SD_MARGIN))) %>%
-        select(game_id, season, week, p_home_mkt_2w)
-      return(out)
+        mutate(p_home_mkt_2w_spread = .clp(pnorm(-home_spread / SD_MARGIN))) %>%
+        select(game_id, season, week, p_home_mkt_2w_spread)
     }
   }
-  
-  stop("No usable moneyline or spread columns found to derive market probabilities.")
+
+  fallback_tbl <- base %>%
+    left_join(spread_tbl, by = c("game_id", "season", "week")) %>%
+    left_join(ml_tbl, by = c("game_id", "season", "week")) %>%
+    mutate(p_home_mkt_2w = dplyr::coalesce(p_home_mkt_2w_ml, p_home_mkt_2w_spread)) %>%
+    select(game_id, season, week, p_home_mkt_2w)
+
+  if (is.null(lines_df)) {
+    seasons_lines <- sort(unique(base$season))
+    lines_df <- safe_load_lines(seasons_lines)
+  }
+
+  provider_tbl <- market_probs_from_lines(lines_df, sched_df, provider = provider)
+
+  out <- fallback_tbl
+  if (!nrow(out)) {
+    out <- base %>% mutate(p_home_mkt_2w = NA_real_)
+  }
+
+  if (nrow(provider_tbl)) {
+    out <- out %>%
+      left_join(provider_tbl %>% rename(p_home_mkt_2w_provider = p_home_mkt_2w),
+                by = c("game_id", "season", "week")) %>%
+      mutate(p_home_mkt_2w = dplyr::coalesce(p_home_mkt_2w_provider, p_home_mkt_2w)) %>%
+      select(-p_home_mkt_2w_provider)
+  }
+
+  if (!"p_home_mkt_2w" %in% names(out)) {
+    out$p_home_mkt_2w <- NA_real_
+  }
+
+  if (!any(is.finite(out$p_home_mkt_2w))) {
+    if (!nrow(fallback_tbl) && !nrow(provider_tbl)) {
+      stop("No usable moneyline or spread columns found to derive market probabilities.")
+    }
+  }
+
+  out
 }
 
 # ------------------ Metrics + week-block bootstrap ----------------------------
@@ -458,7 +556,9 @@ eval_df <- res$per_game %>%
 
 # Market probs (closing ML preferred; else spread mapping)
 spread_mapper <- learn_spread_map(sched)  # may return NULL -> script falls back gracefully
-mkt_df <- market_probs_from_sched(sched, spread_mapper = spread_mapper)
+seasons_eval <- sort(unique(eval_df$season))
+lines_eval <- safe_load_lines(seasons_eval)
+mkt_df <- market_probs_from_sched(sched, spread_mapper = spread_mapper, lines_df = lines_eval)
 
 comp <- eval_df %>%
   left_join(mkt_df, by = c("game_id","season","week")) %>%
@@ -533,19 +633,33 @@ overall_tbl <- overall_weekly %>%
     LogL_blend_delta_median  = if (prob_has_blend) LogL_blend_median  - LogL_mkt_median else NA_real_
   )
 
-overall_display_label <- if (prob_has_blend) "Model & Blend" else model_label
+if (prob_has_blend) {
+  overall_tbl <- overall_tbl %>%
+    mutate(
+      Brier_model = Brier_blend,
+      LogL_model = LogL_blend,
+      Brier_model_delta = Brier_blend_delta,
+      LogL_model_delta = LogL_blend_delta,
+      Brier_model_median = Brier_blend_median,
+      LogL_model_median = LogL_blend_median,
+      Brier_model_delta_median = Brier_blend_delta_median,
+      LogL_model_delta_median = LogL_blend_delta_median
+    )
+}
+
+overall_display_label <- model_label
 
 overall_tbl <- overall_tbl %>%
   select(any_of(c(
     "n_weeks", "n_games",
-    "Brier_model", if (prob_has_blend) "Brier_blend", "Brier_mkt",
-    "Brier_model_delta", if (prob_has_blend) "Brier_blend_delta",
-    "Brier_model_median", if (prob_has_blend) "Brier_blend_median", "Brier_mkt_median",
-    "Brier_model_delta_median", if (prob_has_blend) "Brier_blend_delta_median",
-    "LogL_model", if (prob_has_blend) "LogL_blend", "LogL_mkt",
-    "LogL_model_delta", if (prob_has_blend) "LogL_blend_delta",
-    "LogL_model_median", if (prob_has_blend) "LogL_blend_median", "LogL_mkt_median",
-    "LogL_model_delta_median", if (prob_has_blend) "LogL_blend_delta_median"
+    "Brier_model", "Brier_mkt",
+    "Brier_model_delta",
+    "Brier_model_median", "Brier_mkt_median",
+    "Brier_model_delta_median",
+    "LogL_model", "LogL_mkt",
+    "LogL_model_delta",
+    "LogL_model_median", "LogL_mkt_median",
+    "LogL_model_delta_median"
   )))
 
 message(sprintf("\n=== Overall (%s vs Market) ===", overall_display_label))
@@ -612,7 +726,7 @@ if (gt_available) {
 
 # ------------------ Best Bets table for current slate -------------------------
 build_best_bets <- function(final_df, sched_df, spread_mapper = NULL, focus_matchup = NULL, line_catalog = NULL,
-                            preferred_prob_col = NULL) {
+                            preferred_prob_col = NULL, lines_df = NULL, provider = "ESPN BET") {
   stopifnot(all(c("matchup", "date") %in% names(final_df)))
 
   # Reconstruct calibrated two-way probabilities if needed
@@ -634,7 +748,7 @@ build_best_bets <- function(final_df, sched_df, spread_mapper = NULL, focus_matc
   missing_market <- !is.finite(final_df$home_p_2w_mkt)
   if (any(missing_market)) {
     mkt_now <- tryCatch(
-      market_probs_from_sched(sched_df, spread_mapper = spread_mapper) %>%
+      market_probs_from_sched(sched_df, spread_mapper = spread_mapper, lines_df = lines_df, provider = provider) %>%
         dplyr::select(game_id, p_home_mkt_2w),
       error = function(e) tibble::tibble(game_id = character(), p_home_mkt_2w = numeric())
     )
@@ -786,7 +900,7 @@ if (exists("final")) {
   best_offers <- best_offer_rows(line_catalog)
 
   bets <- build_best_bets(final, sched, spread_mapper, FOCUS_MATCHUP, line_catalog,
-                          preferred_prob_col = preferred_final_prob_col)
+                          preferred_prob_col = preferred_final_prob_col, lines_df = lines_raw)
   message("\n=== Best Bets (current slate) ===")
   if (nrow(bets)) {
     bets_table <- bets %>%
@@ -814,12 +928,12 @@ if (exists("final")) {
     edge_domain <- range(bets_table$`Edge`, na.rm = TRUE)
     if (!all(is.finite(edge_domain))) edge_domain <- c(-0.1, 0.1)
     edge_domain <- c(min(edge_domain[1], -0.1), max(edge_domain[2], 0.1))
-    palette_edge <- scales::col_numeric("RdYlGn", domain = edge_domain)
+    palette_edge <- scales::col_numeric(c("#0b1d3a", "#123a63", "#1f4f85", "#2f6ca6", "#3f82c9"), domain = edge_domain)
     tier_colors <- c(
-      "High Value" = "#006d2c",
-      "Worth Watching" = "#31a354",
-      "Lean" = "#fd8d3c",
-      "Pass" = "#de2d26"
+      "High Value" = "#1e3a8a",
+      "Worth Watching" = "#1d4ed8",
+      "Lean" = "#2563eb",
+      "Pass" = "#3b82f6"
     )
 
     if (gt_available) {
@@ -1009,7 +1123,7 @@ if (htmltools_available) {
         sprintf("<tr>%s</tr>", paste0(cells, collapse = ""))
       }
     })
-    c(sprintf("<table class=\"%s\">", classes), headers, rows, "</table>")
+    c("<div class=\"table-container\">", sprintf("<table class=\"%s\">", classes), headers, rows, "</table>", "</div>")
   }
 
   format_overall_for_html <- function(df) {
@@ -1109,31 +1223,32 @@ if (htmltools_available) {
     "<meta charset=\"UTF-8\">",
     "<title>NFL Model vs Market</title>",
     "<style>",
-    "body { font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; margin: 0; padding: 0; background: #0b162a; color: #f5f7fa; line-height: 1.6; }",
-    "header { background: linear-gradient(135deg, #0b162a, #12294f); padding: 32px 5vw 24px; box-shadow: 0 4px 12px rgba(0,0,0,0.4); }",
-    "header h1 { margin: 0; font-size: 2.4rem; letter-spacing: 0.05em; text-transform: uppercase; }",
-    "main { padding: 24px 5vw 60px; }",
-    "section { margin-bottom: 32px; background: rgba(255,255,255,0.05); border-radius: 18px; padding: 24px; box-shadow: 0 10px 24px rgba(0,0,0,0.25); }",
-    "section h2 { margin-top: 0; font-size: 1.6rem; letter-spacing: 0.04em; text-transform: uppercase; color: #ffb81c; }",
-    "section h3 { margin: 0 0 12px; font-size: 1.25rem; color: #9ad1ff; }",
-    ".game-section { margin-bottom: 18px; padding: 16px 18px; background: rgba(11, 22, 42, 0.65); border-radius: 14px; border: 1px solid rgba(255,255,255,0.08); }",
+    "body { font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; margin: 0; padding: 0; background: #05070f; color: #eef2f8; line-height: 1.6; }",
+    "header { background: linear-gradient(135deg, #05070f, #0f1c2e); padding: 32px 5vw 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.5); }",
+    "header h1 { margin: 0; font-size: 2.4rem; letter-spacing: 0.05em; text-transform: uppercase; color: #e7edf7; }",
+    "main { padding: 24px 5vw 60px; max-width: 1200px; margin: 0 auto; box-sizing: border-box; }",
+    "section { margin-bottom: 32px; background: rgba(9,16,30,0.92); border-radius: 18px; padding: 24px; box-shadow: 0 10px 24px rgba(0,0,0,0.28); border: 1px solid rgba(120,150,210,0.28); }",
+    "section h2 { margin-top: 0; font-size: 1.6rem; letter-spacing: 0.04em; text-transform: uppercase; color: #8ab4ff; }",
+    "section h3 { margin: 0 0 12px; font-size: 1.25rem; color: #a7c7ff; }",
+    ".game-section { margin-bottom: 18px; padding: 16px 18px; background: rgba(6,12,24,0.88); border-radius: 14px; border: 1px solid rgba(120,150,210,0.28); }",
     ".game-section:last-child { margin-bottom: 0; }",
-    "table.data-table { width: 100%; border-collapse: collapse; overflow: hidden; border-radius: 12px; }",
-    "table.data-table th { text-align: left; padding: 12px 14px; background: rgba(255,255,255,0.12); text-transform: uppercase; font-size: 0.8rem; letter-spacing: 0.08em; }",
-    "table.data-table td { padding: 12px 14px; border-bottom: 1px solid rgba(255,255,255,0.1); font-size: 0.95rem; }",
-    "table.data-table tr:nth-child(even) { background: rgba(255,255,255,0.04); }",
-    "table.data-table tr:hover { background: rgba(255,255,255,0.12); transition: background 0.2s ease-in-out; }",
-    "table.data-table tr.tier-row-high { border-left: 6px solid #00c853; }",
-    "table.data-table tr.tier-row-medium { border-left: 6px solid #31a354; }",
-    "table.data-table tr.tier-row-lean { border-left: 6px solid #ffa000; }",
-    "table.data-table tr.tier-row-pass { border-left: 6px solid #e53935; opacity: 0.8; }",
-    "span.tag { display: inline-block; padding: 4px 10px; border-radius: 999px; font-size: 0.8rem; font-weight: 600; color: #0b162a; background: #f0f4f8; text-transform: uppercase; letter-spacing: 0.05em; }",
-    ".tier-high { background: #00c853; color: #0b162a; }",
-    ".tier-medium { background: #31a354; color: #0b162a; }",
-    ".tier-lean { background: #ffa000; color: #0b162a; }",
-    ".tier-pass { background: #e53935; color: #fff; }",
-    ".tier-unknown { background: #607d8b; color: #fff; }",
-    "@media (max-width: 900px) { table.data-table th, table.data-table td { padding: 10px; font-size: 0.85rem; } section { padding: 18px; } }",
+    ".table-container { width: 100%; overflow-x: auto; background: rgba(5,10,20,0.95); border-radius: 14px; border: 1px solid rgba(120,150,210,0.32); padding: 12px; box-sizing: border-box; }",
+    "table.data-table { width: 100%; min-width: 580px; border-collapse: collapse; }",
+    "table.data-table th { text-align: left; padding: 12px 14px; background: rgba(118,156,220,0.18); text-transform: uppercase; font-size: 0.8rem; letter-spacing: 0.08em; color: #dce6f7; }",
+    "table.data-table td { padding: 12px 14px; border-bottom: 1px solid rgba(118,156,220,0.25); font-size: 0.95rem; }",
+    "table.data-table tr:nth-child(even) { background: rgba(255,255,255,0.03); }",
+    "table.data-table tr:hover { background: rgba(76,120,188,0.2); transition: background 0.2s ease-in-out; }",
+    "table.data-table tr.tier-row-high { border-left: 6px solid #1e3a8a; }",
+    "table.data-table tr.tier-row-medium { border-left: 6px solid #1d4ed8; }",
+    "table.data-table tr.tier-row-lean { border-left: 6px solid #2563eb; }",
+    "table.data-table tr.tier-row-pass { border-left: 6px solid #3b82f6; opacity: 0.9; }",
+    "span.tag { display: inline-block; padding: 4px 10px; border-radius: 999px; font-size: 0.8rem; font-weight: 600; color: #e7edf7; background: rgba(76,120,188,0.18); text-transform: uppercase; letter-spacing: 0.05em; border: 1px solid rgba(118,156,220,0.35); }",
+    ".tier-high { background: rgba(40,83,170,0.9); color: #e7edf7; }",
+    ".tier-medium { background: rgba(59,102,191,0.9); color: #e7edf7; }",
+    ".tier-lean { background: rgba(76,129,216,0.9); color: #e7edf7; }",
+    ".tier-pass { background: rgba(100,149,237,0.9); color: #0b162a; }",
+    ".tier-unknown { background: rgba(88,110,150,0.9); color: #f5f7fa; }",
+    "@media (max-width: 900px) { table.data-table th, table.data-table td { padding: 10px; font-size: 0.85rem; } section { padding: 18px; } .table-container { padding: 10px; } }",
     "</style>",
     "</head>",
     "<body>",
