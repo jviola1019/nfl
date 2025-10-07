@@ -507,7 +507,6 @@ overall_weekly <- comp %>%
 overall_tbl <- overall_weekly %>%
   summarise(
     n_weeks = n(),
-    n_games = sum(n_games),
     Brier_model = stats::weighted.mean(Brier_model, n_games, na.rm = TRUE),
     LogL_model  = stats::weighted.mean(LogL_model,  n_games, na.rm = TRUE),
     Brier_blend = if (prob_has_blend) stats::weighted.mean(Brier_blend, n_games, na.rm = TRUE) else NA_real_,
@@ -520,6 +519,7 @@ overall_tbl <- overall_weekly %>%
     LogL_blend_median  = if (prob_has_blend) stats::median(LogL_blend, na.rm = TRUE) else NA_real_,
     Brier_mkt_median   = stats::median(Brier_mkt, na.rm = TRUE),
     LogL_mkt_median    = stats::median(LogL_mkt, na.rm = TRUE),
+    n_games = sum(n_games),
     .groups = "drop"
   ) %>%
   mutate(
