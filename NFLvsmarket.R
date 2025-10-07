@@ -474,9 +474,35 @@ if (!exists("res")) {
   }
 }
 
-if (!exists("final") && !is.null(FINAL_RDS) && file.exists(FINAL_RDS)) {
-  message(sprintf("Loading final from: %s", FINAL_RDS))
-  final <- readRDS(FINAL_RDS)
+if (!exists("final")) {
+  candidate_files <- character()
+  if (!is.null(FINAL_RDS)) {
+    candidate_files <- c(candidate_files, FINAL_RDS)
+  }
+
+  search_dirs <- c(
+    getOption("nfl.final_dir", default = character()),
+    Sys.getenv("NFL_FINAL_DIR", unset = ""),
+    file.path(getwd(), "run_logs"),
+    "run_logs",
+    path.expand(file.path("~", "run_logs"))
+  )
+  if (!is.null(FINAL_RDS)) {
+    search_dirs <- c(search_dirs, dirname(FINAL_RDS))
+  }
+  search_dirs <- unique(search_dirs)
+
+  search_dirs <- search_dirs[nzchar(search_dirs)]
+  for (dir in search_dirs) {
+    candidate_files <- c(candidate_files, list_rds_with_prefix(dir, "final_"))
+  }
+
+  candidate_files <- unique(candidate_files)
+  latest_final <- latest_existing_file(candidate_files)
+  if (!is.null(latest_final)) {
+    message(sprintf("Loading final from: %s", latest_final))
+    final <- readRDS(latest_final)
+  }
 }
 
 # ------------------ Outcome extraction (2-way home win) -----------------------
