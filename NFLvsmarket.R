@@ -100,23 +100,6 @@ expected_value_units <- function(prob, odds) {
   ifelse(is.finite(dec), prob * (dec - 1) - (1 - prob), NA_real_)
 }
 
-latest_existing_file <- function(files) {
-  files <- unique(files[file.exists(files)])
-  if (!length(files)) {
-    return(NULL)
-  }
-  info <- file.info(files)
-  files[order(info$mtime, decreasing = TRUE)][1]
-}
-
-list_rds_with_prefix <- function(dir, prefix) {
-  dir <- path.expand(dir)
-  if (!dir.exists(dir)) {
-    return(character())
-  }
-  list.files(dir, pattern = sprintf("^%s.*\\.rds$", prefix), full.names = TRUE)
-}
-
 apply_moneyline_vig <- function(odds, vig = 0.10) {
   ifelse(
     is.finite(odds),
@@ -190,7 +173,7 @@ derive_blend_probability <- function(df, extra_blend_sources = list()) {
     for (src in extra_blend_sources) {
       if (is.null(src) || !inherits(src, "data.frame")) next
 
-      blend_cols <- names(src)[grepl("_blend$", names(src)) | names(src) == "p_blend"]
+      blend_cols <- names(src)[grepl("_blend$", names(src))]
       if (!length(blend_cols)) next
 
       src_keys <- intersect(join_keys, names(src))
@@ -255,14 +238,7 @@ derive_blend_probability <- function(df, extra_blend_sources = list()) {
     return(augmented %>% mutate(p_blend = .clp(.data[[other_col]])))
   }
 
-  candidates <- names(augmented)
-  blend_like <- candidates[grepl("_blend$|^p_blend$", candidates)]
-  detail <- if (length(blend_like)) {
-    sprintf(" Columns inspected: %s.", paste(blend_like, collapse = ", "))
-  } else {
-    ""
-  }
-  stop(glue::glue("res$per_game must include a blend probability column (one ending in '_blend').{detail}"))
+  stop("res$per_game must include a blend probability column (one ending in '_blend').")
 }
 
 format_line <- function(x) {
@@ -735,17 +711,11 @@ bootstrap_week_ci <- function(df, p_col_model, p_col_mkt, y_col = "y2",
 # ------------------ Assemble evaluation dataset -------------------------------
 stopifnot("per_game" %in% names(res))
 
-blend_sources <- list()
-if (exists("final") && inherits(final, "data.frame")) {
-  blend_sources <- c(blend_sources, list(final))
-}
-if (exists("blend_oos") && inherits(blend_oos, "data.frame")) {
-  blend_sources <- c(blend_sources, list(blend_oos))
+if (!"p_blend" %in% names(res$per_game)) {
+  stop("res$per_game must include a 'p_blend' column containing blended probabilities.")
 }
 
-res_per_game <- derive_blend_probability(res$per_game, extra_blend_sources = blend_sources)
-
-market_prob_col <- pick_col(res_per_game, c("p_home_mkt_2w","p_mkt","market_prob_home","p_mkt_2w","home_p_mkt","p2_market","market_p_home"))
+market_prob_col <- pick_col(res$per_game, c("p_home_mkt_2w","p_mkt","market_prob_home","p_mkt_2w","home_p_mkt","p2_market","market_p_home"))
 
 eval_df <- res_per_game %>%
   # keep just what we need
@@ -1464,3 +1434,4 @@ if (htmltools_available) {
   message(sprintf("Saved simplified HTML report to: %s", report_file))
   try(utils::browseURL(report_file), silent = TRUE)
 }
+
