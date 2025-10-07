@@ -7,8 +7,8 @@
 #
 # EXPECTED INPUTS (preferred, but script can auto-source fallbacks):
 #   sched  : schedules/odds data.frame (from nflreadr::load_schedules)
-#   res    : list with $per_game tibble (has p2_cal; optional p_blend)
-#   final  : tibble of current-slate outputs (has home_p_2w_cal, tie_prob, matchup, date)
+#   res    : list with $per_game tibble (must include p_blend)
+#   final  : tibble of current-slate outputs (must include home_p_2w_blend, tie_prob, matchup, date)
 #
 # Optional convenience: if 'res' is not in memory, will try to load newest
 # RDS from ~/.cache/nfl_sim_scores/. If 'sched' missing, will load schedules.
@@ -73,6 +73,7 @@ if (!htmltools_available) {
 FINAL_RDS <- NULL        # e.g., FINAL_RDS <- "final_latest.rds"
 N_BOOT    <- 2000        # bootstrap resamples for week-block CIs
 FOCUS_MATCHUP <- NULL    # e.g., "SF @ KC" to print only one game in Best Bets
+MARKET_PROVIDER <- "ESPN BET"
 
 # -------------------------- Helpers -------------------------------------------
 .clp <- function(x, eps=1e-12) pmin(pmax(x, eps), 1-eps)
@@ -97,6 +98,47 @@ expected_value_units <- function(prob, odds) {
   dec <- american_to_decimal(odds)
   prob <- .clp(prob)
   ifelse(is.finite(dec), prob * (dec - 1) - (1 - prob), NA_real_)
+}
+
+apply_moneyline_vig <- function(odds, vig = 0.10) {
+  ifelse(
+    is.finite(odds),
+    ifelse(
+      odds < 0,
+      -as.numeric(round(abs(odds) * (1 + vig))),
+      as.numeric(round(odds / (1 + vig)))
+    ),
+    NA_real_
+  )
+}
+
+vig_moneyline_from_prob <- function(prob, side_key = c("home", "away"), vig = 0.10) {
+  side_key <- match.arg(side_key)
+  if (!is.finite(prob)) return(NA_real_)
+  prob <- .clp(prob)
+  base <- prob_to_american(prob)
+  if (!is.finite(base)) return(NA_real_)
+
+  favorite <- prob > 0.5
+  if (abs(prob - 0.5) < 1e-8) {
+    favorite <- (side_key == "home")
+  }
+
+  adj <- apply_moneyline_vig(base, vig = vig)
+
+  if (!favorite && adj < 0) {
+    adj <- abs(adj)
+  }
+
+  if (!favorite && adj < 100) {
+    adj <- 100
+  }
+
+  if (favorite && adj > -100) {
+    adj <- -100
+  }
+
+  adj
 }
 
 safe_weighted_mean <- function(x, w) {
@@ -225,7 +267,7 @@ standardize_side <- function(side_raw, home_team, away_team) {
   NA_character_
 }
 
-build_line_catalog <- function(final_df, lines_df, sched_df) {
+build_line_catalog <- function(final_df, lines_df, sched_df, provider = "ESPN BET") {
   if (is.null(lines_df) || !nrow(lines_df)) return(tibble())
 
   bt_col  <- pick_col(lines_df, c("bet_type","market_type","type","wager_type"))
@@ -237,14 +279,20 @@ build_line_catalog <- function(final_df, lines_df, sched_df) {
 
   if (is.na(bt_col) || is.na(side_col) || is.na(odds_col)) return(tibble())
 
+  if (!"home_p_2w_blend" %in% names(final_df)) {
+    stop("final_df must include 'home_p_2w_blend' when building the line catalog.")
+  }
+
   base <- final_df %>%
     transmute(game_id, date = as.Date(date), matchup, home_team, away_team,
-              home_prob = dplyr::coalesce(home_p_2w_blend, home_p_2w_model, home_p_2w_cal, home_win_prob_cal),
+              home_prob = .clp(home_p_2w_blend),
               away_prob = 1 - home_prob,
               margin_mean, margin_sd) %>%
     distinct()
 
   if (!"game_id" %in% names(lines_df)) return(tibble())
+
+  provider_key <- normalize_provider(provider)
 
   lines_df %>%
     filter(game_id %in% base$game_id) %>%
@@ -257,6 +305,8 @@ build_line_catalog <- function(final_df, lines_df, sched_df) {
       book = if (!is.na(book_col)) as.character(.data[[book_col]]) else NA_character_,
       is_alt = if (!is.na(alt_col)) as.logical(.data[[alt_col]]) else NA
     ) %>%
+    mutate(book_norm = normalize_provider(book)) %>%
+    filter(is.na(provider_key) | book_norm == provider_key) %>%
     left_join(base, by = "game_id") %>%
     mutate(
       side = standardize_side(side_raw, home_team, away_team),
@@ -296,7 +346,8 @@ build_line_catalog <- function(final_df, lines_df, sched_df) {
       selection = as.character(glue("{team_label} {line_display}")),
       odds_fmt = ifelse(is.finite(odds), sprintf("%+d", as.integer(round(odds))), NA_character_)
     ) %>%
-    filter(is.finite(model_prob))
+    filter(is.finite(model_prob)) %>%
+    select(-book_norm)
 }
 
 best_offer_rows <- function(catalog) {
@@ -542,14 +593,44 @@ bootstrap_week_ci <- function(df, p_col_model, p_col_mkt, y_col = "y2",
 # ------------------ Assemble evaluation dataset -------------------------------
 stopifnot("per_game" %in% names(res))
 
-market_prob_col <- pick_col(res$per_game, c("p_home_mkt_2w","p_mkt","market_prob_home","p_mkt_2w","home_p_mkt","p2_market","market_p_home"))
+res_per_game <- res$per_game
 
-eval_df <- res$per_game %>%
+if (!"p_blend" %in% names(res_per_game)) {
+  blend_candidates <- grep("_blend$", names(res_per_game), value = TRUE)
+  blend_candidates <- setdiff(blend_candidates, c("home_p_2w_blend", "away_p_2w_blend"))
+  blend_candidates <- blend_candidates[vapply(blend_candidates, function(col) {
+    is.numeric(res_per_game[[col]]) && any(is.finite(res_per_game[[col]]))
+  }, logical(1))]
+
+  if (length(blend_candidates)) {
+    chosen <- blend_candidates[1]
+    message(sprintf("res$per_game missing p_blend; using '%s' as the blended probability source.", chosen))
+    res_per_game <- res_per_game %>%
+      mutate(p_blend = .clp(.data[[chosen]]))
+  } else {
+    fallback_col <- pick_col(res_per_game, c("p2_cal", "p_model", "p2", "prob_home"))
+    if (is.na(fallback_col)) {
+      stop("res$per_game must supply a blend-like probability column (expected 'p_blend').")
+    }
+    message(sprintf(
+      "res$per_game missing p_blend; falling back to '%s' (clamped) for blend-based evaluation.",
+      fallback_col
+    ))
+    res_per_game <- res_per_game %>%
+      mutate(p_blend = .clp(.data[[fallback_col]]))
+  }
+} else {
+  res_per_game <- res_per_game %>%
+    mutate(p_blend = .clp(p_blend))
+}
+
+market_prob_col <- pick_col(res_per_game, c("p_home_mkt_2w","p_mkt","market_prob_home","p_mkt_2w","home_p_mkt","p2_market","market_p_home"))
+
+eval_df <- res_per_game %>%
   # keep just what we need
   transmute(
     game_id, season, week,
-    p_model = .clp(p2_cal),
-    p_blend = if ("p_blend" %in% names(res$per_game)) .clp(p_blend) else NA_real_,
+    p_blend = .clp(p_blend),
     p_mkt_res = if (!is.na(market_prob_col)) .clp(.data[[market_prob_col]]) else NA_real_
   ) %>%
   inner_join(outcomes, by = c("game_id","season","week"))
@@ -558,7 +639,7 @@ eval_df <- res$per_game %>%
 spread_mapper <- learn_spread_map(sched)  # may return NULL -> script falls back gracefully
 seasons_eval <- sort(unique(eval_df$season))
 lines_eval <- safe_load_lines(seasons_eval)
-mkt_df <- market_probs_from_sched(sched, spread_mapper = spread_mapper, lines_df = lines_eval)
+mkt_df <- market_probs_from_sched(sched, spread_mapper = spread_mapper, lines_df = lines_eval, provider = MARKET_PROVIDER)
 
 comp <- eval_df %>%
   left_join(mkt_df, by = c("game_id","season","week")) %>%
@@ -567,18 +648,17 @@ comp <- eval_df %>%
       if ("p_home_mkt_2w" %in% names(.)) .clp(p_home_mkt_2w) else NA_real_,
       .clp(p_mkt_res)
     ),
-    prob_model = .clp(p_model),
-    prob_blend = if ("p_blend" %in% names(.)) .clp(p_blend) else NA_real_
+    prob_model = .clp(p_blend),
+    prob_blend = .clp(p_blend)
   ) %>%
   filter(is.finite(p_mkt))
 
 prob_has_blend <- any(is.finite(comp$prob_blend))
-prob_source <- if (prob_has_blend) "p_blend" else "p_model"
-model_label <- if (prob_has_blend) "Blend" else "Model"
+prob_source <- "p_blend"
+model_label <- "Blend"
 comp <- comp %>%
   mutate(
-    prob_eval = if (prob_has_blend)
-      dplyr::coalesce(prob_blend, prob_model) else prob_model
+    prob_eval = prob_model
   )
 
 metrics_eval <- score_metrics(comp$prob_eval, comp$y2)
@@ -588,7 +668,7 @@ message(sprintf(
   model_label, fmt_metric(metrics_eval$brier), fmt_metric(metrics_eval$logloss)
 ))
 
-preferred_final_prob_col <- if (prob_source == "p_blend") "home_p_2w_blend" else "home_p_2w_cal"
+preferred_final_prob_col <- "home_p_2w_blend"
 
 # ------------------ Print headline table (preferred vs Market) ---------------
 overall_weekly <- comp %>%
@@ -725,16 +805,8 @@ build_best_bets <- function(final_df, sched_df, spread_mapper = NULL, focus_matc
                             preferred_prob_col = NULL, lines_df = NULL, provider = "ESPN BET") {
   stopifnot(all(c("matchup", "date") %in% names(final_df)))
 
-  # Reconstruct calibrated two-way probabilities if needed
-  if (!("home_p_2w_cal" %in% names(final_df)) &&
-      all(c("home_win_prob_cal", "away_win_prob_cal", "tie_prob") %in% names(final_df))) {
-    final_df <- final_df %>%
-      mutate(two_way_mass = pmax(1 - tie_prob, 1e-9),
-             home_p_2w_cal = .clp(home_win_prob_cal / two_way_mass))
-  }
-
-  if (!("home_p_2w_blend" %in% names(final_df)) && "home_p_2w_cal" %in% names(final_df)) {
-    final_df$home_p_2w_blend <- final_df$home_p_2w_cal
+  if (!"home_p_2w_blend" %in% names(final_df)) {
+    stop("final_df must include 'home_p_2w_blend' for best-bet calculations.")
   }
 
   if (!("home_p_2w_mkt" %in% names(final_df))) {
@@ -770,11 +842,11 @@ build_best_bets <- function(final_df, sched_df, spread_mapper = NULL, focus_matc
     }
   }
 
-  prob_priority <- c("home_p_2w_blend", "home_p_2w_cal", "home_p_2w_model")
-  if (!is.null(preferred_prob_col) && isTRUE(nzchar(preferred_prob_col))) {
+  prob_priority <- c("home_p_2w_blend")
+  if (!is.null(preferred_prob_col) && isTRUE(nzchar(preferred_prob_col)) &&
+      grepl("_blend$", preferred_prob_col) && preferred_prob_col %in% names(final_df)) {
     prob_priority <- unique(c(preferred_prob_col, prob_priority))
   }
-  prob_priority <- prob_priority[prob_priority %in% names(final_df)]
 
   pick_prob_with_source <- function(df, columns) {
     res <- rep(NA_real_, nrow(df))
@@ -792,9 +864,7 @@ build_best_bets <- function(final_df, sched_df, spread_mapper = NULL, focus_matc
 
   picked <- pick_prob_with_source(final_df, prob_priority)
   source_map <- c(
-    home_p_2w_blend = "Blend",
-    home_p_2w_cal = "Model",
-    home_p_2w_model = "Model (raw)"
+    home_p_2w_blend = "Blend"
   )
   source_labels <- source_map[picked$source]
   source_labels[is.na(source_labels)] <- picked$source[is.na(source_labels)]
@@ -827,7 +897,7 @@ build_best_bets <- function(final_df, sched_df, spread_mapper = NULL, focus_matc
       market_prob = ifelse(is.finite(market_prob), .clp(market_prob), NA_real_),
       side = paste0(team, " ML"),
       fair_ml_model = prob_to_american(model_prob),
-      fair_ml_mkt   = ifelse(is.finite(market_prob), prob_to_american(market_prob), NA_real_)
+      fair_ml_mkt   = ifelse(is.finite(market_prob), vig_moneyline_from_prob(market_prob, side_key), NA_real_)
     )
 
   if (!is.null(focus_matchup)) {
@@ -852,28 +922,29 @@ build_best_bets <- function(final_df, sched_df, spread_mapper = NULL, focus_matc
     bets <- bets %>%
       left_join(ml_best, by = c("game_id", "side_key")) %>%
       mutate(
-        market_prob = dplyr::coalesce(best_market_prob,
-                                      ifelse(is.finite(best_odds_num), american_to_prob(best_odds_num), NA_real_),
-                                      market_prob),
-        best_odds_num = dplyr::coalesce(best_odds_num,
-                                        ifelse(is.finite(market_prob), prob_to_american(market_prob), NA_real_)),
+        market_prob = dplyr::coalesce(best_market_prob, market_prob),
+        best_odds_num = dplyr::coalesce(
+          best_odds_num,
+          ifelse(is.finite(market_prob), vig_moneyline_from_prob(market_prob, side_key), NA_real_)
+        ),
         best_odds = ifelse(is.na(best_odds) & is.finite(best_odds_num),
                            sprintf("%+d", as.integer(round(best_odds_num))), best_odds)
       )
   } else {
     bets <- bets %>%
       mutate(
-        best_book = NA_character_,
-        best_odds_num = ifelse(is.finite(market_prob), prob_to_american(market_prob), NA_real_),
+        best_book = provider,
+        best_odds_num = ifelse(is.finite(market_prob), vig_moneyline_from_prob(market_prob, side_key), NA_real_),
         best_odds = ifelse(is.finite(best_odds_num), sprintf("%+d", as.integer(round(best_odds_num))), NA_character_)
       )
   }
 
   bets <- bets %>%
     mutate(
+      best_book = ifelse(is.na(best_book) & nzchar(provider), provider, best_book),
       market_prob = ifelse(is.finite(market_prob), .clp(market_prob), NA_real_),
       edge = model_prob - market_prob,
-      fair_ml_mkt = ifelse(is.finite(market_prob), prob_to_american(market_prob), NA_real_),
+      fair_ml_mkt = ifelse(is.finite(market_prob), vig_moneyline_from_prob(market_prob, side_key), NA_real_),
       ev_units = ifelse(is.finite(best_odds_num), expected_value_units(model_prob, best_odds_num), NA_real_)
     ) %>%
     filter(is.finite(market_prob)) %>%
@@ -892,11 +963,12 @@ best_offers_widget <- NULL
 if (exists("final")) {
   seasons_needed <- sort(unique(final$season))
   lines_raw <- safe_load_lines(seasons_needed)
-  line_catalog <- build_line_catalog(final, lines_raw, sched)
+  line_catalog <- build_line_catalog(final, lines_raw, sched, provider = MARKET_PROVIDER)
   best_offers <- best_offer_rows(line_catalog)
 
   bets <- build_best_bets(final, sched, spread_mapper, FOCUS_MATCHUP, line_catalog,
-                          preferred_prob_col = preferred_final_prob_col, lines_df = lines_raw)
+                          preferred_prob_col = preferred_final_prob_col, lines_df = lines_raw,
+                          provider = MARKET_PROVIDER)
   message("\n=== Best Bets (current slate) ===")
   if (nrow(bets)) {
     bets_table <- bets %>%
