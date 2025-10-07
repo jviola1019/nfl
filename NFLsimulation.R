@@ -2876,6 +2876,66 @@ score_weeks <- function(start_season, end_season, weeks = NULL, trials = 40000L)
 }
 american_to_prob <- function(odds) ifelse(odds < 0, (-odds)/((-odds)+100), 100/(odds+100))
 
+align_blend_with_margin <- function(p_blend,
+                                    margin_mean,
+                                    margin_median,
+                                    margin_sd_eff,
+                                    home_mean_pts,
+                                    away_mean_pts,
+                                    home_median_pts,
+                                    away_median_pts,
+                                    influence_scale = 1.65,
+                                    coinflip_tol = 0.15) {
+  p_blend <- .clp(p_blend)
+
+  sd_eff <- ifelse(is.finite(margin_sd_eff) & margin_sd_eff > 0, margin_sd_eff, NA_real_)
+  score_mean <- home_mean_pts - away_mean_pts
+  score_median <- home_median_pts - away_median_pts
+
+  score_center <- 0.5 * (score_mean + score_median)
+  margin_center <- 0.5 * (margin_mean + margin_median)
+
+  use_margin <- !is.finite(score_center) & is.finite(margin_center)
+  score_center[use_margin] <- margin_center[use_margin]
+
+  ok <- is.finite(score_center) & is.finite(sd_eff)
+  if (!any(ok)) {
+    return(p_blend)
+  }
+
+  agreement <- ifelse(
+    is.finite(score_mean) & is.finite(score_median) &
+      (abs(score_mean) + abs(score_median)) > 0,
+    1 - pmin(1, abs(score_mean - score_median) /
+               (abs(score_mean) + abs(score_median))),
+    1
+  )
+
+  z_score <- score_center[ok] / sd_eff[ok]
+  p_target <- stats::pnorm(z_score)
+  p_target <- .clp(p_target)
+
+  influence <- abs(z_score) / influence_scale
+  influence <- pmin(pmax(influence, 0), 1)
+  influence <- pmax(influence, 0.25 * agreement[ok])
+  influence <- pmin(influence, agreement[ok])
+
+  same_scores <- is.finite(score_center) & abs(score_center) <= coinflip_tol &
+    is.finite(agreement) & agreement > 0.75
+  if (any(same_scores & ok, na.rm = TRUE)) {
+    idx <- which(ok)[which(same_scores[ok])]
+    influence[idx] <- 1
+    p_target[idx] <- 0.5
+  }
+
+  adj_logit <- (1 - influence) * .lgt(p_blend[ok]) + influence * .lgt(p_target)
+  p_adj <- stats::plogis(adj_logit)
+
+  out <- p_blend
+  out[ok] <- .clp(p_adj)
+  out
+}
+
 fit_spread_to_prob <- function(df) {
   sp <- .pick_col2(df, c("close_spread","spread_close","home_spread_close",
                          "spread_line","spread","home_spread","spread_favorite"))
@@ -3625,11 +3685,20 @@ if (!is.null(fit_deploy)) {
 
 
 # 3) Isotonic-correct the blended prob (if we trained the map)
-final$home_p_2w_blend <- if (!is.null(map_blend)) map_blend(p_raw) else p_raw
+final$home_p_2w_blend_raw <- if (!is.null(map_blend)) map_blend(p_raw) else p_raw
 
-# 4) Map back to calibrated 3-way using your tie mass
 final <- final %>%
   dplyr::mutate(
+    home_p_2w_blend = align_blend_with_margin(
+      home_p_2w_blend_raw,
+      margin_mean,
+      margin_median,
+      margin_sd_eff,
+      home_mean_pts,
+      away_mean_pts,
+      home_median_pts,
+      away_median_pts
+    ),
     home_win_prob_blend = .clp(home_p_2w_blend * (1 - tie_prob)),
     away_win_prob_blend = .clp((1 - tie_prob) - home_win_prob_blend),
     two_way_mass_blend  = pmax(1 - tie_prob, 1e-9),
