@@ -593,38 +593,11 @@ bootstrap_week_ci <- function(df, p_col_model, p_col_mkt, y_col = "y2",
 # ------------------ Assemble evaluation dataset -------------------------------
 stopifnot("per_game" %in% names(res))
 
-res_per_game <- res$per_game
-
-if (!"p_blend" %in% names(res_per_game)) {
-  blend_candidates <- grep("_blend$", names(res_per_game), value = TRUE)
-  blend_candidates <- setdiff(blend_candidates, c("home_p_2w_blend", "away_p_2w_blend"))
-  blend_candidates <- blend_candidates[vapply(blend_candidates, function(col) {
-    is.numeric(res_per_game[[col]]) && any(is.finite(res_per_game[[col]]))
-  }, logical(1))]
-
-  if (length(blend_candidates)) {
-    chosen <- blend_candidates[1]
-    message(sprintf("res$per_game missing p_blend; using '%s' as the blended probability source.", chosen))
-    res_per_game <- res_per_game %>%
-      mutate(p_blend = .clp(.data[[chosen]]))
-  } else {
-    fallback_col <- pick_col(res_per_game, c("p2_cal", "p_model", "p2", "prob_home"))
-    if (is.na(fallback_col)) {
-      stop("res$per_game must supply a blend-like probability column (expected 'p_blend').")
-    }
-    message(sprintf(
-      "res$per_game missing p_blend; falling back to '%s' (clamped) for blend-based evaluation.",
-      fallback_col
-    ))
-    res_per_game <- res_per_game %>%
-      mutate(p_blend = .clp(.data[[fallback_col]]))
-  }
-} else {
-  res_per_game <- res_per_game %>%
-    mutate(p_blend = .clp(p_blend))
+if (!"p_blend" %in% names(res$per_game)) {
+  stop("res$per_game must include a 'p_blend' column containing blended probabilities.")
 }
 
-market_prob_col <- pick_col(res_per_game, c("p_home_mkt_2w","p_mkt","market_prob_home","p_mkt_2w","home_p_mkt","p2_market","market_p_home"))
+market_prob_col <- pick_col(res$per_game, c("p_home_mkt_2w","p_mkt","market_prob_home","p_mkt_2w","home_p_mkt","p2_market","market_p_home"))
 
 eval_df <- res_per_game %>%
   # keep just what we need
