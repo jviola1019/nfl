@@ -3703,7 +3703,27 @@ final <- final %>%
     away_win_prob_blend = .clp((1 - tie_prob) - home_win_prob_blend),
     two_way_mass_blend  = pmax(1 - tie_prob, 1e-9),
     home_p_2w_blend     = .clp(home_win_prob_blend / two_way_mass_blend),
-    away_p_2w_blend     = 1 - home_p_2w_blend
+    away_p_2w_blend     = 1 - home_p_2w_blend,
+    margin_blend        = dplyr::if_else(
+      is.finite(margin_sd_eff) & margin_sd_eff > 0,
+      stats::qnorm(.clp(home_p_2w_blend)) * margin_sd_eff,
+      NA_real_
+    ),
+    total_median_blend  = dplyr::if_else(
+      is.finite(total_median),
+      total_median,
+      away_median_pts + home_median_pts
+    ),
+    home_median_blend   = dplyr::if_else(
+      is.finite(total_median_blend) & is.finite(margin_blend),
+      0.5 * (total_median_blend + margin_blend),
+      home_median_pts
+    ),
+    away_median_blend   = dplyr::if_else(
+      is.finite(total_median_blend) & is.finite(margin_blend),
+      0.5 * (total_median_blend - margin_blend),
+      away_median_pts
+    )
   )
 
 
@@ -3801,7 +3821,7 @@ pretty_df <- final |>
     ),
     Category = paste(win_tier, "·", total_bucket, "·", env)
   ) |>
-  dplyr::arrange(date, dplyr::desc(fav_prob))
+  dplyr::arrange(date, dplyr::desc(fav_prob_blend))
 rt_df <- pretty_df %>%
   transmute(
     Day = as.character(dow),
@@ -3811,8 +3831,9 @@ rt_df <- pretty_df %>%
     `Away% (Blend 3-way)` = away_win_prob_blend,
     `Home% (Blend 2-way)` = home_p_2w_blend,
     `Away% (Blend 2-way)` = 1 - home_p_2w_blend,
-    `Home Median` = home_median_pts,
-    `Away Median` = away_median_pts
+    `Home Median (Blend)` = home_median_blend,
+    `Away Median (Blend)` = away_median_blend,
+    `Total Median (Blend)` = total_median_blend
   )
 
 # spot-check a few probabilities
@@ -3847,13 +3868,21 @@ if (reactable_available) {
       `Away% (Blend 3-way)` = reactable::colDef(format = reactable::colFormat(percent = TRUE, digits = 1), align = "center"),
       `Home% (Blend 2-way)` = reactable::colDef(format = reactable::colFormat(percent = TRUE, digits = 1), align = "center"),
       `Away% (Blend 2-way)` = reactable::colDef(format = reactable::colFormat(percent = TRUE, digits = 1), align = "center"),
-      `Home Median` = reactable::colDef(
+      `Home Median (Blend)` = reactable::colDef(
         format = reactable::colFormat(digits = 1),
         align = "center"
       ),
-      `Away Median` = reactable::colDef(
+      `Away Median (Blend)` = reactable::colDef(
         format = reactable::colFormat(digits = 1),
         align = "center"
+      ),
+      `Total Median (Blend)` = reactable::colDef(
+        format = reactable::colFormat(digits = 1),
+        align = "center",
+        style = function(value) list(
+          background = pal_total(value),
+          color = if (is.na(value) || value < 46) "black" else "white"
+        )
       ),
       Date        = reactable::colDef(align = "center"),
       Day         = reactable::colDef(align = "center")
