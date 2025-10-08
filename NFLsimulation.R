@@ -3047,7 +3047,9 @@ market_probs_from_sched <- function(sched_df) {
     "spread_line", "spread", "home_spread", "spread_favorite"
   ))
 
-  ml_tbl <- tibble::tibble()
+  ml_tbl <- tibble::tibble(
+    game_id = character(), season = integer(), week = integer(), p_home_mkt_2w_ml = numeric()
+  )
   if (!is.na(ml_home) && !is.na(ml_away)) {
     ml_tbl <- sched_df %>%
       dplyr::transmute(
@@ -3064,7 +3066,9 @@ market_probs_from_sched <- function(sched_df) {
       dplyr::distinct()
   }
 
-  spread_tbl <- tibble::tibble()
+  spread_tbl <- tibble::tibble(
+    game_id = character(), season = integer(), week = integer(), p_home_mkt_2w_spread = numeric()
+  )
   if (!is.na(sp_col)) {
     spread_tbl <- sched_df %>%
       dplyr::transmute(
