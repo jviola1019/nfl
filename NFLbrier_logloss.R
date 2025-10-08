@@ -29,64 +29,6 @@ compare_to_market <- function(res,
   # --- helpers (scoped to this function) ---
   .clamp01 <- function(x, eps = 1e-12) pmin(pmax(x, eps), 1 - eps)
   .pick_col <- function(df, cands) { nm <- intersect(cands, names(df)); if (length(nm)) nm[1] else NA_character_ }
-  .clean_join_keys <- function(df, label) {
-    if (is.null(df)) {
-      return(df)
-    }
-
-    df <- tibble::as_tibble(df)
-    if (!nrow(df)) {
-      return(df)
-    }
-
-    key_cols <- c("game_id", "season", "week")
-    missing_cols <- setdiff(key_cols, names(df))
-    if (length(missing_cols)) {
-      stop(sprintf(
-        "compare_to_market(): %s is missing required columns: %s",
-        label,
-        paste(missing_cols, collapse = ", ")
-      ))
-    }
-
-    key_df <- df[, key_cols]
-    keep <- stats::complete.cases(key_df)
-    drop_n <- sum(!keep)
-    if (drop_n) {
-      message(sprintf(
-        "compare_to_market(): dropping %d %s rows missing game_id/season/week.",
-        drop_n,
-        label
-      ))
-      df <- df[keep, , drop = FALSE]
-    }
-
-    if (!nrow(df)) {
-      return(df)
-    }
-
-    dup <- df %>%
-      dplyr::count(dplyr::across(dplyr::all_of(key_cols)), name = "n") %>%
-      dplyr::filter(.data$n > 1)
-
-    if (nrow(dup)) {
-      extra <- sum(dup$n) - nrow(dup)
-      message(sprintf(
-        "compare_to_market(): %s had %d duplicate rows; keeping the first per game.",
-        label,
-        extra
-      ))
-      df <- df %>%
-        dplyr::arrange(.data$season, .data$week, .data$game_id) %>%
-        dplyr::group_by(dplyr::across(dplyr::all_of(key_cols))) %>%
-        dplyr::slice_head(n = 1) %>%
-        dplyr::ungroup()
-    } else {
-      df <- df %>% dplyr::distinct(dplyr::across(dplyr::all_of(key_cols)), .keep_all = TRUE)
-    }
-
-    df
-  }
   american_to_prob <- function(odds) ifelse(odds < 0, (-odds)/((-odds)+100), 100/(odds+100))
   devig_2way <- function(p_home_raw, p_away_raw){
     den <- p_home_raw + p_away_raw
@@ -138,7 +80,7 @@ compare_to_market <- function(res,
       return(invisible(NULL))
     }
 
-    # Pull the dates you need, then join into sched_eval
+    # Pull the dates, then join into sched_eval
     dates_to_pull <- sort(unique(as.Date(sched_eval$game_date)))
     espn_tbl <- purrr::map_dfr(dates_to_pull, espn_odds_for_date)
     sched_eval <- sched_eval %>%
@@ -157,7 +99,6 @@ compare_to_market <- function(res,
   away_pts_col <- .pick_col(sched_eval, c("away_score","away_points","score_away","away_pts"))
   stopifnot(!is.na(home_pts_col), !is.na(away_pts_col))
   
-  # moneylines preferred; else spread
   ml_home_col <- .pick_col(sched_eval, c("home_ml","ml_home","moneyline_home","home_moneyline"))
   ml_away_col <- .pick_col(sched_eval, c("away_ml","ml_away","moneyline_away","away_moneyline"))
   
@@ -204,14 +145,8 @@ compare_to_market <- function(res,
   pcol <- .pick_col(preds_src, c("p2_cal","home_p_2w_cal","p2_home_cal","home_p2w_cal"))
   stopifnot(!is.na(pcol))
   
-  preds_clean <- preds_src %>%
+  comp <- preds_src %>%
     dplyr::transmute(game_id, season, week, p_model = .clamp01(.data[[pcol]])) %>%
-    .clean_join_keys("model predictions")
-
-  mkt_tbl <- .clean_join_keys(mkt_tbl, "market probabilities")
-  outcomes <- .clean_join_keys(outcomes, "outcomes")
-
-  comp <- preds_clean %>%
     dplyr::inner_join(mkt_tbl,  by = c("game_id","season","week")) %>%
     dplyr::inner_join(outcomes, by = c("game_id","season","week")) %>%
     dplyr::transmute(
@@ -278,7 +213,7 @@ compare_to_market <- function(res,
       d_Brier2 = model_Brier2 - mkt_Brier2,
       d_LogL2  = model_LogL2  - mkt_LogL2
     )
-  # ---- Week-block bootstrap CIs for deltas (model - market) ----
+  # Week-block bootstrap CIs for deltas (model - market)
   .bootstrap_deltas <- function(stats_tbl, B, seed) {
     if (!nrow(stats_tbl) || B <= 0) {
       return(matrix(numeric(), nrow = 2L, dimnames = list(c("dB", "dL"), NULL)))
@@ -511,7 +446,6 @@ compare_to_market <- function(res,
     dplyr::group_by(bin) %>%
     dplyr::summarise(p_hat = mean(p_mkt), y_bar = mean(y2), n = dplyr::n(), .groups="drop")
   
-  # print like before
   if (!is.null(msg)) message(msg)
   print(overall)
 
