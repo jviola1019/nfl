@@ -2736,6 +2736,7 @@ score_weeks_fast <- function(start_season, end_season, weeks = NULL) {
       p2_raw, p2_cal,
       pH_raw = p_home_3w_sim, pA_raw = p_away_3w_sim, pT_raw = p_tie_3w_sim,
       pH_cal = H_cal,          pA_cal = A_cal,          pT_cal = T_cal,
+      p_blend = NA_real_,
       y2 = y_home, y3
     )
   
@@ -2801,6 +2802,7 @@ score_one_week <- function(season, week, trials = 40000L) {
         p2_raw, p2_cal,
         pH_raw = p_home_3w_sim, pA_raw = p_away_3w_sim, pT_raw = p_tie_3w_sim,
         pH_cal = H_cal, pA_cal = A_cal, pT_cal = T_cal,
+        p_blend = NA_real_,
         y2 = y2, y3 = y3
       )
   )
@@ -3703,7 +3705,27 @@ final <- final %>%
     away_win_prob_blend = .clp((1 - tie_prob) - home_win_prob_blend),
     two_way_mass_blend  = pmax(1 - tie_prob, 1e-9),
     home_p_2w_blend     = .clp(home_win_prob_blend / two_way_mass_blend),
-    away_p_2w_blend     = 1 - home_p_2w_blend
+    away_p_2w_blend     = 1 - home_p_2w_blend,
+    margin_blend        = dplyr::if_else(
+      is.finite(margin_sd_eff) & margin_sd_eff > 0,
+      stats::qnorm(.clp(home_p_2w_blend)) * margin_sd_eff,
+      NA_real_
+    ),
+    total_median_blend  = dplyr::if_else(
+      is.finite(total_median),
+      total_median,
+      away_median_pts + home_median_pts
+    ),
+    home_median_blend   = dplyr::if_else(
+      is.finite(total_median_blend) & is.finite(margin_blend),
+      0.5 * (total_median_blend + margin_blend),
+      home_median_pts
+    ),
+    away_median_blend   = dplyr::if_else(
+      is.finite(total_median_blend) & is.finite(margin_blend),
+      0.5 * (total_median_blend - margin_blend),
+      away_median_pts
+    )
   )
 
 
@@ -3730,25 +3752,37 @@ res <- if (exists("calib_sim_df")) {
 # We reuse your existing `compare_to_market()` which expects res$per_game$p2_cal.
 # We create res_blend by overwriting p2_cal with the blended p for the same games.
 
+cmp_blend <- NULL
+
 if (exists("res") && exists("blend_oos") && nrow(blend_oos)) {
-  res_blend <- res
-  res_blend$per_game <- res$per_game %>%
+  res$per_game <- res$per_game %>%
     dplyr::left_join(
-      blend_oos %>% dplyr::select(game_id, season, week, p_blend),
+      blend_oos %>% dplyr::select(game_id, season, week, p_blend_hist = p_blend),
       by = c("game_id","season","week")
     ) %>%
     dplyr::mutate(
+      p_blend = ifelse(is.finite(p_blend_hist), p_blend_hist, p2_cal)
+    ) %>%
+    dplyr::select(-p_blend_hist)
+
+  res_blend <- res
+  res_blend$per_game <- res$per_game %>%
+    dplyr::mutate(
       p2_cal = ifelse(is.finite(p_blend), p_blend, p2_cal) # overwrite with blend where available
     )
-  
+
   cat("\n=== Blended vs market (paired, week-block bootstrap) ===\n")
   cmp_blend <- compare_to_market(res_blend, sched)
   # cmp_blend$overall$... has Brier/LogLoss and deltas; 95% CIs printed by the function
+} else {
+  message("Skipping blended vs market comparison: missing res/blend_oos inputs.")
 }
 
 # Optional quick peeks:
-print(cmp_blend$overall)
-head(cmp_blend$by_season)
+if (!is.null(cmp_blend)) {
+  print(cmp_blend$overall)
+  head(cmp_blend$by_season)
+}
 
 
 
@@ -3801,7 +3835,7 @@ pretty_df <- final |>
     ),
     Category = paste(win_tier, "·", total_bucket, "·", env)
   ) |>
-  dplyr::arrange(date, dplyr::desc(fav_prob))
+  dplyr::arrange(date, dplyr::desc(fav_prob_blend))
 rt_df <- pretty_df %>%
   transmute(
     Day = as.character(dow),
@@ -3811,8 +3845,9 @@ rt_df <- pretty_df %>%
     `Away% (Blend 3-way)` = away_win_prob_blend,
     `Home% (Blend 2-way)` = home_p_2w_blend,
     `Away% (Blend 2-way)` = 1 - home_p_2w_blend,
-    `Home Median` = home_median_pts,
-    `Away Median` = away_median_pts
+    `Home Median (Blend)` = home_median_blend,
+    `Away Median (Blend)` = away_median_blend,
+    `Total Median (Blend)` = total_median_blend
   )
 
 # spot-check a few probabilities
@@ -3847,13 +3882,21 @@ if (reactable_available) {
       `Away% (Blend 3-way)` = reactable::colDef(format = reactable::colFormat(percent = TRUE, digits = 1), align = "center"),
       `Home% (Blend 2-way)` = reactable::colDef(format = reactable::colFormat(percent = TRUE, digits = 1), align = "center"),
       `Away% (Blend 2-way)` = reactable::colDef(format = reactable::colFormat(percent = TRUE, digits = 1), align = "center"),
-      `Home Median` = reactable::colDef(
+      `Home Median (Blend)` = reactable::colDef(
         format = reactable::colFormat(digits = 1),
         align = "center"
       ),
-      `Away Median` = reactable::colDef(
+      `Away Median (Blend)` = reactable::colDef(
         format = reactable::colFormat(digits = 1),
         align = "center"
+      ),
+      `Total Median (Blend)` = reactable::colDef(
+        format = reactable::colFormat(digits = 1),
+        align = "center",
+        style = function(value) list(
+          background = pal_total(value),
+          color = if (is.na(value) || value < 46) "black" else "white"
+        )
       ),
       Date        = reactable::colDef(align = "center"),
       Day         = reactable::colDef(align = "center")
