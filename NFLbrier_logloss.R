@@ -29,6 +29,64 @@ compare_to_market <- function(res,
   # --- helpers (scoped to this function) ---
   .clamp01 <- function(x, eps = 1e-12) pmin(pmax(x, eps), 1 - eps)
   .pick_col <- function(df, cands) { nm <- intersect(cands, names(df)); if (length(nm)) nm[1] else NA_character_ }
+  .clean_join_keys <- function(df, label) {
+    if (is.null(df)) {
+      return(df)
+    }
+
+    df <- tibble::as_tibble(df)
+    if (!nrow(df)) {
+      return(df)
+    }
+
+    key_cols <- c("game_id", "season", "week")
+    missing_cols <- setdiff(key_cols, names(df))
+    if (length(missing_cols)) {
+      stop(sprintf(
+        "compare_to_market(): %s is missing required columns: %s",
+        label,
+        paste(missing_cols, collapse = ", ")
+      ))
+    }
+
+    key_df <- df[, key_cols]
+    keep <- stats::complete.cases(key_df)
+    drop_n <- sum(!keep)
+    if (drop_n) {
+      message(sprintf(
+        "compare_to_market(): dropping %d %s rows missing game_id/season/week.",
+        drop_n,
+        label
+      ))
+      df <- df[keep, , drop = FALSE]
+    }
+
+    if (!nrow(df)) {
+      return(df)
+    }
+
+    dup <- df %>%
+      dplyr::count(dplyr::across(dplyr::all_of(key_cols)), name = "n") %>%
+      dplyr::filter(.data$n > 1)
+
+    if (nrow(dup)) {
+      extra <- sum(dup$n) - nrow(dup)
+      message(sprintf(
+        "compare_to_market(): %s had %d duplicate rows; keeping the first per game.",
+        label,
+        extra
+      ))
+      df <- df %>%
+        dplyr::arrange(.data$season, .data$week, .data$game_id) %>%
+        dplyr::group_by(dplyr::across(dplyr::all_of(key_cols))) %>%
+        dplyr::slice_head(n = 1) %>%
+        dplyr::ungroup()
+    } else {
+      df <- df %>% dplyr::distinct(dplyr::across(dplyr::all_of(key_cols)), .keep_all = TRUE)
+    }
+
+    df
+  }
   american_to_prob <- function(odds) ifelse(odds < 0, (-odds)/((-odds)+100), 100/(odds+100))
   devig_2way <- function(p_home_raw, p_away_raw){
     den <- p_home_raw + p_away_raw
@@ -146,8 +204,14 @@ compare_to_market <- function(res,
   pcol <- .pick_col(preds_src, c("p2_cal","home_p_2w_cal","p2_home_cal","home_p2w_cal"))
   stopifnot(!is.na(pcol))
   
-  comp <- preds_src %>%
+  preds_clean <- preds_src %>%
     dplyr::transmute(game_id, season, week, p_model = .clamp01(.data[[pcol]])) %>%
+    .clean_join_keys("model predictions")
+
+  mkt_tbl <- .clean_join_keys(mkt_tbl, "market probabilities")
+  outcomes <- .clean_join_keys(outcomes, "outcomes")
+
+  comp <- preds_clean %>%
     dplyr::inner_join(mkt_tbl,  by = c("game_id","season","week")) %>%
     dplyr::inner_join(outcomes, by = c("game_id","season","week")) %>%
     dplyr::transmute(
