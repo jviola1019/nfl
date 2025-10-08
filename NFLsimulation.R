@@ -3018,51 +3018,81 @@ map_spread_prob <- function(sp) {
 
 # Build 2-way market probabilities from SCHEDULES:
 market_probs_from_sched <- function(sched_df) {
-  .clp <- function(x, eps=1e-12) pmin(pmax(x, eps), 1-eps)
-  .pick <- function(df, cands){ nm <- intersect(cands, names(df)); if (length(nm)) nm[1] else NA_character_ }
-  american_to_prob <- function(odds) ifelse(odds < 0, (-odds)/((-odds)+100), 100/(odds+100))
+  .clp <- function(x, eps = 1e-12) pmin(pmax(x, eps), 1 - eps)
+  .pick <- function(df, cands) {
+    nm <- intersect(cands, names(df))
+    if (length(nm)) nm[1] else NA_character_
+  }
+  american_to_prob <- function(odds) ifelse(odds < 0, (-odds)/((-odds) + 100), 100/(odds + 100))
 
-  # Closing moneylines preferred; fall back to spread-derived probabilities
-  ml_home <- .pick(sched_df, c("home_ml_close","ml_home_close","moneyline_home_close","home_moneyline_close",
-                               "home_ml","ml_home","moneyline_home","home_moneyline"))
-  ml_away <- .pick(sched_df, c("away_ml_close","ml_away_close","moneyline_away_close","away_moneyline_close",
-                               "away_ml","ml_away","moneyline_away","away_moneyline"))
-  sp_col <- .pick(sched_df, c("close_spread","spread_close","home_spread_close",
-                              "spread_line","spread","home_spread","spread_favorite"))
+  base <- sched_df %>%
+    dplyr::filter(!is.na(game_id)) %>%
+    dplyr::transmute(game_id, season, week) %>%
+    dplyr::distinct()
 
+  if (!nrow(base)) {
+    return(tibble::tibble(game_id = character(), season = integer(), week = integer(), p_home_mkt_2w = numeric()))
+  }
+
+  ml_home <- .pick(sched_df, c(
+    "home_ml_close", "ml_home_close", "moneyline_home_close", "home_moneyline_close",
+    "home_ml", "ml_home", "moneyline_home", "home_moneyline"
+  ))
+  ml_away <- .pick(sched_df, c(
+    "away_ml_close", "ml_away_close", "moneyline_away_close", "away_moneyline_close",
+    "away_ml", "ml_away", "moneyline_away", "away_moneyline"
+  ))
+  sp_col <- .pick(sched_df, c(
+    "close_spread", "spread_close", "home_spread_close",
+    "spread_line", "spread", "home_spread", "spread_favorite"
+  ))
+
+  ml_tbl <- tibble::tibble()
   if (!is.na(ml_home) && !is.na(ml_away)) {
-    mm <- sched_df %>%
+    ml_tbl <- sched_df %>%
       dplyr::transmute(
         game_id, season, week,
         p_home_raw = american_to_prob(suppressWarnings(as.numeric(.data[[ml_home]]))),
         p_away_raw = american_to_prob(suppressWarnings(as.numeric(.data[[ml_away]])))
-      )
-    out <- mm %>%
+      ) %>%
       dplyr::mutate(
         den = p_home_raw + p_away_raw,
-        p_home_mkt_2w = .clp(ifelse(is.finite(den) & den > 0, p_home_raw/den, NA_real_))
+        p_home_mkt_2w_ml = .clp(ifelse(is.finite(den) & den > 0, p_home_raw/den, NA_real_))
       ) %>%
-      dplyr::filter(is.finite(p_home_mkt_2w)) %>%
-      dplyr::select(game_id, season, week, p_home_mkt_2w)
-
-    if (nrow(out)) return(out)
+      dplyr::filter(is.finite(p_home_mkt_2w_ml)) %>%
+      dplyr::select(game_id, season, week, p_home_mkt_2w_ml) %>%
+      dplyr::distinct()
   }
 
+  spread_tbl <- tibble::tibble()
   if (!is.na(sp_col)) {
-    out <- sched_df %>%
+    spread_tbl <- sched_df %>%
       dplyr::transmute(
         game_id, season, week,
         home_spread = suppressWarnings(as.numeric(.data[[sp_col]]))
       ) %>%
       dplyr::filter(is.finite(home_spread)) %>%
-      dplyr::mutate(p_home_mkt_2w = .clp(map_spread_prob(home_spread))) %>%
-      dplyr::filter(is.finite(p_home_mkt_2w)) %>%
-      dplyr::select(game_id, season, week, p_home_mkt_2w)
-
-    if (nrow(out)) return(out)
+      dplyr::mutate(p_home_mkt_2w_spread = .clp(map_spread_prob(home_spread))) %>%
+      dplyr::filter(is.finite(p_home_mkt_2w_spread)) %>%
+      dplyr::select(game_id, season, week, p_home_mkt_2w_spread) %>%
+      dplyr::distinct()
   }
 
-  stop("No closing moneyline or spread column to derive market probabilities.")
+  out <- base %>%
+    dplyr::left_join(ml_tbl, by = c("game_id", "season", "week")) %>%
+    dplyr::left_join(spread_tbl, by = c("game_id", "season", "week")) %>%
+    dplyr::mutate(
+      p_home_mkt_2w = dplyr::coalesce(p_home_mkt_2w_ml, p_home_mkt_2w_spread)
+    ) %>%
+    dplyr::select(game_id, season, week, p_home_mkt_2w)
+
+  if (!any(is.finite(out$p_home_mkt_2w))) {
+    message(
+      "market_probs_from_sched(): no usable closing moneyline or spread columns found; returning NA probabilities."
+    )
+  }
+
+  out
 }
 
 # ---- assemble historical training set (OOS by season) ----
@@ -3617,16 +3647,23 @@ blend_oos <- purrr::map_dfr(seq_len(nrow(cw)), function(i){
 })
 
 boot_week_ci <- function(df, B = 2000, seed = SEED) {
+  if (!nrow(df)) {
+    return(rep(NA_real_, 2L))
+  }
+
   set.seed(seed)
-  wks <- df %>% dplyr::distinct(season, week)
-  n   <- nrow(wks)
+
+  groups <- split(seq_len(nrow(df)), interaction(df$season, df$week, drop = TRUE, lex.order = TRUE))
+  n <- length(groups)
   dif <- numeric(B)
+
   for (b in seq_len(B)) {
     idx <- sample.int(n, n, replace = TRUE)
-    samp <- wks[idx, , drop = FALSE]
-    dd <- df %>% dplyr::inner_join(samp, by = c("season","week"))
+    rows <- unlist(groups[idx], use.names = FALSE)
+    dd <- df[rows, , drop = FALSE]
     dif[b] <- mean((dd$p_blend - dd$y2)^2) - mean((dd$p_mkt - dd$y2)^2)
   }
+
   stats::quantile(dif, c(0.025, 0.975))
 }
 ci_brier_diff <- boot_week_ci(blend_oos)
