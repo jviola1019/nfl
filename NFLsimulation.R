@@ -3845,8 +3845,6 @@ res <- if (exists("calib_sim_df")) {
 # We reuse your existing `compare_to_market()` which expects res$per_game$p2_cal.
 # We create res_blend by overwriting p2_cal with the blended p for the same games.
 
-cmp_blend <- NULL
-
 if (exists("res") && exists("blend_oos") && nrow(blend_oos)) {
   res$per_game <- res$per_game %>%
     dplyr::left_join(
@@ -3867,15 +3865,11 @@ if (exists("res") && exists("blend_oos") && nrow(blend_oos)) {
   cat("\n=== Blended vs market (paired, week-block bootstrap) ===\n")
   cmp_blend <- compare_to_market(res_blend, sched)
   # cmp_blend$overall$... has Brier/LogLoss and deltas; 95% CIs printed by the function
-} else {
-  message("Skipping blended vs market comparison: missing res/blend_oos inputs.")
 }
 
 # Optional quick peeks:
-if (!is.null(cmp_blend)) {
-  print(cmp_blend$overall)
-  head(cmp_blend$by_season)
-}
+print(cmp_blend$overall)
+head(cmp_blend$by_season)
 
 
 
