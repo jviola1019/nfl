@@ -113,31 +113,46 @@ apply_moneyline_vig <- function(odds, vig = 0.10) {
 }
 
 vig_moneyline_from_prob <- function(prob, side_key = c("home", "away"), vig = 0.10) {
-  side_key <- match.arg(side_key)
-  if (!is.finite(prob)) return(NA_real_)
-  prob <- .clp(prob)
-  base <- prob_to_american(prob)
-  if (!is.finite(base)) return(NA_real_)
-
-  favorite <- prob > 0.5
-  if (abs(prob - 0.5) < 1e-8) {
-    favorite <- (side_key == "home")
+  prob <- suppressWarnings(as.numeric(prob))
+  if (!length(prob)) {
+    return(numeric())
   }
 
+  if (missing(side_key) || !length(side_key)) {
+    side_key <- "home"
+  }
+
+  side_key <- tolower(as.character(side_key))
+  if (length(side_key) == 1L) {
+    side_key <- rep(side_key, length(prob))
+  } else {
+    side_key <- rep_len(side_key, length(prob))
+  }
+  side_key[!side_key %in% c("home", "away")] <- "home"
+
+  prob_clamped <- .clp(prob)
+  favorite <- prob_clamped > 0.5
+  tie_idx <- which(is.finite(prob_clamped) & abs(prob_clamped - 0.5) < 1e-8)
+  if (length(tie_idx)) {
+    favorite[tie_idx] <- side_key[tie_idx] == "home"
+  }
+
+  base <- prob_to_american(prob_clamped)
   adj <- apply_moneyline_vig(base, vig = vig)
 
-  if (!favorite && adj < 0) {
-    adj <- abs(adj)
+  valid_adj <- is.finite(adj)
+  underdog_idx <- which(valid_adj & favorite == FALSE)
+  if (length(underdog_idx)) {
+    adj[underdog_idx] <- abs(adj[underdog_idx])
+    adj[underdog_idx] <- ifelse(adj[underdog_idx] < 100, 100, adj[underdog_idx])
   }
 
-  if (!favorite && adj < 100) {
-    adj <- 100
+  favorite_idx <- which(valid_adj & favorite == TRUE)
+  if (length(favorite_idx)) {
+    adj[favorite_idx] <- ifelse(adj[favorite_idx] > -100, -100, adj[favorite_idx])
   }
 
-  if (favorite && adj > -100) {
-    adj <- -100
-  }
-
+  adj[!is.finite(prob_clamped)] <- NA_real_
   adj
 }
 
@@ -726,27 +741,107 @@ score_metrics <- function(p, y) {
 
 bootstrap_week_ci <- function(df, p_col_model, p_col_mkt, y_col = "y2",
                               n_boot = 2000, seed = 42, model_label = "Model") {
-  set.seed(seed)
-  weeks <- df %>% distinct(season, week)
-  Brier_d <- numeric(n_boot)
-  LogL_d  <- numeric(n_boot)
-  
-  for (b in seq_len(n_boot)) {
-    samp <- weeks[sample(nrow(weeks), replace = TRUE), , drop = FALSE]
-    tmp  <- df %>% inner_join(samp, by = c("season","week"), relationship = "many-to-many")
-    Brier_d[b] <- brier(tmp[[p_col_model]], tmp[[y_col]]) - brier(tmp[[p_col_mkt]], tmp[[y_col]])
-    LogL_d[b]  <- logloss(tmp[[p_col_model]], tmp[[y_col]]) - logloss(tmp[[p_col_mkt]], tmp[[y_col]])
+  n_boot <- suppressWarnings(as.integer(n_boot[1]))
+  if (!is.finite(n_boot) || n_boot < 1L) {
+    stop("n_boot must be at least 1")
   }
 
-  ci <- function(v) quantile(v, c(0.025, 0.975), na.rm = TRUE)
+  required_cols <- c("season", "week", p_col_model, p_col_mkt, y_col)
+  missing_cols <- setdiff(required_cols, names(df))
+  if (length(missing_cols)) {
+    stop(sprintf(
+      "bootstrap_week_ci is missing required columns: %s",
+      paste(missing_cols, collapse = ", ")
+    ))
+  }
+
+  p_model <- suppressWarnings(as.numeric(df[[p_col_model]]))
+  p_mkt   <- suppressWarnings(as.numeric(df[[p_col_mkt]]))
+  y_val   <- suppressWarnings(as.numeric(df[[y_col]]))
+
+  valid <- is.finite(p_model) & is.finite(p_mkt) & is.finite(y_val)
+  if (!any(valid)) {
+    return(tibble(
+      metric = c(sprintf("Brier (%s - Market)", model_label),
+                 sprintf("LogLoss (%s - Market)", model_label)),
+      delta = NA_real_,
+      lo = NA_real_,
+      hi = NA_real_,
+      verdict = "TIE"
+    ))
+  }
+
+  idx_valid <- which(valid)
+  week_groups <- split(
+    idx_valid,
+    interaction(df$season[idx_valid], df$week[idx_valid], drop = TRUE, lex.order = TRUE)
+  )
+
+  n_groups <- length(week_groups)
+  if (n_groups == 0L) {
+    return(tibble(
+      metric = c(sprintf("Brier (%s - Market)", model_label),
+                 sprintf("LogLoss (%s - Market)", model_label)),
+      delta = NA_real_,
+      lo = NA_real_,
+      hi = NA_real_,
+      verdict = "TIE"
+    ))
+  }
+
+  seed_num <- suppressWarnings(as.numeric(seed[1]))
+  if (is.finite(seed_num)) {
+    set.seed(seed_num)
+  }
+
+  Brier_d <- numeric(n_boot)
+  LogL_d  <- numeric(n_boot)
+
+  for (b in seq_len(n_boot)) {
+    draw <- sample.int(n_groups, n_groups, replace = TRUE)
+    rows <- unlist(week_groups[draw], use.names = FALSE)
+    if (!length(rows)) {
+      Brier_d[b] <- NA_real_
+      LogL_d[b] <- NA_real_
+      next
+    }
+    Brier_d[b] <- brier(p_model[rows], y_val[rows]) - brier(p_mkt[rows], y_val[rows])
+    LogL_d[b]  <- logloss(p_model[rows], y_val[rows]) - logloss(p_mkt[rows], y_val[rows])
+  }
+
+  ci <- function(v) {
+    if (!any(is.finite(v))) {
+      return(c(NA_real_, NA_real_))
+    }
+    stats::quantile(v, c(0.025, 0.975), na.rm = TRUE)
+  }
+
+  mean_safe <- function(v) {
+    if (!any(is.finite(v))) {
+      return(NA_real_)
+    }
+    mean(v[is.finite(v)])
+  }
+
+  brier_ci <- ci(Brier_d)
+  logl_ci  <- ci(LogL_d)
+
+  lo_vals <- c(brier_ci[1], logl_ci[1])
+  hi_vals <- c(brier_ci[2], logl_ci[2])
+
+  verdicts <- ifelse(
+    is.finite(hi_vals) & hi_vals < 0,
+    "WIN",
+    ifelse(is.finite(lo_vals) & lo_vals > 0, "LOSE", "TIE")
+  )
+
   tibble(
     metric = c(sprintf("Brier (%s - Market)", model_label),
                sprintf("LogLoss (%s - Market)", model_label)),
-    delta  = c(mean(Brier_d), mean(LogL_d)),
-    lo     = c(ci(Brier_d)[1], ci(LogL_d)[1]),
-    hi     = c(ci(Brier_d)[2], ci(LogL_d)[2]),
-    verdict = ifelse(hi < 0, "WIN",
-                     ifelse(lo > 0, "LOSE", "TIE"))
+    delta  = c(mean_safe(Brier_d), mean_safe(LogL_d)),
+    lo     = lo_vals,
+    hi     = hi_vals,
+    verdict = verdicts
   )
 }
 
@@ -832,10 +927,14 @@ overall_tbl <- overall_weekly %>%
     n_weeks = n(),
     Brier_model = stats::weighted.mean(Brier_model, n_games, na.rm = TRUE),
     LogL_model  = stats::weighted.mean(LogL_model,  n_games, na.rm = TRUE),
+    Brier_blend = if (prob_has_blend) stats::weighted.mean(Brier_blend, n_games, na.rm = TRUE) else NA_real_,
+    LogL_blend  = if (prob_has_blend) stats::weighted.mean(LogL_blend,  n_games, na.rm = TRUE) else NA_real_,
     Brier_mkt   = stats::weighted.mean(Brier_mkt,   n_games, na.rm = TRUE),
     LogL_mkt    = stats::weighted.mean(LogL_mkt,    n_games, na.rm = TRUE),
     Brier_model_median = stats::median(Brier_model, na.rm = TRUE),
     LogL_model_median  = stats::median(LogL_model, na.rm = TRUE),
+    Brier_blend_median = if (prob_has_blend) stats::median(Brier_blend, na.rm = TRUE) else NA_real_,
+    LogL_blend_median  = if (prob_has_blend) stats::median(LogL_blend, na.rm = TRUE) else NA_real_,
     Brier_mkt_median   = stats::median(Brier_mkt, na.rm = TRUE),
     LogL_mkt_median    = stats::median(LogL_mkt, na.rm = TRUE),
     n_games = sum(n_games),
