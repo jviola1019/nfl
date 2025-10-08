@@ -3222,8 +3222,42 @@ extract_team_metric <- function(df, metric_candidates, label) {
     dplyr::transmute(season, team, !!label := metric)
 }
 
+derive_rate_metric <- function(df, numer_candidates, denom_candidates, label, multiplier = 1) {
+  if (is.null(df) || !is.data.frame(df) || !nrow(df)) return(df)
+
+  numer_col <- .pick_col2(df, numer_candidates)
+  denom_col <- .pick_col2(df, denom_candidates)
+  if (is.na(numer_col) || is.na(denom_col)) return(df)
+
+  numer <- suppressWarnings(as.numeric(df[[numer_col]]))
+  denom <- suppressWarnings(as.numeric(df[[denom_col]]))
+
+  valid <- is.finite(numer) & is.finite(denom) & abs(denom) > 0
+  out <- rep(NA_real_, length(numer))
+  out[valid] <- (numer[valid] / denom[valid]) * multiplier
+
+  df[[label]] <- out
+  df
+}
+
 team_stats_off <- safe_team_stats("offense", unique(sched$season))
 team_stats_def <- safe_team_stats("defense", unique(sched$season))
+
+team_stats_off <- team_stats_off %>%
+  derive_rate_metric(c("points", "points_for", "points_scored"),
+                     c("drives", "offensive_drives", "drive"),
+                     "points_per_drive_calc") %>%
+  derive_rate_metric(c("turnovers", "turnover", "turnovers_lost"),
+                     c("drives", "offensive_drives", "drive"),
+                     "turnovers_per_drive_calc")
+
+team_stats_def <- team_stats_def %>%
+  derive_rate_metric(c("points_allowed", "points_against", "points"),
+                     c("drives", "defensive_drives", "drive"),
+                     "points_allowed_per_drive_calc") %>%
+  derive_rate_metric(c("takeaways", "turnovers_forced", "turnovers"),
+                     c("drives", "defensive_drives", "drive"),
+                     "takeaways_per_drive_calc")
 
 team_strength_tbl <- list(
   extract_team_metric(team_stats_off, c("epa_per_play", "epa", "epa_per_pass"), "off_epa"),
@@ -3240,6 +3274,12 @@ team_strength_tbl <- list(
   extract_team_metric(team_stats_def, c("success_rate_rush", "rush_success_rate", "rushing_success_rate"), "def_rush_sr"),
   extract_team_metric(team_stats_def, c("pressure_rate", "pressures_per_dropback", "qb_hit_rate"), "def_pressure_rate"),
   extract_team_metric(team_stats_off, c("pressure_rate_allowed", "pressure_rate", "pressures_per_dropback"), "off_pressure_rate"),
+  extract_team_metric(team_stats_off, c("points_per_drive_calc", "points_per_drive", "points_per_off_drive"), "off_ppd"),
+  extract_team_metric(team_stats_def, c("points_allowed_per_drive_calc", "points_per_drive_allowed", "points_allowed_per_drive"), "def_ppd"),
+  extract_team_metric(team_stats_off, c("explosive_rate", "explosive_play_rate", "explosive_pct"), "off_explosive_rate"),
+  extract_team_metric(team_stats_def, c("explosive_rate", "explosive_play_rate", "explosive_pct"), "def_explosive_rate"),
+  extract_team_metric(team_stats_off, c("turnovers_per_drive_calc", "turnovers_per_drive", "turnover_rate"), "off_turnover_rate"),
+  extract_team_metric(team_stats_def, c("takeaways_per_drive_calc", "takeaways_per_drive", "takeaway_rate"), "def_takeaway_rate"),
   extract_team_metric(team_stats_def, c("success_rate", "series_success_rate", "sr"), "def_sr")
 ) %>%
   purrr::compact()
@@ -3248,8 +3288,8 @@ if (length(team_strength_tbl)) {
   team_strength_tbl <- purrr::reduce(team_strength_tbl, dplyr::full_join, by = c("season", "team"))
 
   rename_strength_cols <- function(df, prefix) {
-    cols <- setdiff(names(df), c("season", "team"))
-    cols <- intersect(c("off_epa", "off_sr", "def_epa", "def_sr"), names(df))
+    cols <- setdiff(names(df), c("season", "team", "home_team", "away_team"))
+    cols <- cols[!startsWith(cols, "home_") & !startsWith(cols, "away_")]
     if (!length(cols)) return(df)
     dplyr::rename_with(df, ~ paste0(prefix, .x), dplyr::all_of(cols))
   }
@@ -3331,6 +3371,54 @@ if (length(team_strength_tbl)) {
       dplyr::mutate(pressure_rate_diff = NA_real_)
   }
 
+  if (all(c("home_off_ppd", "away_def_ppd") %in% names(ctx_strength))) {
+    ctx_strength <- ctx_strength %>%
+      dplyr::mutate(drive_finish_edge = home_off_ppd - away_def_ppd)
+  } else {
+    ctx_strength <- ctx_strength %>%
+      dplyr::mutate(drive_finish_edge = NA_real_)
+  }
+
+  if (all(c("home_def_ppd", "away_off_ppd") %in% names(ctx_strength))) {
+    ctx_strength <- ctx_strength %>%
+      dplyr::mutate(drive_prevention_edge = away_off_ppd - home_def_ppd)
+  } else {
+    ctx_strength <- ctx_strength %>%
+      dplyr::mutate(drive_prevention_edge = NA_real_)
+  }
+
+  if (all(c("home_off_explosive_rate", "away_def_explosive_rate") %in% names(ctx_strength))) {
+    ctx_strength <- ctx_strength %>%
+      dplyr::mutate(explosive_edge = home_off_explosive_rate - away_def_explosive_rate)
+  } else {
+    ctx_strength <- ctx_strength %>%
+      dplyr::mutate(explosive_edge = NA_real_)
+  }
+
+  if (all(c("home_def_explosive_rate", "away_off_explosive_rate") %in% names(ctx_strength))) {
+    ctx_strength <- ctx_strength %>%
+      dplyr::mutate(explosive_prevention_edge = away_off_explosive_rate - home_def_explosive_rate)
+  } else {
+    ctx_strength <- ctx_strength %>%
+      dplyr::mutate(explosive_prevention_edge = NA_real_)
+  }
+
+  if (all(c("home_off_turnover_rate", "away_def_takeaway_rate") %in% names(ctx_strength))) {
+    ctx_strength <- ctx_strength %>%
+      dplyr::mutate(turnover_pressure_edge = away_def_takeaway_rate - home_off_turnover_rate)
+  } else {
+    ctx_strength <- ctx_strength %>%
+      dplyr::mutate(turnover_pressure_edge = NA_real_)
+  }
+
+  if (all(c("home_def_takeaway_rate", "away_off_turnover_rate") %in% names(ctx_strength))) {
+    ctx_strength <- ctx_strength %>%
+      dplyr::mutate(ball_security_edge = home_def_takeaway_rate - away_off_turnover_rate)
+  } else {
+    ctx_strength <- ctx_strength %>%
+      dplyr::mutate(ball_security_edge = NA_real_)
+  }
+
   ctx <- ctx %>%
     dplyr::left_join(ctx_strength, by = c("game_id", "season", "week"))
 }
@@ -3397,6 +3485,11 @@ blend_design <- function(df) {
     "home_off_pass_sr", "away_off_pass_sr", "home_def_pass_sr", "away_def_pass_sr",
     "home_off_rush_sr", "away_off_rush_sr", "home_def_rush_sr", "away_def_rush_sr",
     "home_off_pressure_rate", "away_off_pressure_rate", "home_def_pressure_rate", "away_def_pressure_rate",
+    "home_off_ppd", "away_off_ppd", "home_def_ppd", "away_def_ppd",
+    "home_off_explosive_rate", "away_off_explosive_rate", "home_def_explosive_rate", "away_def_explosive_rate",
+    "home_off_turnover_rate", "away_off_turnover_rate", "home_def_takeaway_rate", "away_def_takeaway_rate",
+    "drive_finish_edge", "drive_prevention_edge", "explosive_edge", "explosive_prevention_edge",
+    "turnover_pressure_edge", "ball_security_edge",
     "home_inj_off_pts", "away_inj_off_pts", "home_inj_def_pts", "away_inj_def_pts",
     "home_skill_avail_pen", "away_skill_avail_pen", "home_trench_avail_pen", "away_trench_avail_pen",
     "home_secondary_avail_pen", "away_secondary_avail_pen", "home_front7_avail_pen", "away_front7_avail_pen",
