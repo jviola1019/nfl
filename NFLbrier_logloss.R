@@ -80,7 +80,7 @@ compare_to_market <- function(res,
       return(invisible(NULL))
     }
 
-    # Pull the dates you need, then join into sched_eval
+    # Pull the dates, then join into sched_eval
     dates_to_pull <- sort(unique(as.Date(sched_eval$game_date)))
     espn_tbl <- purrr::map_dfr(dates_to_pull, espn_odds_for_date)
     sched_eval <- sched_eval %>%
@@ -99,7 +99,6 @@ compare_to_market <- function(res,
   away_pts_col <- .pick_col(sched_eval, c("away_score","away_points","score_away","away_pts"))
   stopifnot(!is.na(home_pts_col), !is.na(away_pts_col))
   
-  # moneylines preferred; else spread
   ml_home_col <- .pick_col(sched_eval, c("home_ml","ml_home","moneyline_home","home_moneyline"))
   ml_away_col <- .pick_col(sched_eval, c("away_ml","ml_away","moneyline_away","away_moneyline"))
   
@@ -214,7 +213,7 @@ compare_to_market <- function(res,
       d_Brier2 = model_Brier2 - mkt_Brier2,
       d_LogL2  = model_LogL2  - mkt_LogL2
     )
-  # ---- Week-block bootstrap CIs for deltas (model - market) ----
+  # Week-block bootstrap CIs for deltas (model - market)
   .bootstrap_deltas <- function(stats_tbl, B, seed) {
     if (!nrow(stats_tbl) || B <= 0) {
       return(matrix(numeric(), nrow = 2L, dimnames = list(c("dB", "dL"), NULL)))
@@ -447,7 +446,6 @@ compare_to_market <- function(res,
     dplyr::group_by(bin) %>%
     dplyr::summarise(p_hat = mean(p_mkt), y_bar = mean(y2), n = dplyr::n(), .groups="drop")
   
-  # print like before
   if (!is.null(msg)) message(msg)
   print(overall)
 
