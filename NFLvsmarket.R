@@ -179,23 +179,34 @@ derive_blend_probability <- function(df, extra_blend_sources = list()) {
       src_keys <- intersect(join_keys, names(src))
       if (!length(src_keys)) next
 
-      new_cols <- setdiff(blend_cols, names(augmented))
-      if (!length(new_cols)) next
-
       extra <- src %>%
-        dplyr::select(dplyr::any_of(c(src_keys, new_cols))) %>%
+        dplyr::select(dplyr::any_of(c(src_keys, blend_cols))) %>%
         distinct()
 
       if (!nrow(extra)) next
 
-      augmented <- augmented %>%
-        left_join(extra, by = src_keys, relationship = "many-to-one")
+      joined <- augmented %>%
+        left_join(extra, by = src_keys, relationship = "many-to-one", suffix = c("", ".src"))
+
+      for (col in blend_cols) {
+        src_nm <- paste0(col, ".src")
+        if (!src_nm %in% names(joined)) next
+
+        if (col %in% names(joined)) {
+          joined[[col]] <- dplyr::coalesce(joined[[col]], joined[[src_nm]])
+        } else {
+          joined[[col]] <- joined[[src_nm]]
+        }
+
+        joined[[src_nm]] <- NULL
+      }
+
+      augmented <- joined
     }
   }
 
-  if ("p_blend" %in% names(augmented)) {
-    return(augmented %>% mutate(p_blend = .clp(p_blend)))
-  }
+  orig_has_p <- "p_blend" %in% names(augmented)
+  orig_p <- if (orig_has_p) augmented$p_blend else rep(NA_real_, nrow(augmented))
 
   home_priority <- c("home_p_2w_blend", "home_p_blend")
   home_candidates <- unique(c(
@@ -203,6 +214,49 @@ derive_blend_probability <- function(df, extra_blend_sources = list()) {
     grep("^home_.*_blend$", names(augmented), value = TRUE)
   ))
   home_col <- first_valid_column(augmented, home_candidates)
+
+  away_priority <- c("away_p_2w_blend", "away_p_blend")
+  away_candidates <- unique(c(
+    intersect(away_priority, names(augmented)),
+    grep("^away_.*_blend$", names(augmented), value = TRUE)
+  ))
+  away_col <- first_valid_column(augmented, away_candidates)
+
+  other_candidates <- setdiff(
+    grep("_blend$", names(augmented), value = TRUE),
+    c("p_blend", home_candidates, away_candidates)
+  )
+  other_col <- first_valid_column(augmented, other_candidates)
+  if (orig_has_p && any(is.finite(orig_p))) {
+    p <- orig_p
+
+    if (!is.na(home_col)) {
+      home_vals <- augmented[[home_col]]
+      fill_idx <- !is.finite(p) & is.finite(home_vals)
+      if (any(fill_idx)) {
+        p[fill_idx] <- home_vals[fill_idx]
+      }
+    }
+
+    if (!is.na(away_col)) {
+      away_vals <- augmented[[away_col]]
+      fill_idx <- !is.finite(p) & is.finite(away_vals)
+      if (any(fill_idx)) {
+        p[fill_idx] <- 1 - away_vals[fill_idx]
+      }
+    }
+
+    if (!is.na(other_col)) {
+      other_vals <- augmented[[other_col]]
+      fill_idx <- !is.finite(p) & is.finite(other_vals)
+      if (any(fill_idx)) {
+        p[fill_idx] <- other_vals[fill_idx]
+      }
+    }
+
+    return(augmented %>% mutate(p_blend = .clp(p)))
+  }
+
   if (!is.na(home_col)) {
     message(sprintf(
       "res$per_game missing p_blend; using '%s' as the blended home win probability.",
@@ -211,12 +265,6 @@ derive_blend_probability <- function(df, extra_blend_sources = list()) {
     return(augmented %>% mutate(p_blend = .clp(.data[[home_col]])))
   }
 
-  away_priority <- c("away_p_2w_blend", "away_p_blend")
-  away_candidates <- unique(c(
-    intersect(away_priority, names(augmented)),
-    grep("^away_.*_blend$", names(augmented), value = TRUE)
-  ))
-  away_col <- first_valid_column(augmented, away_candidates)
   if (!is.na(away_col)) {
     message(sprintf(
       "res$per_game missing p_blend; using 1 - '%s' as the blended home win probability.",
@@ -224,12 +272,6 @@ derive_blend_probability <- function(df, extra_blend_sources = list()) {
     ))
     return(augmented %>% mutate(p_blend = .clp(1 - .data[[away_col]])))
   }
-
-  other_candidates <- setdiff(
-    grep("_blend$", names(augmented), value = TRUE),
-    c("p_blend", home_candidates, away_candidates)
-  )
-  other_col <- first_valid_column(augmented, other_candidates)
   if (!is.na(other_col)) {
     message(sprintf(
       "res$per_game missing p_blend; using '%s' as the blended probability source.",
