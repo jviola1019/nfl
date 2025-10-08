@@ -219,14 +219,30 @@ compare_to_market <- function(res,
     if (!nrow(stats_tbl) || B <= 0) {
       return(matrix(numeric(), nrow = 2L, dimnames = list(c("dB", "dL"), NULL)))
     }
+
     if (!is.null(seed)) set.seed(seed)
+
     n_weeks <- nrow(stats_tbl)
-    idx_mat <- matrix(sample.int(n_weeks, size = n_weeks * B, replace = TRUE), nrow = n_weeks, ncol = B)
-    games_mat <- matrix(stats_tbl$n_games[idx_mat], nrow = n_weeks, ncol = B)
-    total_games <- colSums(games_mat)
-    b_diff <- colSums(matrix(stats_tbl$b_model_sum[idx_mat] - stats_tbl$b_mkt_sum[idx_mat], nrow = n_weeks, ncol = B))
-    ll_diff <- colSums(matrix(stats_tbl$ll_model_sum[idx_mat] - stats_tbl$ll_mkt_sum[idx_mat], nrow = n_weeks, ncol = B))
-    rbind(dB = b_diff / total_games, dL = ll_diff / total_games)
+    counts <- stats::rmultinom(
+      n = B,
+      size = n_weeks,
+      prob = rep.int(1 / n_weeks, n_weeks)
+    )
+
+    n_games_vec <- stats_tbl$n_games
+    diff_b <- stats_tbl$b_model_sum - stats_tbl$b_mkt_sum
+    diff_ll <- stats_tbl$ll_model_sum - stats_tbl$ll_mkt_sum
+
+    total_games <- as.numeric(crossprod(n_games_vec, counts))
+    b_diff <- as.numeric(crossprod(diff_b, counts))
+    ll_diff <- as.numeric(crossprod(diff_ll, counts))
+
+    total_games[total_games <= 0] <- NA_real_
+
+    rbind(
+      dB = b_diff / total_games,
+      dL = ll_diff / total_games
+    )
   }
 
   alpha <- (1 - conf_level)/2
