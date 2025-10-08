@@ -1178,7 +1178,11 @@ build_best_bets <- function(final_df, sched_df, spread_mapper = NULL, focus_matc
       model_prob = .clp(model_prob),
       market_prob = ifelse(is.finite(market_prob), .clp(market_prob), NA_real_),
       side = paste0(team, " ML"),
-      fair_ml_model = prob_to_american(model_prob),
+      fair_ml_model = ifelse(
+        is.finite(model_prob),
+        vig_moneyline_from_prob(model_prob, side_key),
+        NA_real_
+      ),
       fair_ml_mkt   = ifelse(is.finite(market_prob), vig_moneyline_from_prob(market_prob, side_key), NA_real_)
     )
 
