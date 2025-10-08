@@ -3617,16 +3617,23 @@ blend_oos <- purrr::map_dfr(seq_len(nrow(cw)), function(i){
 })
 
 boot_week_ci <- function(df, B = 2000, seed = SEED) {
+  if (!nrow(df)) {
+    return(rep(NA_real_, 2L))
+  }
+
   set.seed(seed)
-  wks <- df %>% dplyr::distinct(season, week)
-  n   <- nrow(wks)
+
+  groups <- split(seq_len(nrow(df)), interaction(df$season, df$week, drop = TRUE, lex.order = TRUE))
+  n <- length(groups)
   dif <- numeric(B)
+
   for (b in seq_len(B)) {
     idx <- sample.int(n, n, replace = TRUE)
-    samp <- wks[idx, , drop = FALSE]
-    dd <- df %>% dplyr::inner_join(samp, by = c("season","week"))
+    rows <- unlist(groups[idx], use.names = FALSE)
+    dd <- df[rows, , drop = FALSE]
     dif[b] <- mean((dd$p_blend - dd$y2)^2) - mean((dd$p_mkt - dd$y2)^2)
   }
+
   stats::quantile(dif, c(0.025, 0.975))
 }
 ci_brier_diff <- boot_week_ci(blend_oos)
