@@ -308,16 +308,56 @@ format_line <- function(x) {
   )
 }
 
-cover_probability_norm <- function(mean_margin, sd_margin, spread, side = c("home","away")) {
-  side <- match.arg(side)
-  if (!is.finite(mean_margin) || !is.finite(sd_margin) || sd_margin <= 0 || !is.finite(spread)) {
-    return(NA_real_)
+cover_probability_norm <- function(mean_margin, sd_margin, spread, side = c("home", "away")) {
+  if (missing(side) || !length(side)) {
+    side <- "home"
   }
-  if (side == "home") {
-    stats::pnorm(-spread, mean = mean_margin, sd = sd_margin, lower.tail = FALSE)
-  } else {
-    stats::pnorm(spread, mean = mean_margin, sd = sd_margin, lower.tail = TRUE)
+
+  side <- tolower(as.character(side))
+  side[!side %in% c("home", "away")] <- "home"
+
+  len <- max(length(mean_margin), length(sd_margin), length(spread), length(side))
+  if (!len) {
+    return(numeric())
   }
+
+  mean_margin <- suppressWarnings(as.numeric(mean_margin))
+  sd_margin   <- suppressWarnings(as.numeric(sd_margin))
+  spread      <- suppressWarnings(as.numeric(spread))
+
+  mean_margin <- rep_len(mean_margin, len)
+  sd_margin   <- rep_len(sd_margin, len)
+  spread      <- rep_len(spread, len)
+  side        <- rep_len(side, len)
+
+  out <- rep(NA_real_, len)
+
+  valid <- is.finite(mean_margin) & is.finite(sd_margin) & sd_margin > 0 & is.finite(spread)
+  if (!any(valid)) {
+    return(out)
+  }
+
+  home_idx <- valid & side == "home"
+  if (any(home_idx)) {
+    out[home_idx] <- stats::pnorm(
+      -spread[home_idx],
+      mean = mean_margin[home_idx],
+      sd = sd_margin[home_idx],
+      lower.tail = FALSE
+    )
+  }
+
+  away_idx <- valid & side == "away"
+  if (any(away_idx)) {
+    out[away_idx] <- stats::pnorm(
+      spread[away_idx],
+      mean = mean_margin[away_idx],
+      sd = sd_margin[away_idx],
+      lower.tail = TRUE
+    )
+  }
+
+  out
 }
 
 pick_col <- function(df, cands) {
