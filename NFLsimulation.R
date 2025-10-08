@@ -458,14 +458,48 @@ if (nrow(week_slate) == 0) stop(sprintf("No games found for %s Wk %s.", SEASON, 
 teams_on_slate <- sort(unique(c(week_slate$home_team, week_slate$away_team)))
 
 # ───────────────────────── INJURIES (schema-agnostic + safe) ──────────────────
-safe_load_injuries <- function(seasons, ...) {
+# Prefer nflfastR injury scraping with nflreadr fallback when necessary.
+safe_load_injuries <- function(seasons, prefer_fast = TRUE, ...) {
   seasons <- sort(unique(seasons))
   if (!length(seasons)) {
-    return(tibble())
+    return(tibble::tibble())
+  }
+
+  use_fast <- isTRUE(prefer_fast) && requireNamespace("nflfastR", quietly = TRUE)
+  if (isTRUE(prefer_fast) && !use_fast) {
+    message("nflfastR not installed; using nflreadr::load_injuries() instead.")
   }
 
   missing <- integer(0)
   pieces <- lapply(seasons, function(season) {
+    fast_result <- NULL
+
+    if (use_fast) {
+      fast_result <- tryCatch(
+        nflfastR::fast_scraper_injuries(season = season),
+        error = function(e) {
+          msg <- conditionMessage(e)
+          if (grepl("404", msg, fixed = TRUE)) {
+            missing <<- c(missing, season)
+            message(sprintf(
+              "Injury release for season %s is unavailable yet; skipping it.",
+              season
+            ))
+            return(tibble::tibble())
+          }
+          warning(sprintf(
+            "nflfastR::fast_scraper_injuries failed for season %s (%s); falling back to nflreadr::load_injuries().",
+            season, msg
+          ), call. = FALSE)
+          return(NULL)
+        }
+      )
+
+      if (is.data.frame(fast_result)) {
+        return(fast_result)
+      }
+    }
+
     tryCatch(
       nflreadr::load_injuries(seasons = season, ...),
       error = function(e) {
@@ -476,7 +510,7 @@ safe_load_injuries <- function(seasons, ...) {
             "Injury release for season %s is unavailable yet; skipping it.",
             season
           ))
-          return(tibble())
+          return(tibble::tibble())
         }
         stop(e)
       }
@@ -3047,7 +3081,9 @@ market_probs_from_sched <- function(sched_df) {
     "spread_line", "spread", "home_spread", "spread_favorite"
   ))
 
-  ml_tbl <- tibble::tibble()
+  ml_tbl <- tibble::tibble(
+    game_id = character(), season = integer(), week = integer(), p_home_mkt_2w_ml = numeric()
+  )
   if (!is.na(ml_home) && !is.na(ml_away)) {
     ml_tbl <- sched_df %>%
       dplyr::transmute(
@@ -3064,7 +3100,9 @@ market_probs_from_sched <- function(sched_df) {
       dplyr::distinct()
   }
 
-  spread_tbl <- tibble::tibble()
+  spread_tbl <- tibble::tibble(
+    game_id = character(), season = integer(), week = integer(), p_home_mkt_2w_spread = numeric()
+  )
   if (!is.na(sp_col)) {
     spread_tbl <- sched_df %>%
       dplyr::transmute(
