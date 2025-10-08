@@ -113,31 +113,46 @@ apply_moneyline_vig <- function(odds, vig = 0.10) {
 }
 
 vig_moneyline_from_prob <- function(prob, side_key = c("home", "away"), vig = 0.10) {
-  side_key <- match.arg(side_key)
-  if (!is.finite(prob)) return(NA_real_)
-  prob <- .clp(prob)
-  base <- prob_to_american(prob)
-  if (!is.finite(base)) return(NA_real_)
-
-  favorite <- prob > 0.5
-  if (abs(prob - 0.5) < 1e-8) {
-    favorite <- (side_key == "home")
+  prob <- suppressWarnings(as.numeric(prob))
+  if (!length(prob)) {
+    return(numeric())
   }
 
+  if (missing(side_key) || !length(side_key)) {
+    side_key <- "home"
+  }
+
+  side_key <- tolower(as.character(side_key))
+  if (length(side_key) == 1L) {
+    side_key <- rep(side_key, length(prob))
+  } else {
+    side_key <- rep_len(side_key, length(prob))
+  }
+  side_key[!side_key %in% c("home", "away")] <- "home"
+
+  prob_clamped <- .clp(prob)
+  favorite <- prob_clamped > 0.5
+  tie_idx <- which(is.finite(prob_clamped) & abs(prob_clamped - 0.5) < 1e-8)
+  if (length(tie_idx)) {
+    favorite[tie_idx] <- side_key[tie_idx] == "home"
+  }
+
+  base <- prob_to_american(prob_clamped)
   adj <- apply_moneyline_vig(base, vig = vig)
 
-  if (!favorite && adj < 0) {
-    adj <- abs(adj)
+  valid_adj <- is.finite(adj)
+  underdog_idx <- which(valid_adj & favorite == FALSE)
+  if (length(underdog_idx)) {
+    adj[underdog_idx] <- abs(adj[underdog_idx])
+    adj[underdog_idx] <- ifelse(adj[underdog_idx] < 100, 100, adj[underdog_idx])
   }
 
-  if (!favorite && adj < 100) {
-    adj <- 100
+  favorite_idx <- which(valid_adj & favorite == TRUE)
+  if (length(favorite_idx)) {
+    adj[favorite_idx] <- ifelse(adj[favorite_idx] > -100, -100, adj[favorite_idx])
   }
 
-  if (favorite && adj > -100) {
-    adj <- -100
-  }
-
+  adj[!is.finite(prob_clamped)] <- NA_real_
   adj
 }
 
