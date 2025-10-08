@@ -44,12 +44,42 @@ compare_to_market <- function(res,
   
   seasons_eval <- sort(unique(res$by_week$season))
   sched_eval <- sched %>% dplyr::filter(season %in% seasons_eval, game_type %in% c("REG","Regular"))
-  
-  # Fallback: if no market columns on sched, join ESPN consensus by date/teams
-  need_lines <- !any(c("home_ml","ml_home","moneyline_home","home_moneyline",
-                       "away_ml","ml_away","moneyline_away","away_moneyline",
-                       "spread_line","spread","home_spread","close_spread","spread_close") %in% names(sched_eval))
-  if (need_lines) {
+
+  # Prefer an existing helper that already knows how to source market probs.
+  mkt_tbl <- NULL
+  msg <- NULL
+
+  has_sched_market_cols <- any(c("home_ml","ml_home","moneyline_home","home_moneyline",
+                                 "away_ml","ml_away","moneyline_away","away_moneyline",
+                                 "spread_line","spread","home_spread","close_spread","spread_close") %in% names(sched_eval))
+
+  if (!has_sched_market_cols && exists("market_probs_from_sched", mode = "function")) {
+    mkt_tbl <- tryCatch({
+      market_probs_from_sched(sched_eval)
+    }, error = function(e) {
+      message("compare_to_market(): market_probs_from_sched() failed: ", conditionMessage(e))
+      NULL
+    })
+
+    if (!is.null(mkt_tbl)) {
+      if (all(c("game_id", "season", "week", "p_home_mkt_2w") %in% names(mkt_tbl))) {
+        mkt_tbl <- mkt_tbl %>%
+          dplyr::transmute(game_id, season, week, p_home_mkt_2w = .clamp01(p_home_mkt_2w))
+        msg <- "Market comparison: using provided market probabilities."
+      } else {
+        message("compare_to_market(): market_probs_from_sched() did not return expected columns; falling back to schedule columns if available.")
+        mkt_tbl <- NULL
+      }
+    }
+  }
+
+  # Fallback: if no helper output and no market columns on sched, try ESPN consensus by date/teams
+  if (is.null(mkt_tbl) && !has_sched_market_cols) {
+    if (!exists("espn_odds_for_date", mode = "function")) {
+      message("compare_to_market(): no market columns and espn_odds_for_date() unavailable; skipping market comparison.")
+      return(invisible(NULL))
+    }
+
     # Pull the dates you need, then join into sched_eval
     dates_to_pull <- sort(unique(as.Date(sched_eval$game_date)))
     espn_tbl <- purrr::map_dfr(dates_to_pull, espn_odds_for_date)
@@ -73,30 +103,35 @@ compare_to_market <- function(res,
   ml_home_col <- .pick_col(sched_eval, c("home_ml","ml_home","moneyline_home","home_moneyline"))
   ml_away_col <- .pick_col(sched_eval, c("away_ml","ml_away","moneyline_away","away_moneyline"))
   
-  if (!is.na(ml_home_col) && !is.na(ml_away_col)) {
-    mkt_tbl <- sched_eval %>%
-      dplyr::transmute(
-        game_id, season, week,
-        home_ml = suppressWarnings(as.numeric(.data[[ml_home_col]])),
-        away_ml = suppressWarnings(as.numeric(.data[[ml_away_col]]))
-      ) %>%
-      dplyr::filter(is.finite(home_ml), is.finite(away_ml)) %>%
-      dplyr::mutate(
-        p_home_raw = american_to_prob(home_ml),
-        p_away_raw = american_to_prob(away_ml)
-      ) %>%
-      dplyr::bind_cols(devig_2way(.$p_home_raw, .$p_away_raw)) %>%
-      dplyr::select(game_id, season, week, p_home_mkt_2w)
-    msg <- "Market comparison: using moneylines (de-vigged)."
-  } else {
-    spread_col <- .pick_col(sched_eval, c("spread_line","spread","home_spread","close_spread","spread_close","spread_favorite"))
-    if (is.na(spread_col)) stop("No moneyline or spread column on `sched` for market comparison.")
-    SD_MARGIN <- 13.86
-    mkt_tbl <- sched_eval %>%
-      dplyr::transmute(game_id, season, week, home_spread = suppressWarnings(as.numeric(.data[[spread_col]]))) %>%
-      dplyr::filter(is.finite(home_spread)) %>%
-      dplyr::mutate(p_home_mkt_2w = .clamp01(pnorm(-home_spread / SD_MARGIN)))
-    msg <- "Market comparison: using spreads (Normal margin model)."
+  if (is.null(mkt_tbl)) {
+    if (!is.na(ml_home_col) && !is.na(ml_away_col)) {
+      mkt_tbl <- sched_eval %>%
+        dplyr::transmute(
+          game_id, season, week,
+          home_ml = suppressWarnings(as.numeric(.data[[ml_home_col]])),
+          away_ml = suppressWarnings(as.numeric(.data[[ml_away_col]]))
+        ) %>%
+        dplyr::filter(is.finite(home_ml), is.finite(away_ml)) %>%
+        dplyr::mutate(
+          p_home_raw = american_to_prob(home_ml),
+          p_away_raw = american_to_prob(away_ml)
+        ) %>%
+        dplyr::bind_cols(devig_2way(.$p_home_raw, .$p_away_raw)) %>%
+        dplyr::select(game_id, season, week, p_home_mkt_2w)
+      msg <- "Market comparison: using moneylines (de-vigged)."
+    } else {
+      spread_col <- .pick_col(sched_eval, c("spread_line","spread","home_spread","close_spread","spread_close","spread_favorite"))
+      if (is.na(spread_col)) {
+        message("compare_to_market(): no market information available after fallbacks; skipping.")
+        return(invisible(NULL))
+      }
+      SD_MARGIN <- 13.86
+      mkt_tbl <- sched_eval %>%
+        dplyr::transmute(game_id, season, week, home_spread = suppressWarnings(as.numeric(.data[[spread_col]]))) %>%
+        dplyr::filter(is.finite(home_spread)) %>%
+        dplyr::mutate(p_home_mkt_2w = .clamp01(pnorm(-home_spread / SD_MARGIN)))
+      msg <- "Market comparison: using spreads (Normal margin model)."
+    }
   }
   
   outcomes <- sched_eval %>%
@@ -127,6 +162,34 @@ compare_to_market <- function(res,
       ll_model = -(y2 * log(p_model) + (1 - y2) * log(1 - p_model)),
       ll_mkt   = -(y2 * log(p_mkt)   + (1 - y2) * log(1 - p_mkt))
     )
+
+  if (!nrow(comp)) {
+    message("compare_to_market(): no overlapping games between predictions and market data; returning empty summary.")
+    empty_delta <- c(mean = NA_real_, lo = NA_real_, hi = NA_real_)
+    empty_overall <- tibble::tibble(
+      model_Brier2 = NA_real_,
+      mkt_Brier2   = NA_real_,
+      model_LogL2  = NA_real_,
+      mkt_LogL2    = NA_real_,
+      n_games      = 0L,
+      d_Brier2     = NA_real_,
+      d_LogL2      = NA_real_
+    )
+    return(invisible(list(
+      overall = empty_overall,
+      deltas = list(LogLoss = empty_delta, Brier = empty_delta),
+      paired = list(deltas = list(LogLoss = numeric(), Brier = numeric()), stats = list(), ci = list()),
+      paired_ci = list(LogLoss = empty_delta, Brier = empty_delta),
+      paired_stats = tibble::tibble(),
+      paired_dL = empty_delta,
+      paired_dB = empty_delta,
+      by_season = tibble::tibble(),
+      bins = tibble::tibble(),
+      comp = comp,
+      rolling = tibble::tibble(),
+      peers = tibble::tibble()
+    )))
+  }
 
   wk_stats <- comp %>%
     dplyr::group_by(season, week) %>%
@@ -369,7 +432,7 @@ compare_to_market <- function(res,
     dplyr::summarise(p_hat = mean(p_mkt), y_bar = mean(y2), n = dplyr::n(), .groups="drop")
   
   # print like before
-  message(msg)
+  if (!is.null(msg)) message(msg)
   print(overall)
 
   cat("\n--- By season (model vs market) ---\n"); print(by_season)
