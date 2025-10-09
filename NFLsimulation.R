@@ -3926,11 +3926,37 @@ if (exists("res") && exists("blend_oos") && nrow(blend_oos)) {
 
   if (!is.na(prob_col)) {
     prob_sym <- rlang::sym(prob_col)
+    blend_join_cols <- c("game_id", "season", "week")
+
+    orig_n_per_game <- nrow(res$per_game)
+
+    base_keys <- res$per_game %>%
+      dplyr::select(dplyr::all_of(blend_join_cols)) %>%
+      dplyr::distinct()
+
+    blend_oos_join <- blend_oos %>%
+      dplyr::filter(dplyr::if_all(dplyr::all_of(blend_join_cols), ~ !is.na(.))) %>%
+      dplyr::group_by(dplyr::across(dplyr::all_of(blend_join_cols))) %>%
+      dplyr::summarise(p_blend = mean(p_blend, na.rm = TRUE), .groups = "drop")
+
+    if (nrow(blend_oos_join)) {
+      dup_hist <- blend_oos %>%
+        dplyr::count(dplyr::across(dplyr::all_of(blend_join_cols))) %>%
+        dplyr::filter(.data$n > 1L)
+      if (nrow(dup_hist)) {
+        message(
+          sprintf(
+            "Blended history contained %d duplicate game/week combos; using the mean probability per combo.",
+            nrow(dup_hist)
+          )
+        )
+      }
+    }
 
     per_game_with_blend <- res$per_game %>%
       dplyr::left_join(
-        blend_oos %>% dplyr::select(game_id, season, week, p_blend_hist = p_blend),
-        by = c("game_id", "season", "week")
+        blend_oos_join %>% dplyr::rename(p_blend_hist = p_blend),
+        by = blend_join_cols
       ) %>%
       dplyr::mutate(
         .prob_fallback = .data[[prob_col]],
@@ -3946,6 +3972,36 @@ if (exists("res") && exists("blend_oos") && nrow(blend_oos)) {
         !!prob_sym := dplyr::if_else(is.finite(p_blend), p_blend, .prob_fallback)
       ) %>%
       dplyr::select(-p_blend_hist, -.prob_fallback)
+
+    if (nrow(res_blend$per_game) != orig_n_per_game) {
+      stop(sprintf(
+        "Blended per-game table changed row count from %d to %d after merge.",
+        orig_n_per_game, nrow(res_blend$per_game)
+      ))
+    }
+
+    blend_keys <- res_blend$per_game %>%
+      dplyr::select(dplyr::all_of(blend_join_cols)) %>%
+      dplyr::distinct()
+
+    miss_from_blend <- base_keys %>%
+      dplyr::anti_join(blend_keys, by = blend_join_cols)
+    extra_in_blend <- blend_keys %>%
+      dplyr::anti_join(base_keys, by = blend_join_cols)
+
+    if (nrow(miss_from_blend) || nrow(extra_in_blend)) {
+      stop(sprintf(
+        "Blended per-game table does not align with original results: missing=%d, extra=%d",
+        nrow(miss_from_blend), nrow(extra_in_blend)
+      ))
+    }
+
+    dup_blend <- res_blend$per_game %>%
+      dplyr::count(dplyr::across(dplyr::all_of(blend_join_cols))) %>%
+      dplyr::filter(.data$n > 1L)
+    if (nrow(dup_blend)) {
+      stop("Blended per-game table contains duplicate game/week combinations after merge; cannot run compare_to_market().")
+    }
 
     cat("\n=== Blended vs market (paired, week-block bootstrap) ===\n")
     cmp_blend <- compare_to_market(res_blend, sched)
