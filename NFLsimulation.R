@@ -3933,7 +3933,7 @@ if (exists("res") && exists("blend_oos") && nrow(blend_oos)) {
         by = c("game_id", "season", "week")
       ) %>%
       dplyr::mutate(
-        p_blend = dplyr::if_else(is.finite(p_blend_hist), p_blend_hist, !!prob_sym)
+        p_blend = dplyr::if_else(is.finite(p_blend_hist), p_blend_hist, rlang::.data[[prob_col]])
       ) %>%
       dplyr::select(-p_blend_hist)
 
@@ -3942,7 +3942,7 @@ if (exists("res") && exists("blend_oos") && nrow(blend_oos)) {
     res_blend <- res
     res_blend$per_game <- per_game_with_blend %>%
       dplyr::mutate(
-        !!prob_sym := dplyr::if_else(is.finite(p_blend), p_blend, !!prob_sym)
+        !!prob_sym := dplyr::if_else(is.finite(p_blend), p_blend, rlang::.data[[prob_col]])
       )
 
     cat("\n=== Blended vs market (paired, week-block bootstrap) ===\n")
