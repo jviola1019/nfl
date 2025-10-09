@@ -3925,31 +3925,25 @@ if (exists("res") && exists("blend_oos") && nrow(blend_oos)) {
   prob_col <- prob_col_candidates[prob_col_candidates %in% names(res$per_game)][1]
 
   if (!is.na(prob_col)) {
+    prob_sym <- rlang::sym(prob_col)
+
     per_game_with_blend <- res$per_game %>%
       dplyr::left_join(
         blend_oos %>% dplyr::select(game_id, season, week, p_blend_hist = p_blend),
         by = c("game_id", "season", "week")
       ) %>%
-      tibble::as_tibble()
-
-    # Build the blended probability using base vectors so we stay fully inside
-    # the tibble data mask and avoid rlang::.data lookups outside of mutate.
-    prob_base <- per_game_with_blend[[prob_col]]
-    prob_base[!is.finite(prob_base)] <- NA_real_
-
-    p_hist <- per_game_with_blend$p_blend_hist
-    p_hist[!is.finite(p_hist)] <- NA_real_
-
-    per_game_with_blend$p_blend <- dplyr::coalesce(p_hist, prob_base)
-    per_game_with_blend$p_blend_hist <- NULL
+      dplyr::mutate(
+        p_blend = dplyr::if_else(is.finite(p_blend_hist), p_blend_hist, rlang::.data[[prob_col]])
+      ) %>%
+      dplyr::select(-p_blend_hist)
 
     res$per_game <- per_game_with_blend
 
     res_blend <- res
-
-    prob_updated <- per_game_with_blend[[prob_col]]
-    prob_updated[!is.finite(prob_updated)] <- NA_real_
-    res_blend$per_game[[prob_col]] <- dplyr::coalesce(per_game_with_blend$p_blend, prob_updated)
+    res_blend$per_game <- per_game_with_blend %>%
+      dplyr::mutate(
+        !!prob_sym := dplyr::if_else(is.finite(p_blend), p_blend, rlang::.data[[prob_col]])
+      )
 
     cat("\n=== Blended vs market (paired, week-block bootstrap) ===\n")
     cmp_blend <- compare_to_market(res_blend, sched)
