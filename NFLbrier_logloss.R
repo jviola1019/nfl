@@ -81,16 +81,43 @@ compare_to_market <- function(res,
     }
 
     # Pull the dates, then join into sched_eval
+    pick_first_finite_numeric <- function(x) {
+      vals <- suppressWarnings(as.numeric(x))
+      vals <- vals[is.finite(vals)]
+      if (length(vals)) vals[1] else NA_real_
+    }
+
     dates_to_pull <- sort(unique(as.Date(sched_eval$game_date)))
-    espn_tbl <- purrr::map_dfr(dates_to_pull, espn_odds_for_date)
+    espn_tbl_raw <- purrr::map_dfr(dates_to_pull, espn_odds_for_date)
+
+    espn_dups <- espn_tbl_raw %>%
+      dplyr::mutate(date = as.Date(.data$date)) %>%
+      dplyr::filter(!is.na(date), !is.na(home_team), !is.na(away_team)) %>%
+      dplyr::count(date, home_team, away_team, name = "n_matches") %>%
+      dplyr::filter(.data$n_matches > 1L)
+
+    if (nrow(espn_dups)) {
+      message(
+        sprintf(
+          "compare_to_market(): collapsing %d duplicate ESPN consensus rows by matchup/date using the first finite spread.",
+          nrow(espn_dups)
+        )
+      )
+    }
+
+    espn_tbl <- espn_tbl_raw %>%
+      dplyr::mutate(date = as.Date(.data$date)) %>%
+      dplyr::filter(!is.na(date), !is.na(home_team), !is.na(away_team)) %>%
+      dplyr::group_by(date, home_team, away_team) %>%
+      dplyr::summarise(
+        spread_line = pick_first_finite_numeric(home_spread_cons),
+        .groups = "drop"
+      )
+
     sched_eval <- sched_eval %>%
       dplyr::left_join(
-        espn_tbl %>% dplyr::transmute(
-          game_date = date,
-          home_team, away_team,
-          spread_line = home_spread_cons
-        ),
-        by = c("game_date","home_team","away_team")
+        espn_tbl,
+        by = c("game_date" = "date", "home_team", "away_team")
       )
   }
   
