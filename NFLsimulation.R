@@ -3922,34 +3922,15 @@ res <- if (exists("calib_sim_df")) {
 
 if (exists("res") && exists("blend_oos") && nrow(blend_oos)) {
   prob_col_candidates <- c("p2_cal", "home_p_2w_cal", "p2_home_cal", "home_p2w_cal")
-  prob_col_match <- prob_col_candidates[prob_col_candidates %in% names(res$per_game)]
+  prob_col <- prob_col_candidates[prob_col_candidates %in% names(res$per_game)][1]
 
-  if (length(prob_col_match)) {
-    prob_col <- prob_col_match[[1]]
+  if (!is.na(prob_col)) {
     prob_sym <- rlang::sym(prob_col)
 
-    blend_lookup <- blend_oos %>%
-      dplyr::select(game_id, season, week, p_blend_hist = p_blend) %>%
-      dplyr::filter(!is.na(game_id)) %>%
-      dplyr::group_by(game_id, season, week) %>%
-      dplyr::summarise(
-        p_blend_hist = {
-          finite_vals <- p_blend_hist[is.finite(p_blend_hist)]
-          if (length(finite_vals)) {
-            finite_vals[[1]]
-          } else {
-            p_blend_hist[[1]]
-          }
-        },
-        .groups = "drop"
-      )
-
     per_game_with_blend <- res$per_game %>%
-      dplyr::distinct(game_id, season, week, .keep_all = TRUE) %>%
       dplyr::left_join(
-        blend_lookup,
-        by = c("game_id", "season", "week"),
-        relationship = "one-to-one"
+        blend_oos %>% dplyr::select(game_id, season, week, p_blend_hist = p_blend),
+        by = c("game_id", "season", "week")
       ) %>%
       dplyr::mutate(
         .prob_fallback = .data[[prob_col]],
@@ -3964,7 +3945,6 @@ if (exists("res") && exists("blend_oos") && nrow(blend_oos)) {
       dplyr::mutate(
         !!prob_sym := dplyr::if_else(is.finite(p_blend), p_blend, .prob_fallback)
       ) %>%
-      dplyr::distinct(game_id, season, week, .keep_all = TRUE) %>%
       dplyr::select(-p_blend_hist, -.prob_fallback)
 
     cat("\n=== Blended vs market (paired, week-block bootstrap) ===\n")
