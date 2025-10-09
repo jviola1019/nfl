@@ -3953,25 +3953,67 @@ if (exists("res") && exists("blend_oos") && nrow(blend_oos)) {
       }
     }
 
-    per_game_with_blend <- res$per_game %>%
-      dplyr::left_join(
-        blend_oos_join %>% dplyr::rename(p_blend_hist = p_blend),
-        by = blend_join_cols
-      ) %>%
+    base_per_game <- res$per_game
+    base_cols <- names(base_per_game)
+
+    base_dup <- base_per_game %>%
+      dplyr::filter(dplyr::if_all(dplyr::all_of(blend_join_cols), ~ !is.na(.))) %>%
+      dplyr::count(dplyr::across(dplyr::all_of(blend_join_cols))) %>%
+      dplyr::filter(.data$n > 1L)
+    if (nrow(base_dup)) {
+      stop(sprintf(
+        "Backtest per-game table contains %d duplicate game/week combos; cannot blend results.",
+        nrow(base_dup)
+      ))
+    }
+
+    join_args <- list(
+      x = base_per_game,
+      y = blend_oos_join %>% dplyr::rename(p_blend_hist = p_blend),
+      by = blend_join_cols
+    )
+    if ("relationship" %in% names(formals(dplyr::left_join))) {
+      join_args$relationship <- "many-to-one"
+    }
+
+    per_game_with_blend <- rlang::exec(dplyr::left_join, !!!join_args) %>%
       dplyr::mutate(
         .prob_fallback = .data[[prob_col]],
-        p_blend = dplyr::if_else(is.finite(p_blend_hist), p_blend_hist, .prob_fallback)
+        .prob_blend = dplyr::if_else(is.finite(p_blend_hist), p_blend_hist, .prob_fallback),
+        !!prob_sym := .prob_blend
       )
-
-    res$per_game <- per_game_with_blend %>%
-      dplyr::select(-p_blend_hist, -.prob_fallback)
 
     res_blend <- res
     res_blend$per_game <- per_game_with_blend %>%
-      dplyr::mutate(
-        !!prob_sym := dplyr::if_else(is.finite(p_blend), p_blend, .prob_fallback)
-      ) %>%
-      dplyr::select(-p_blend_hist, -.prob_fallback)
+      dplyr::select(dplyr::all_of(base_cols))
+
+    if (!identical(names(res_blend$per_game), base_cols)) {
+      stop("Blended per-game table columns diverged from original structure after merge.")
+    }
+
+    type_mismatch <- purrr::map2_lgl(
+      base_per_game,
+      res_blend$per_game,
+      ~ identical(typeof(.x), typeof(.y)) && identical(class(.x), class(.y))
+    )
+    if (!all(type_mismatch)) {
+      mismatch_cols <- names(base_per_game)[!type_mismatch]
+      stop(sprintf(
+        "Blended per-game table changed column types for: %s",
+        paste(mismatch_cols, collapse = ", ")
+      ))
+    }
+
+    diff_cols <- base_cols[purrr::map_lgl(base_cols, ~ !identical(base_per_game[[.x]], res_blend$per_game[[.x]]))]
+    diff_cols <- setdiff(diff_cols, prob_col)
+    if (length(diff_cols)) {
+      stop(sprintf(
+        "Blended per-game table unexpectedly altered non-probability columns: %s",
+        paste(diff_cols, collapse = ", ")
+      ))
+    }
+
+    message(sprintf("res_blend structure verified; only %s differs from res$per_game.", prob_col))
 
     if (nrow(res_blend$per_game) != orig_n_per_game) {
       stop(sprintf(
