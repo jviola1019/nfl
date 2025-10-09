@@ -3921,30 +3921,49 @@ res <- if (exists("calib_sim_df")) {
 # We create res_blend by overwriting p2_cal with the blended p for the same games.
 
 if (exists("res") && exists("blend_oos") && nrow(blend_oos)) {
-  res$per_game <- res$per_game %>%
-    dplyr::left_join(
-      blend_oos %>% dplyr::select(game_id, season, week, p_blend_hist = p_blend),
-      by = c("game_id","season","week")
-    ) %>%
-    dplyr::mutate(
-      p_blend = ifelse(is.finite(p_blend_hist), p_blend_hist, p2_cal)
-    ) %>%
-    dplyr::select(-p_blend_hist)
+  prob_col_candidates <- c("p2_cal", "home_p_2w_cal", "p2_home_cal", "home_p2w_cal")
+  prob_col <- prob_col_candidates[prob_col_candidates %in% names(res$per_game)][1]
 
-  res_blend <- res
-  res_blend$per_game <- res$per_game %>%
-    dplyr::mutate(
-      p2_cal = ifelse(is.finite(p_blend), p_blend, p2_cal) # overwrite with blend where available
-    )
+  if (!is.na(prob_col)) {
+    per_game_with_blend <- res$per_game %>%
+      dplyr::left_join(
+        blend_oos %>% dplyr::select(game_id, season, week, p_blend_hist = p_blend),
+        by = c("game_id", "season", "week")
+      ) %>%
+      tibble::as_tibble()
 
-  cat("\n=== Blended vs market (paired, week-block bootstrap) ===\n")
-  cmp_blend <- compare_to_market(res_blend, sched)
-  # cmp_blend$overall$... has Brier/LogLoss and deltas; 95% CIs printed by the function
+    # Build the blended probability using base vectors so we stay fully inside
+    # the tibble data mask and avoid rlang::.data lookups outside of mutate.
+    prob_base <- per_game_with_blend[[prob_col]]
+    prob_base[!is.finite(prob_base)] <- NA_real_
+
+    p_hist <- per_game_with_blend$p_blend_hist
+    p_hist[!is.finite(p_hist)] <- NA_real_
+
+    per_game_with_blend$p_blend <- dplyr::coalesce(p_hist, prob_base)
+    per_game_with_blend$p_blend_hist <- NULL
+
+    res$per_game <- per_game_with_blend
+
+    res_blend <- res
+
+    prob_updated <- per_game_with_blend[[prob_col]]
+    prob_updated[!is.finite(prob_updated)] <- NA_real_
+    res_blend$per_game[[prob_col]] <- dplyr::coalesce(per_game_with_blend$p_blend, prob_updated)
+
+    cat("\n=== Blended vs market (paired, week-block bootstrap) ===\n")
+    cmp_blend <- compare_to_market(res_blend, sched)
+    # cmp_blend$overall$... has Brier/LogLoss and deltas; 95% CIs printed by the function
+  } else {
+    warning("Could not locate calibrated probability column on res$per_game; skipping blended market comparison.")
+  }
 }
 
 # Optional quick peeks:
-print(cmp_blend$overall)
-head(cmp_blend$by_season)
+if (exists("cmp_blend") && !is.null(cmp_blend)) {
+  print(cmp_blend$overall)
+  head(cmp_blend$by_season)
+}
 
 
 
