@@ -3922,10 +3922,9 @@ res <- if (exists("calib_sim_df")) {
 
 if (exists("res") && exists("blend_oos") && nrow(blend_oos)) {
   prob_col_candidates <- c("p2_cal", "home_p_2w_cal", "p2_home_cal", "home_p2w_cal")
-  prob_col_match <- prob_col_candidates[prob_col_candidates %in% names(res$per_game)]
+  prob_col <- prob_col_candidates[prob_col_candidates %in% names(res$per_game)][1]
 
-  if (length(prob_col_match)) {
-    prob_col <- prob_col_match[[1]]
+  if (!is.na(prob_col)) {
     prob_sym <- rlang::sym(prob_col)
 
     per_game_with_blend <- res$per_game %>%
