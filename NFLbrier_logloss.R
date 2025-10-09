@@ -145,10 +145,64 @@ compare_to_market <- function(res,
   pcol <- .pick_col(preds_src, c("p2_cal","home_p_2w_cal","p2_home_cal","home_p2w_cal"))
   stopifnot(!is.na(pcol))
   
-  comp <- preds_src %>%
+  dedupe_join_keys <- c("game_id", "season", "week")
+  dedupe_key_syms <- rlang::syms(dedupe_join_keys)
+
+  summarise_prob <- function(df, value_col, name) {
+    stopifnot(value_col %in% names(df))
+
+    df <- df %>%
+      dplyr::filter(
+        dplyr::if_all(dplyr::all_of(dedupe_join_keys), ~ !is.na(.)),
+        is.finite(.data[[value_col]])
+      )
+
+    dup <- df %>%
+      dplyr::count(!!!dedupe_key_syms) %>%
+      dplyr::filter(.data$n > 1L)
+
+    if (nrow(dup)) {
+      msg <- sprintf(
+        "compare_to_market(): collapsing %s duplicate rows for %d game/week combos using the mean.",
+        name,
+        nrow(dup)
+      )
+      message(msg)
+    }
+
+    df %>%
+      dplyr::group_by(!!!dedupe_key_syms) %>%
+      dplyr::summarise(
+        !!rlang::sym(value_col) := mean(.data[[value_col]], na.rm = TRUE),
+        .groups = "drop"
+      )
+  }
+
+  preds_comp <- preds_src %>%
     dplyr::transmute(game_id, season, week, p_model = .clamp01(.data[[pcol]])) %>%
-    dplyr::inner_join(mkt_tbl,  by = c("game_id","season","week")) %>%
-    dplyr::inner_join(outcomes, by = c("game_id","season","week")) %>%
+    summarise_prob("p_model", name = "model probability")
+
+  mkt_tbl <- mkt_tbl %>%
+    dplyr::transmute(game_id, season, week, p_home_mkt_2w = .clamp01(p_home_mkt_2w)) %>%
+    summarise_prob("p_home_mkt_2w", name = "market probability")
+
+  outcomes <- outcomes %>%
+    dplyr::filter(dplyr::if_all(dplyr::all_of(dedupe_join_keys), ~ !is.na(.))) %>%
+    dplyr::group_by(!!!dedupe_key_syms) %>%
+    dplyr::summarise(
+      y2 = {
+        vals <- unique(y2[!is.na(y2)])
+        if (length(vals) > 1L) {
+          stop("compare_to_market(): conflicting outcomes for a single game/week combination.")
+        }
+        if (length(vals) == 0L) NA_integer_ else vals
+      },
+      .groups = "drop"
+    )
+
+  comp <- preds_comp %>%
+    dplyr::inner_join(mkt_tbl,  by = dedupe_join_keys) %>%
+    dplyr::inner_join(outcomes, by = dedupe_join_keys) %>%
     dplyr::transmute(
       game_id, season, week,
       p_model = .clamp01(p_model),
