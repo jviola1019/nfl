@@ -3928,16 +3928,51 @@ if (exists("res") && exists("blend_oos") && nrow(blend_oos)) {
     prob_sym <- rlang::sym(prob_col)
     blend_join_cols <- c("game_id", "season", "week")
 
-    orig_n_per_game <- nrow(res$per_game)
+    base_per_game <- res$per_game
 
-    base_keys <- res$per_game %>%
+    orig_n_per_game <- nrow(base_per_game)
+
+    base_keys <- base_per_game %>%
       dplyr::select(dplyr::all_of(blend_join_cols)) %>%
       dplyr::distinct()
+
+    cast_to_base <- function(col, template, col_name) {
+      proto <- template[0]
+      tryCatch(
+        vctrs::vec_cast(col, proto),
+        error = function(e) {
+          stop(
+            sprintf(
+              "Unable to align blended join column `%s` with res$per_game type: %s",
+              col_name,
+              conditionMessage(e)
+            ),
+            call. = FALSE
+          )
+        }
+      )
+    }
+
+    align_join_col_types <- function(df, template_df, cols) {
+      for (col_name in cols) {
+        if (!col_name %in% names(df)) next
+        template <- template_df[[col_name]]
+        if (is.null(template)) next
+        same_type <- identical(typeof(df[[col_name]]), typeof(template)) &&
+          identical(class(df[[col_name]]), class(template))
+        if (!same_type) {
+          df[[col_name]] <- cast_to_base(df[[col_name]], template, col_name)
+        }
+      }
+      df
+    }
 
     blend_oos_join <- blend_oos %>%
       dplyr::filter(dplyr::if_all(dplyr::all_of(blend_join_cols), ~ !is.na(.))) %>%
       dplyr::group_by(dplyr::across(dplyr::all_of(blend_join_cols))) %>%
       dplyr::summarise(p_blend = mean(p_blend, na.rm = TRUE), .groups = "drop")
+
+    blend_oos_join <- align_join_col_types(blend_oos_join, base_per_game, blend_join_cols)
 
     if (nrow(blend_oos_join)) {
       dup_hist <- blend_oos %>%
@@ -3953,7 +3988,6 @@ if (exists("res") && exists("blend_oos") && nrow(blend_oos)) {
       }
     }
 
-    base_per_game <- res$per_game
     base_cols <- names(base_per_game)
 
     base_dup <- base_per_game %>%
