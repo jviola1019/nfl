@@ -205,13 +205,86 @@ compare_to_market <- function(res,
       )
   }
 
+  ensure_unique_join <- function(df, keys, name) {
+    dup <- df %>%
+      dplyr::count(dplyr::across(dplyr::all_of(keys))) %>%
+      dplyr::filter(.data$n > 1L)
+
+    if (!nrow(dup)) {
+      return(df)
+    }
+
+    message(sprintf(
+      "compare_to_market(): collapsing %d duplicate rows for %s using within-key means.",
+      nrow(dup), name
+    ))
+
+    first_non_na <- function(x) {
+      idx <- which(!is.na(x))[1]
+      if (is.na(idx)) {
+        NA
+      } else {
+        x[[idx]]
+      }
+    }
+
+    df %>%
+      dplyr::group_by(dplyr::across(dplyr::all_of(keys))) %>%
+      dplyr::summarise(
+        dplyr::across(
+          -dplyr::all_of(keys) & where(is.numeric),
+          ~ mean(.x, na.rm = TRUE),
+          .names = "{.col}"
+        ),
+        dplyr::across(
+          -dplyr::all_of(keys) & !where(is.numeric),
+          ~ first_non_na(.x),
+          .names = "{.col}"
+        ),
+        .groups = "drop"
+      )
+  }
+
+  align_join_types <- function(df, template, keys) {
+    if (!requireNamespace("vctrs", quietly = TRUE)) {
+      stop("compare_to_market(): the 'vctrs' package is required to align join column types.")
+    }
+    for (key in keys) {
+      if (!key %in% names(df) || !key %in% names(template)) next
+      if (identical(typeof(df[[key]]), typeof(template[[key]])) &&
+          identical(class(df[[key]]), class(template[[key]]))) {
+        next
+      }
+
+      df[[key]] <- tryCatch(
+        vctrs::vec_cast(df[[key]], template[[key]]),
+        vctrs_error_cast_lossy = function(e) {
+          stop(sprintf(
+            "compare_to_market(): unable to align join column '%s' due to lossy cast: %s",
+            key, conditionMessage(e)
+          ))
+        },
+        error = function(e) {
+          stop(sprintf(
+            "compare_to_market(): unable to align join column '%s': %s",
+            key, conditionMessage(e)
+          ))
+        }
+      )
+    }
+
+    df
+  }
+
   preds_comp <- preds_src %>%
     dplyr::transmute(game_id, season, week, p_model = .clamp01(.data[[pcol]])) %>%
-    summarise_prob("p_model", name = "model probability")
+    summarise_prob("p_model", name = "model probability") %>%
+    ensure_unique_join(dedupe_join_keys, "model probabilities")
 
   mkt_tbl <- mkt_tbl %>%
     dplyr::transmute(game_id, season, week, p_home_mkt_2w = .clamp01(p_home_mkt_2w)) %>%
-    summarise_prob("p_home_mkt_2w", name = "market probability")
+    summarise_prob("p_home_mkt_2w", name = "market probability") %>%
+    ensure_unique_join(dedupe_join_keys, "market probabilities")
 
   outcomes <- outcomes %>%
     dplyr::filter(dplyr::if_all(dplyr::all_of(dedupe_join_keys), ~ !is.na(.))) %>%
@@ -225,11 +298,23 @@ compare_to_market <- function(res,
         if (length(vals) == 0L) NA_integer_ else vals
       },
       .groups = "drop"
-    )
+    ) %>%
+    ensure_unique_join(dedupe_join_keys, "game outcomes")
 
-  comp <- preds_comp %>%
-    dplyr::inner_join(mkt_tbl,  by = dedupe_join_keys) %>%
-    dplyr::inner_join(outcomes, by = dedupe_join_keys) %>%
+  mkt_tbl <- align_join_types(mkt_tbl, preds_comp, dedupe_join_keys)
+  outcomes <- align_join_types(outcomes, preds_comp, dedupe_join_keys)
+
+  join_args <- list(x = preds_comp, y = mkt_tbl, by = dedupe_join_keys)
+  join_args2 <- list(by = dedupe_join_keys)
+  if ("relationship" %in% names(formals(dplyr::inner_join))) {
+    join_args$relationship <- "one-to-one"
+    join_args2$relationship <- "one-to-one"
+  }
+
+  comp <- rlang::exec(dplyr::inner_join, !!!join_args)
+  join_args2$x <- comp
+  join_args2$y <- outcomes
+  comp <- rlang::exec(dplyr::inner_join, !!!join_args2) %>%
     dplyr::transmute(
       game_id, season, week,
       p_model = .clamp01(p_model),
