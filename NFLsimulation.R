@@ -348,6 +348,8 @@ sched <- sched %>%
     game_type = game_type_std
   )
 
+sched <- standardize_join_keys(sched)
+
 stadium_coords <- tribble(
   ~venue, ~lat, ~lon, ~dome,
   "GEHA Field at Arrowhead Stadium", 39.0490, -94.4839, FALSE,
@@ -3637,7 +3639,7 @@ blend_oos <- purrr::map_dfr(seq_len(nrow(cw)), function(i){
   S <- cw$season[i]; W <- cw$week[i]
   test  <- comp0 %>% dplyr::filter(season == S, week == W)
   train <- comp0 %>% dplyr::filter((season < S) | (season == S & week < W))
-  
+
   if (!nrow(test)) return(tibble::tibble())
   if (nrow(train) < 500) {
     test$p_blend <- test$p_mkt
@@ -3683,6 +3685,8 @@ blend_oos <- purrr::map_dfr(seq_len(nrow(cw)), function(i){
   test$p_blend <- calibrator(p_raw_te)
   test
 })
+
+blend_oos <- standardize_join_keys(blend_oos)
 
 boot_week_ci <- function(df, B = 2000, seed = SEED) {
   if (!nrow(df)) {
@@ -3921,12 +3925,18 @@ res <- if (exists("calib_sim_df")) {
 # We create res_blend by overwriting p2_cal with the blended p for the same games.
 
 if (exists("res") && exists("blend_oos") && nrow(blend_oos)) {
+  join_keys <- if (exists("PREDICTION_JOIN_KEYS", inherits = TRUE)) PREDICTION_JOIN_KEYS else c("game_id", "season", "week")
+
+  if ("per_game" %in% names(res)) {
+    res$per_game <- standardize_join_keys(res$per_game)
+  }
+
   prob_col_candidates <- c("p2_cal", "home_p_2w_cal", "p2_home_cal", "home_p2w_cal")
   prob_col <- prob_col_candidates[prob_col_candidates %in% names(res$per_game)][1]
 
   if (!is.na(prob_col)) {
     prob_sym <- rlang::sym(prob_col)
-    blend_join_cols <- c("game_id", "season", "week")
+    blend_join_cols <- join_keys
 
     base_per_game <- res$per_game
 

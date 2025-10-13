@@ -1,3 +1,36 @@
+if (!exists("JOIN_KEY_ALIASES", inherits = FALSE)) {
+  JOIN_KEY_ALIASES <- list(
+    game_id = c("game_id", "gameid", "gameId", "gid"),
+    season  = c("season", "season_std", "Season", "season_year", "seasonYear", "year"),
+    week    = c("week", "week_std", "Week", "game_week", "gameWeek", "gameday_week", "wk")
+  )
+}
+
+if (!exists("PREDICTION_JOIN_KEYS", inherits = FALSE)) {
+  PREDICTION_JOIN_KEYS <- names(JOIN_KEY_ALIASES)
+}
+
+if (!exists("standardize_join_keys", inherits = FALSE)) {
+  standardize_join_keys <- function(df, key_alias = JOIN_KEY_ALIASES) {
+    if (is.null(df) || !inherits(df, "data.frame")) {
+      return(df)
+    }
+
+    out <- df
+    for (canonical in names(key_alias)) {
+      if (canonical %in% names(out)) next
+      alt_names <- unique(c(key_alias[[canonical]], canonical))
+      alt_names <- alt_names[alt_names != canonical]
+      match <- alt_names[alt_names %in% names(out)]
+      if (length(match)) {
+        out <- dplyr::rename(out, !!canonical := !!rlang::sym(match[1]))
+      }
+    }
+
+    out
+  }
+}
+
 compare_to_market <- function(res,
                               sched,
                               peers = NULL,
@@ -42,7 +75,24 @@ compare_to_market <- function(res,
     p <- .clamp01(p, eps); -mean(y*log(p) + (1-y)*log(1-p), na.rm = TRUE)
   }
   
-  seasons_eval <- sort(unique(res$by_week$season))
+  join_keys <- PREDICTION_JOIN_KEYS
+
+  by_week_tbl <- if ("by_week" %in% names(res)) standardize_join_keys(res$by_week) else NULL
+  if (is.null(by_week_tbl) || !"season" %in% names(by_week_tbl)) {
+    stop("compare_to_market(): res$by_week must include a 'season' column for evaluation.")
+  }
+
+  seasons_eval <- sort(unique(by_week_tbl$season))
+
+  sched <- standardize_join_keys(sched)
+  missing_sched_keys <- setdiff(join_keys, names(sched))
+  if (length(missing_sched_keys)) {
+    stop(sprintf(
+      "compare_to_market(): schedule is missing join keys: %s",
+      paste(missing_sched_keys, collapse = ", ")
+    ))
+  }
+
   sched_eval <- sched %>% dplyr::filter(season %in% seasons_eval, game_type %in% c("REG","Regular"))
 
   # Prefer an existing helper that already knows how to source market probs.
@@ -168,11 +218,20 @@ compare_to_market <- function(res,
   else if ("preds" %in% names(res)) res$preds
   else if ("eval" %in% names(res) && "per_game" %in% names(res$eval)) res$eval$per_game
   else stop("Couldn’t find predictions in `res`.")
+
+  preds_src <- standardize_join_keys(preds_src)
+  missing_pred_keys <- setdiff(join_keys, names(preds_src))
+  if (length(missing_pred_keys)) {
+    stop(sprintf(
+      "compare_to_market(): predictions missing join keys: %s",
+      paste(missing_pred_keys, collapse = ", ")
+    ))
+  }
   
   pcol <- .pick_col(preds_src, c("p2_cal","home_p_2w_cal","p2_home_cal","home_p2w_cal"))
   stopifnot(!is.na(pcol))
   
-  dedupe_join_keys <- c("game_id", "season", "week")
+  dedupe_join_keys <- join_keys
   dedupe_key_syms <- rlang::syms(dedupe_join_keys)
 
   summarise_prob <- function(df, value_col, name) {
@@ -300,6 +359,24 @@ compare_to_market <- function(res,
       .groups = "drop"
     ) %>%
     ensure_unique_join(dedupe_join_keys, "game outcomes")
+
+  mkt_tbl <- standardize_join_keys(mkt_tbl)
+  outcomes <- standardize_join_keys(outcomes)
+
+  missing_mkt_keys <- setdiff(dedupe_join_keys, names(mkt_tbl))
+  missing_outcome_keys <- setdiff(dedupe_join_keys, names(outcomes))
+  if (length(missing_mkt_keys)) {
+    stop(sprintf(
+      "compare_to_market(): market probabilities missing join keys: %s",
+      paste(missing_mkt_keys, collapse = ", ")
+    ))
+  }
+  if (length(missing_outcome_keys)) {
+    stop(sprintf(
+      "compare_to_market(): outcomes missing join keys: %s",
+      paste(missing_outcome_keys, collapse = ", ")
+    ))
+  }
 
   mkt_tbl <- align_join_types(mkt_tbl, preds_comp, dedupe_join_keys)
   outcomes <- align_join_types(outcomes, preds_comp, dedupe_join_keys)
