@@ -15,6 +15,97 @@ if (!exists("PREDICTION_JOIN_KEYS", inherits = FALSE)) {
   PREDICTION_JOIN_KEYS <- names(JOIN_KEY_ALIASES)
 }
 
+if (!exists("first_non_missing_typed", inherits = FALSE)) {
+  first_non_missing_typed <- function(x) {
+    if (!length(x)) {
+      return(x)
+    }
+
+    is_valid <- if (is.numeric(x)) {
+      which(is.finite(x))
+    } else {
+      which(!is.na(x))
+    }
+
+    if (!length(is_valid)) {
+      return(x[NA_integer_])
+    }
+
+    x[[is_valid[1L]]]
+  }
+}
+
+if (!exists("collapse_by_keys_strict", inherits = FALSE)) {
+  collapse_by_keys_strict <- function(df, keys, label = "data frame") {
+    if (is.null(df) || !nrow(df) || !length(keys)) {
+      return(df)
+    }
+
+    missing_keys <- setdiff(keys, names(df))
+    if (length(missing_keys)) {
+      stop(sprintf(
+        "%s is missing required key columns: %s",
+        label,
+        paste(missing_keys, collapse = ", ")
+      ))
+    }
+
+    complete_mask <- stats::complete.cases(df[keys])
+    df_complete <- df[complete_mask, , drop = FALSE]
+    df_incomplete <- df[!complete_mask, , drop = FALSE]
+
+    if (!nrow(df_complete)) {
+      return(df)
+    }
+
+    dup <- df_complete %>%
+      dplyr::count(dplyr::across(dplyr::all_of(keys))) %>%
+      dplyr::filter(.data$n > 1L)
+
+    if (!nrow(dup)) {
+      return(df)
+    }
+
+    message(sprintf(
+      "%s: collapsing %d duplicate rows keyed by %s.",
+      label,
+      nrow(dup),
+      paste(keys, collapse = ", ")
+    ))
+
+    non_key_cols <- setdiff(names(df_complete), keys)
+
+    collapsed_complete <- df_complete %>%
+      dplyr::group_by(dplyr::across(dplyr::all_of(keys))) %>%
+      dplyr::summarise(
+        dplyr::across(
+          dplyr::all_of(non_key_cols),
+          ~ first_non_missing_typed(.x),
+          .names = "{.col}"
+        ),
+        .groups = "drop"
+      )
+
+    out <- dplyr::bind_rows(collapsed_complete, df_incomplete) %>%
+      dplyr::select(dplyr::all_of(names(df)))
+
+    dup_check <- out %>%
+      dplyr::filter(dplyr::if_all(dplyr::all_of(keys), ~ !is.na(.))) %>%
+      dplyr::count(dplyr::across(dplyr::all_of(keys))) %>%
+      dplyr::filter(.data$n > 1L)
+
+    if (nrow(dup_check)) {
+      stop(sprintf(
+        "%s: unable to resolve duplicates for %d key combinations.",
+        label,
+        nrow(dup_check)
+      ))
+    }
+
+    out
+  }
+}
+
 if (!exists("standardize_join_keys", inherits = FALSE)) {
   standardize_join_keys <- function(df, key_alias = JOIN_KEY_ALIASES) {
     if (is.null(df) || !inherits(df, "data.frame")) {
@@ -382,6 +473,24 @@ sched <- sched %>%
   )
 
 sched <- standardize_join_keys(sched)
+
+sched <- collapse_by_keys_strict(
+  sched,
+  c("game_id", "season", "week"),
+  label = "Simulation schedule"
+)
+
+dup_sched_keys <- sched %>%
+  dplyr::filter(dplyr::if_all(dplyr::all_of(c("game_id", "season", "week")), ~ !is.na(.))) %>%
+  dplyr::count(dplyr::across(dplyr::all_of(c("game_id", "season", "week")))) %>%
+  dplyr::filter(.data$n > 1L)
+
+if (nrow(dup_sched_keys)) {
+  stop(sprintf(
+    "Simulation schedule still has %d duplicate game/week combinations after collapsing.",
+    nrow(dup_sched_keys)
+  ))
+}
 
 stadium_coords <- tribble(
   ~venue, ~lat, ~lon, ~dome,
@@ -3972,6 +4081,12 @@ if (exists("res") && exists("blend_oos") && nrow(blend_oos)) {
     blend_join_cols <- join_keys
 
     base_per_game <- res$per_game
+
+    base_per_game <- collapse_by_keys_strict(
+      base_per_game,
+      blend_join_cols,
+      label = "Backtest per-game table"
+    )
 
     orig_n_per_game <- nrow(base_per_game)
 
