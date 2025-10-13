@@ -68,94 +68,9 @@ compare_to_market <- function(res,
     }
     idx <- which(!is.na(x))[1]
     if (length(idx) == 0L || is.na(idx)) {
-      # Return a typed NA that matches the input column.
       return(x[NA_integer_])
     }
-    x[[idx]]
-  }
-
-  collapse_duplicates <- function(df, keys, name_for_msgs) {
-    if (!length(keys) || !nrow(df)) {
-      return(df)
-    }
-    missing_keys <- setdiff(keys, names(df))
-    if (length(missing_keys)) {
-      stop(sprintf(
-        "%s is missing required join keys: %s",
-        name_for_msgs,
-        paste(missing_keys, collapse = ", ")
-      ))
-    }
-
-    complete_mask <- stats::complete.cases(df[keys])
-    df_complete <- df[complete_mask, , drop = FALSE]
-    df_incomplete <- df[!complete_mask, , drop = FALSE]
-
-    if (!nrow(df_complete)) {
-      return(df)
-    }
-
-    dup <- df_complete %>%
-      dplyr::count(dplyr::across(dplyr::all_of(keys))) %>%
-      dplyr::filter(.data$n > 1L)
-
-    if (!nrow(dup)) {
-      return(df)
-    }
-
-    message(sprintf(
-      "%s: collapsing %d duplicate rows keyed by %s.",
-      name_for_msgs,
-      nrow(dup),
-      paste(keys, collapse = ", ")
-    ))
-
-    non_key_cols <- setdiff(names(df_complete), keys)
-
-    collapse_col <- function(x) {
-      if (is.double(x)) {
-        vals <- x[is.finite(x)]
-        if (!length(vals)) {
-          return(NA_real_)
-        }
-        mean(vals)
-      } else {
-        .first_non_missing(x)
-      }
-    }
-
-    if (!length(non_key_cols)) {
-      collapsed_complete <- df_complete[!duplicated(df_complete[keys]), , drop = FALSE]
-    } else {
-      collapsed_complete <- df_complete %>%
-        dplyr::group_by(dplyr::across(dplyr::all_of(keys))) %>%
-        dplyr::summarise(
-          dplyr::across(
-            dplyr::all_of(non_key_cols),
-            collapse_col,
-            .names = "{.col}"
-          ),
-          .groups = "drop"
-        )
-    }
-
-    out <- dplyr::bind_rows(collapsed_complete, df_incomplete)
-    out <- dplyr::select(out, dplyr::all_of(names(df)))
-
-    out_complete <- out[stats::complete.cases(out[keys]), , drop = FALSE]
-    dup_check <- tibble::as_tibble(out_complete) %>%
-      dplyr::count(dplyr::across(dplyr::all_of(keys))) %>%
-      dplyr::filter(.data$n > 1L)
-
-    if (nrow(dup_check)) {
-      stop(sprintf(
-        "%s: unable to remove duplicate rows for %d key combinations.",
-        name_for_msgs,
-        nrow(dup_check)
-      ))
-    }
-
-    out
+    x[idx]
   }
   american_to_prob <- function(odds) ifelse(odds < 0, (-odds)/((-odds)+100), 100/(odds+100))
   devig_2way <- function(p_home_raw, p_away_raw){
@@ -225,7 +140,6 @@ compare_to_market <- function(res,
   }
 
   sched_eval <- dedupe_sched(sched_eval, join_keys)
-  sched_eval <- collapse_duplicates(sched_eval, join_keys, "compare_to_market(): schedule")
 
   # Prefer an existing helper that already knows how to source market probs.
   mkt_tbl <- NULL
