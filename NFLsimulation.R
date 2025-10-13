@@ -1,7 +1,7 @@
-# ──────────────────────────────────────────────────────────────────────────────
-# NFL Week Simulation — SoS-weighted + QB Toggles + Outside Factors
+# ------------------------------------------------------------------------------
+# NFL Week Simulation - SoS-weighted + QB Toggles + Outside Factors
 # Requires: tidyverse, lubridate, nflreadr
-# ──────────────────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------------------
 
 if (!exists("JOIN_KEY_ALIASES", inherits = FALSE)) {
   JOIN_KEY_ALIASES <- list(
@@ -405,7 +405,7 @@ if (!exists(".get_this_file", inherits = FALSE)) {
       p <- tryCatch(rstudioapi::getSourceEditorContext()$path, error = function(e) "")
       if (nzchar(p)) return(normalizePath(p))
     }
-    # fallback – safe placeholder, adjust if you want
+    # fallback - safe placeholder, adjust if you want
     "NFLsimulation.R"
   }
 }
@@ -447,14 +447,14 @@ pal_fav <- function(p) {
 
 
 pal_total <- function(total) {
-  # Blue scale for totals, 35–55 typical range
+  # Blue scale for totals, 35-55 typical range
   scales::col_numeric("Blues", domain = c(35,55))(total)
 }
 
 clamp <- function(x, lo, hi) pmin(pmax(x, lo), hi)
 
 
-# Margin → probability conversion -------------------------------------------------
+# Margin -> probability conversion -------------------------------------------------
 # NFL margin distributions are noisy; to keep win probabilities aligned with the
 # projected scoring gap we shrink the simulation margin standard deviation toward
 # a league-wide prior before mapping to a 2-way win chance.  This keeps a
@@ -499,7 +499,7 @@ margin_probs_from_summary <- function(margin_mean, margin_sd, tie_prob) {
   SEED        <- config$seed
 
   # ----- Priors / blending knobs -----
-  GLMM_BLEND_W <- config$glmm_blend_weight   # weight on GLMM μ vs your PPD×pace μ (0..1)
+  GLMM_BLEND_W <- config$glmm_blend_weight   # weight on GLMM mu vs your PPD x pace mu (0..1)
 
   # Meta-model and calibration controls for the market/model blend
   BLEND_META_MODEL   <- if (nzchar(config$blend_meta_model)) config$blend_meta_model else "glmnet"
@@ -515,8 +515,8 @@ margin_probs_from_summary <- function(margin_mean, margin_sd, tie_prob) {
   RECENCY_HALFLIFE  <- config$recency_halflife        # games; bigger = flatter weights
 
   # Outside-factor base knobs (league-wide defaults, can be overridden per game)
-  REST_SHORT_PENALTY <- config$rest_short_penalty     # ≤6 days rest
-  REST_LONG_BONUS    <- config$rest_long_bonus        # ≥9 days rest (non-bye)
+  REST_SHORT_PENALTY <- config$rest_short_penalty     # <=6 days rest
+  REST_LONG_BONUS    <- config$rest_long_bonus        # >=9 days rest (non-bye)
   BYE_BONUS          <- config$bye_bonus              # coming off a bye
   DEN_ALTITUDE_BONUS <- config$den_altitude_bonus     # small bump for DEN home HFA flavor
 
@@ -526,7 +526,7 @@ margin_probs_from_summary <- function(margin_mean, margin_sd, tie_prob) {
   COLD_TEMP_PEN    <- config$cold_temp_penalty        # apply if you set cold flag on a game
   RAIN_SNOW_PEN    <- config$rain_snow_penalty
 
-  RHO_SCORE <- config$rho_score  # if NA, we’ll estimate it from data
+  RHO_SCORE <- config$rho_score  # if NA, we'll estimate it from data
 
   # Player availability impact scalars (points per aggregated severity unit)
   SKILL_AVAIL_POINT_PER_FLAG     <- config$skill_avail_point_per_flag
@@ -538,31 +538,31 @@ margin_probs_from_summary <- function(margin_mean, margin_sd, tie_prob) {
 # interactive session to review the levers and the metrics they typically move.
 .tuning_parameters <- tibble::tribble(
   ~parameter, ~default, ~recommended_range, ~metrics_to_watch, ~notes,
-  "GLMM_BLEND_W", GLMM_BLEND_W, "0.25 – 0.55", "Win rate, Brier, log loss",
+  "GLMM_BLEND_W", GLMM_BLEND_W, "0.25 - 0.55", "Win rate, Brier, log loss",
     "Increase to trust the GLMM's structured priors; decrease to lean on pace + EPA base. Higher weights can steady calibration when market data are noisy but may cap upside if the priors lag current form.",
-  "SOS_STRENGTH", SOS_STRENGTH, "0.4 – 0.8", "Win rate, ret_total",
+  "SOS_STRENGTH", SOS_STRENGTH, "0.4 - 0.8", "Win rate, ret_total",
     "Controls how aggressively schedule strength shapes opponent adjustments. Raising it helps when the model underrates teams with tough slates but can overshoot if weighted too heavily after upsets.",
-  "RECENCY_HALFLIFE", RECENCY_HALFLIFE, "2 – 5", "Win rate, Brier",
+  "RECENCY_HALFLIFE", RECENCY_HALFLIFE, "2 - 5", "Win rate, Brier",
     "Shorter halflife doubles down on the latest form; longer halflife smooths week-to-week noise. Use smaller values when injuries or scheme changes shift performance quickly.",
-  "REST_SHORT_PENALTY", REST_SHORT_PENALTY, "-1.0 – -0.4", "ret_total",
-    "More negative numbers punish teams on ≤6 days rest. Strengthen the penalty when the sim overestimates tired road teams.",
-  "REST_LONG_BONUS", REST_LONG_BONUS, "0.3 – 0.8", "Win rate",
-    "Boost for ≥9 days rest without a bye. Raising it can recover edge when the model undervalues extended prep time.",
-  "BYE_BONUS", BYE_BONUS, "0.6 – 1.4", "Win rate, ret_total",
+  "REST_SHORT_PENALTY", REST_SHORT_PENALTY, "-1.0 - -0.4", "ret_total",
+    "More negative numbers punish teams on <=6 days rest. Strengthen the penalty when the sim overestimates tired road teams.",
+  "REST_LONG_BONUS", REST_LONG_BONUS, "0.3 - 0.8", "Win rate",
+    "Boost for >=9 days rest without a bye. Raising it can recover edge when the model undervalues extended prep time.",
+  "BYE_BONUS", BYE_BONUS, "0.6 - 1.4", "Win rate, ret_total",
     "Adjust when bye-week teams fail to cover expected improvements. Higher values help capture coordinators' self-scouting gains but may inflate totals if stacked with other bonuses.",
-  "DOME_BONUS_TOTAL", DOME_BONUS_TOTAL, "0.4 – 1.2", "Totals, ret_total",
+  "DOME_BONUS_TOTAL", DOME_BONUS_TOTAL, "0.4 - 1.2", "Totals, ret_total",
     "Positive values lift scoring expectations indoors. Increase when indoor unders show value because the model stays too low on dome efficiency.",
-  "OUTDOOR_WIND_PEN", OUTDOOR_WIND_PEN, "-1.4 – -0.6", "Totals, Brier",
+  "OUTDOOR_WIND_PEN", OUTDOOR_WIND_PEN, "-1.4 - -0.6", "Totals, Brier",
     "More negative values cut totals in windy games. Tighten when the blend misses weather-driven unders; ease off if it overreacts to moderate breezes.",
-  "RAIN_SNOW_PEN", RAIN_SNOW_PEN, "-1.2 – -0.4", "Totals, log loss",
+  "RAIN_SNOW_PEN", RAIN_SNOW_PEN, "-1.2 - -0.4", "Totals, log loss",
     "Rain/snow adjustment applied via `game_modifiers`. Increase magnitude when sloppy games still go over the projected total.",
-  "SKILL_AVAIL_POINT_PER_FLAG", SKILL_AVAIL_POINT_PER_FLAG, "0.4 – 0.7", "Win rate, Brier",
+  "SKILL_AVAIL_POINT_PER_FLAG", SKILL_AVAIL_POINT_PER_FLAG, "0.4 - 0.7", "Win rate, Brier",
     "Translates aggregated WR/RB/TE injury flags into point adjustments. Raise when talent gaps fail to move projections enough; lower if the sim double-counts absences with market odds.",
-  "TRENCH_AVAIL_POINT_PER_FLAG", TRENCH_AVAIL_POINT_PER_FLAG, "0.5 – 0.8", "ret_total",
+  "TRENCH_AVAIL_POINT_PER_FLAG", TRENCH_AVAIL_POINT_PER_FLAG, "0.5 - 0.8", "ret_total",
     "Impacts OL/DL cluster injuries. Stronger penalties help when line mismatches drive ATS losses; weaker when the model overreacts to questionable tags.",
-  "SECONDARY_AVAIL_POINT_PER_FLAG", SECONDARY_AVAIL_POINT_PER_FLAG, "0.35 – 0.6", "Totals, log loss",
+  "SECONDARY_AVAIL_POINT_PER_FLAG", SECONDARY_AVAIL_POINT_PER_FLAG, "0.35 - 0.6", "Totals, log loss",
     "Raise to bump overs when secondaries are depleted; reduce if the market already prices in those matchups and the model overstates shootout risk.",
-  "FRONT7_AVAIL_POINT_PER_FLAG", FRONT7_AVAIL_POINT_PER_FLAG, "0.35 – 0.65", "Totals, ret_total",
+  "FRONT7_AVAIL_POINT_PER_FLAG", FRONT7_AVAIL_POINT_PER_FLAG, "0.35 - 0.65", "Totals, ret_total",
     "Controls front-seven injury effects. Increase when run-stopping issues aren't reflected; decrease if defensive depth masks absences."
 )
 
@@ -655,7 +655,7 @@ gametype_col  <- pick_col(sched, c("game_type","season_type","season_type_name")
 home_col      <- pick_col(sched, c("home_team","home_team_abbr","team_home","home"), "home team")
 away_col      <- pick_col(sched, c("away_team","away_team_abbr","team_away","away"), "away team")
 
-# Normalize to standard names we’ll use everywhere
+# Normalize to standard names we'll use everywhere
 sched <- sched %>%
   mutate(
     season_std   = .data[[season_col]],
@@ -694,7 +694,7 @@ sched <- sched %>%
     home_team     = .data[[home_col]],
     away_team     = .data[[away_col]]
   ) %>%
-  # 👇 make the select/any_of calls explicit
+  # see below: make the select/any_of calls explicit
   dplyr::select(dplyr::everything(), -dplyr::any_of(c("season", "week", "game_type"))) %>%
   dplyr::rename(
     season    = season_std,
@@ -768,7 +768,7 @@ if (!"dome" %in% names(week_slate)) {
 
 week_slate <- week_slate %>% mutate(dome = coalesce(dome, FALSE))
 
-# ────────────────── TIME ZONES / SIMPLE TRAVEL TAX ──────────────────
+# ------------------ TIME ZONES / SIMPLE TRAVEL TAX ------------------
 team_tz <- tribble(
   ~team, ~tz,
   "ARI","America/Phoenix",
@@ -831,7 +831,7 @@ if (nrow(week_slate) == 0) stop(sprintf("No games found for %s Wk %s.", SEASON, 
 
 teams_on_slate <- sort(unique(c(week_slate$home_team, week_slate$away_team)))
 
-# ───────────────────────── INJURIES (schema-agnostic + safe) ──────────────────
+# ------------------------- INJURIES (schema-agnostic + safe) ------------------
 # Prefer nflfastR injury scraping with nflreadr fallback when necessary.
 safe_load_injuries <- function(seasons, prefer_fast = TRUE, ...) {
   seasons <- sort(unique(seasons))
@@ -1006,7 +1006,7 @@ if (!is.data.frame(inj_all) || nrow(inj_all) == 0) {
                                     "player_status","report_status"))
 
   if (is.na(col_team)) {
-    # no team column → nothing we can do; default to zeros
+    # no team column -> nothing we can do; default to zeros
     inj_team_effects <- tibble(
       team = teams_on_slate,
       inj_off_pts = 0, inj_def_pts = 0,
@@ -1146,14 +1146,14 @@ team_games_away <- sched_std |>
 team_games <- bind_rows(team_games_home, team_games_away) |>
   arrange(game_date)
 
-# Estimate league ρ from data
+# Estimate league rho from data
 if (is.na(RHO_SCORE)) {
   score_pairs <- sched_std |>
     dplyr::filter(game_type == "REG", game_completed) |>
     dplyr::transmute(h = home_score_std, a = away_score_std)
   rho_hat <- suppressWarnings(cor(score_pairs$h, score_pairs$a, use = "complete.obs"))
   
-  # Seasonal distribution of ρ → empirical bounds
+  # Seasonal distribution of rho -> empirical bounds
   rho_season <- sched_std |>
     dplyr::filter(game_type == "REG", game_completed) |>
     dplyr::group_by(season) |>
@@ -1334,7 +1334,7 @@ explosive_def <- pbp_hist %>%
   dplyr::summarise(expl_rate_def = mean(expl, na.rm = TRUE), .groups = "drop")
 
 
-# ───────────────────────── DATA-DRIVEN QB IMPACT ─────────────────────────
+# ------------------------- DATA-DRIVEN QB IMPACT -------------------------
 # Uses nflfastR PBP to estimate each team's QB importance from on/off EPA/play,
 # then multiplies by a plays-per-game scalar to convert to points.
 # Injury status for QB comes from nflreadr::load_injuries for the current week.
@@ -1381,15 +1381,15 @@ qb_importance <- qb_onoff %>%
   )
 
 # Convert EPA/play difference into points per game.
-# Rule of thumb: 1 EPA/play over ~55 team offensive plays ≈ 55 points (too big),
+# Rule of thumb: 1 EPA/play over ~55 team offensive plays ~ 55 points (too big),
 # but QB only affects the *dropback* slice. A conservative scalar works well:
-EPA_TO_POINTS_SCALAR <- config$qb_epa_to_points_scalar   # ~0.15 EPA/play → ~5 points, ~0.10 → ~3.4 points
+EPA_TO_POINTS_SCALAR <- config$qb_epa_to_points_scalar   # ~0.15 EPA/play -> ~5 points, ~0.10 -> ~3.4 points
 qb_importance <- qb_importance %>%
   mutate(
     qb_points_importance = pmin(pmax(epa_diff * EPA_TO_POINTS_SCALAR, 0), 10)  # cap at +10
   )
 
-# 2) Read this week’s injury report and extract QB status for teams on the slate
+# 2) Read this week's injury report and extract QB status for teams on the slate
 qb_status_from_inj <- {
   col_team   <- inj_pick(inj_all, c("team","team_abbr","club_code","club"))
   col_pos    <- inj_pick(inj_all, c("position","pos"))
@@ -1434,7 +1434,7 @@ qb_status_from_inj <- {
   }
 }
 
-# 3) Map QB flag × importance → points & uncertainty adjustments
+# 3) Map QB flag x importance -> points & uncertainty adjustments
 sev_mult <- c(OUT = 1.00, DOUBTFUL = 0.70, QUESTIONABLE = 0.40, LIMITED = 0.25, OK = 0.00)
 
 qb_adjustments <- tibble(team = teams_on_slate) %>%
@@ -1452,7 +1452,7 @@ qb_adjustments <- tibble(team = teams_on_slate) %>%
 
 # 4) Use these QB adjustments in place of the manual qb_status
 qb_status <- qb_adjustments
-# ─────────────────────── END DATA-DRIVEN QB IMPACT ───────────────────────
+# ----------------------- END DATA-DRIVEN QB IMPACT -----------------------
 
 
 # Merge HFA and QB status
@@ -1529,7 +1529,7 @@ pbp_for_pace <- if (length(stype_col)) {
   pbp_hist
 }
 
-# ────────────────── WEATHER (Open-Meteo; hourly forecast) ──────────────────
+# ------------------ WEATHER (Open-Meteo; hourly forecast) ------------------
 get_hourly_weather <- function(lat, lon, date_iso, hours = c(13)) {
   # Open-Meteo uses 'windspeed_10m' (no extra underscore) and returns local times like "2025-10-01T13:00"
   req <- httr2::request("https://api.open-meteo.com/v1/forecast") |>
@@ -1669,7 +1669,7 @@ def_ppd_game <- def_drives_game |>
   dplyr::left_join(team_points_game |> dplyr::select(game_id, team, points_against), by = c("game_id","team")) |>
   dplyr::mutate(def_ppd = points_against / def_drives)
 
-# REPLACE your off_ppd_tbl / def_ppd_tbl “mean(...)” blocks with this:
+# REPLACE your off_ppd_tbl / def_ppd_tbl "mean(...)" blocks with this:
 gid_date <- sched_dates
 
 off_ppd_tbl <- off_ppd_game %>%
@@ -1751,7 +1751,7 @@ pace_tbl <- dplyr::full_join(off_drives, def_drives, by = "team")
 league_drives_avg <- mean(pace_tbl$off_drives_pg, na.rm = TRUE)
 if (!is.finite(league_drives_avg) || league_drives_avg <= 0) league_drives_avg <- 11.5
 
-# ----- NB-GLMM team ratings as a μ prior (pre-slate) -----
+# ----- NB-GLMM team ratings as a mu prior (pre-slate) -----
 df_hist <- sched %>%
   filter(game_type == "REG", game_completed, as.Date(game_date) < slate_date) %>%
   transmute(home = .data[[home_team_col]], away = .data[[away_team_col]],
@@ -1780,7 +1780,7 @@ if (file.exists(.nb_path)) {
 
 
 
-# Predict μ for this slate (home and away roles)
+# Predict mu for this slate (home and away roles)
 glmm_preds <- week_slate %>%
   transmute(home_team, away_team,
             mu_home_glmm = if (inherits(fit_nb,"try-error")) NA_real_ else
@@ -1809,9 +1809,9 @@ to_team <- bind_rows(
 league_to_pg <- mean(to_team$to_pg, na.rm = TRUE)
 to_team <- to_team %>%
   mutate(w = n / (n + 8), to_pg = coalesce(to_pg, league_to_pg),
-         to_adj_pts = -0.40 * (to_pg - league_to_pg) * w)  # −0.4 pts per TO above lg avg (shrunk)
+         to_adj_pts = -0.40 * (to_pg - league_to_pg) * w)  # -0.4 pts per TO above lg avg (shrunk)
 
-st_game <- NULL # (optional) if you have ST EPA/DVOA, build similar small adj, ±1.0 cap
+st_game <- NULL # (optional) if you have ST EPA/DVOA, build similar small adj, +/-1.0 cap
 
 
 # ------------------------ GAME SETUP (with Pace + PPD) ------------------------
@@ -1866,13 +1866,13 @@ games_ready <- week_slate |>
     exp_drives_away = dplyr::coalesce(exp_drives_away, league_drives_avg),
     exp_ppd_home    = dplyr::coalesce(exp_ppd_home,  league_off_ppd),
     exp_ppd_away    = dplyr::coalesce(exp_ppd_away,  league_off_ppd),
-    # Base expected points = expected drives × expected PPD (now safe)
+    # Base expected points = expected drives x expected PPD (now safe)
     mu_home_model   = exp_drives_home * exp_ppd_home,
     mu_away_model   = exp_drives_away * exp_ppd_away
   ) %>%
   # continue with your GLMM blend using these new *_model columns
   dplyr::mutate(
-    # GLMM blend (convex; fallback to model μ if GLMM is NA)
+    # GLMM blend (convex; fallback to model mu if GLMM is NA)
     glmm_w = dplyr::case_when(
       week <= 2 ~ 0.70,
       week <= 4 ~ 0.55,
@@ -1896,7 +1896,7 @@ games_ready <- week_slate |>
     # Apply HFA split & non-negativity
     mu_home = pmax(mu_home_qb_rest, 0),
     mu_away = pmax(mu_away_qb_rest, 0),
-    mu_home = pmax(mu_home + away_injury_def_total, 0),  # away defense ding → home scores more
+    mu_home = pmax(mu_home + away_injury_def_total, 0),  # away defense ding -> home scores more
     mu_away = pmax(mu_away + home_injury_def_total, 0),
     
     
@@ -1920,7 +1920,7 @@ games_ready <- games_ready %>%
 games_ready <- games_ready %>%
   mutate(
     HFA_pts = coalesce(home_hfa, league_hfa),  # if you have team-specific, prefer that
-    HFA_pts = pmin(pmax(HFA_pts, -6), 6)       # cap ±6
+    HFA_pts = pmin(pmax(HFA_pts, -6), 6)       # cap +/-6
   ) %>%
   mutate(
     mu_home = pmax(mu_home + HFA_pts, 0)
@@ -1998,7 +1998,7 @@ games_ready <- games_ready %>%
 
 # --- Total-sensitive SD guardrail (light touch) -------------------------------
 sd_total_curve <- function(total_mu){
-  # ~12 at total 38 → ~16 at total 55; clamp to [10,18]
+  # ~12 at total 38 -> ~16 at total 55; clamp to [10,18]
   val <- 12 + 0.195 * (total_mu - 38)
   pmin(pmax(val, 9.5), 17)
 }
@@ -2013,7 +2013,7 @@ games_ready <- games_ready |>
     sd_away  = pmax(sd_away, 5.0)
   )
 
-# Game-specific score correlation (ρ): more total → more +ρ; larger mismatch → less ρ
+# Game-specific score correlation (rho): more total -> more +rho; larger mismatch -> less rho
 rho_from_game <- function(total_mu, spread_abs, rho_global = RHO_SCORE) {
   base <- 0.10 + 0.20 * plogis((total_mu - 44)/4)   # totals around 44 are neutral
   anti <- -0.15 * plogis((spread_abs - 10)/3)       # big spreads dampen correlation
@@ -2041,10 +2041,10 @@ games_ready <- games_ready %>%
   )
 
 
-# ──────────────────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------------------
 # Simulator-based isotonic calibration (out-of-sample by week)
 # Trains isotonic on TWO-WAY probabilities produced by a LIGHT sim at each cut.
-# ──────────────────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------------------
 
 # Tunables (keep same knobs you already use)
   N_CALIB_YEARS   <- config$calibration_years
@@ -2160,7 +2160,7 @@ recent_form_at_sim <- function(cut_season, cut_week, teams,
 }
 
 # --- MONTE CARLO (Negative Binomial + Gaussian Copula) -----------------------
-# Convert (mu, sd) → NB size k. If v<=mu, fall back to Poisson (k = Inf)
+# Convert (mu, sd) -> NB size k. If v<=mu, fall back to Poisson (k = Inf)
 nb_size_from_musd <- function(mu, sd) {
   v <- sd^2
   if (!is.finite(mu) || !is.finite(sd) || mu <= 0 || v <= mu) return(Inf)
@@ -2291,7 +2291,7 @@ week_inputs_and_sim_2w <- function(cut_season, cut_week, n_trials = CALIB_TRIALS
   
   clamp <- function(x, lo, hi) pmin(pmax(x, lo), hi)
   
-  # --------- Build game μ/σ like your main slate ---------
+  # --------- Build game mu/sigma like your main slate ---------
   g <- slate |>
     # join recency/SD (rf) just to get sd_* and hfa/rest
     dplyr::left_join(rf |> dplyr::rename_with(~paste0("home_", .x), -team),
@@ -2445,7 +2445,7 @@ if (!nrow(calib_sim_df)) {
     summarise(
       x = mean(p_home_2w_sim),
       n = n(),
-      # smoothed rate: (wins + α) / (n + 2α)
+      # smoothed rate: (wins + alpha) / (n + 2alpha)
       y = (sum(y_home) + ALPHA) / (n + 2*ALPHA),
       .groups = "drop"
     ) %>%
@@ -2468,7 +2468,7 @@ if (!nrow(calib_sim_df)) {
   
   
   mae <- mean(abs(binned$x - binned$y), na.rm = TRUE)
-  inform(sprintf("Simulator-based isotonic fit — bins=%d | MAE(iso)=%.4f", nrow(binned), mae))
+  inform(sprintf("Simulator-based isotonic fit - bins=%d | MAE(iso)=%.4f", nrow(binned), mae))
 }
 
 # ----- 3-way multinomial calibration (H/A/T) -----
@@ -2634,7 +2634,7 @@ games_ready <- games_ready %>%
     sd_away = pmax(sd_away + sd_away_adj, 5.0)
   ) 
 # ------------------------ OVERTIME STATS (data-driven) ------------------------
-# We’ll compute:
+# We'll compute:
 #   - ot_rate_hist       = P(game goes to OT)
 #   - p_tie_given_ot     = P(tie | OT)
 #   - league_ot_home_prob= P(home wins | OT & non-tie)
@@ -2821,7 +2821,7 @@ if (length(results_list) != nrow(games_ready)) {
 # 1) Compute historical OT rate (already computed earlier as ot_rate_hist)
 # 2) Historical ties among OT games: ot_tie_rate (already computed via ot_stats)
 
-# Trigger OT if regulation margin == 0 (certain) or |margin| == 1 (with prob α)
+# Trigger OT if regulation margin == 0 (certain) or |margin| == 1 (with prob alpha)
 trigger_ot_vec <- function(margin, alpha_1pt) {
   (margin == 0) | ((abs(margin) == 1) & (runif(length(margin)) < alpha_1pt))
 }
@@ -2949,7 +2949,7 @@ build_final_safe <- function(resolved_list, games_ready) {
       home_win_prob, away_win_prob, tie_prob
     )
   
-  # Guarantee calibrated columns exist even if isotonic hasn’t run yet
+  # Guarantee calibrated columns exist even if isotonic hasn't run yet
   if (!("home_win_prob_cal" %in% names(out)) ||
       !("away_win_prob_cal" %in% names(out))) {
     out <- out |>
@@ -3052,7 +3052,7 @@ games_ready %>%
                                is.na(home_def_ppd) | is.na(away_def_ppd), na.rm = TRUE)
   )
 
-# 2) Distributions feeding μ
+# 2) Distributions feeding mu
 games_ready %>%
   dplyr::select(exp_drives_home, exp_drives_away, exp_ppd_home, exp_ppd_away, mu_home, mu_away, total_mu) %>%
   summary()
@@ -3514,7 +3514,7 @@ market_probs_from_sched <- function(sched_df) {
 }
 
 # ---- assemble historical training set (OOS by season) ----
-# Use the last 8 completed seasons (change 8 → a different window if you like)
+# Use the last 8 completed seasons (change 8 -> a different window if you like)
 seasons_all <- sort(unique(sched$season[sched$game_type %in% c("REG","Regular")]))
 seasons_hist <- seasons_all[seasons_all < max(seasons_all, na.rm = TRUE)]
 seasons_hist <- tail(seasons_hist, 8)
@@ -3955,7 +3955,7 @@ blend_design <- function(df) {
   design
 }
 
-# weeks “ago” from (S,W) for recency weights (approx 18 weeks/season)
+# weeks "ago" from (S,W) for recency weights (approx 18 weeks/season)
 weeks_ago <- function(season, week, S, W) (S - season) * 18 + (W - week)
 
 make_calibrator <- function(method, p, y, weights = NULL) {
@@ -4007,7 +4007,7 @@ make_calibrator <- function(method, p, y, weights = NULL) {
   }
 }
 
-# weeks “ago” from (S,W) for recency weights (approx 18 weeks/season)
+# weeks "ago" from (S,W) for recency weights (approx 18 weeks/season)
 weeks_ago <- function(season, week, S, W) (S - season) * 18 + (W - week)
 
 cw <- sched %>% dplyr::filter(game_type %in% c("REG","Regular")) %>%
@@ -4489,7 +4489,7 @@ if (exists("cmp_blend") && !is.null(cmp_blend)) {
 
 
 
-# ────────────────── INTERACTIVE SLATE TABLE (reactable) ──────────────────
+# ------------------ INTERACTIVE SLATE TABLE (reactable) ------------------
 pretty_df <- final |>
   tidyr::separate(matchup, into = c("away_team","home_team"), sep = " @ ", remove = FALSE) |>
   dplyr::left_join(
@@ -4505,18 +4505,18 @@ pretty_df <- final |>
     fav_prob_model = pmax(home_win_prob_cal, away_win_prob_cal),
     win_tier_model = dplyr::case_when(
       fav_prob_model < 0.55 ~ "Coin flip (<55%)",
-      fav_prob_model < 0.65 ~ "Lean (55–65%)",
-      fav_prob_model < 0.75 ~ "Strong (65–75%)",
+      fav_prob_model < 0.65 ~ "Lean (55-65%)",
+      fav_prob_model < 0.75 ~ "Strong (65-75%)",
       TRUE                  ~ "Heavy (75%+)"
     ),
 
-    # Blended (model ⊕ market) favorite/probabilities for comparison
+    # Blended (model + market) favorite/probabilities for comparison
     fav_team_blend = dplyr::if_else(home_win_prob_blend >= away_win_prob_blend, home_team, away_team),
     fav_prob_blend = pmax(home_win_prob_blend, away_win_prob_blend),
     win_tier_blend = dplyr::case_when(
       fav_prob_blend < 0.55 ~ "Coin flip (<55%)",
-      fav_prob_blend < 0.65 ~ "Lean (55–65%)",
-      fav_prob_blend < 0.75 ~ "Strong (65–75%)",
+      fav_prob_blend < 0.65 ~ "Lean (55-65%)",
+      fav_prob_blend < 0.75 ~ "Strong (65-75%)",
       TRUE                  ~ "Heavy (75%+)"
     ),
 
@@ -4526,17 +4526,17 @@ pretty_df <- final |>
     win_tier = win_tier_model,
     total_bucket = dplyr::case_when(
       total_mean >= 50 ~ "Shootout (50+)",
-      total_mean <= 41 ~ "Grinder (≤41)",
-      total_mean >= 46 ~ "High (46–49.5)",
-      TRUE             ~ "Average (41.5–45.5)"
+      total_mean <= 41 ~ "Grinder (<=41)",
+      total_mean >= 46 ~ "High (46-49.5)",
+      TRUE             ~ "Average (41.5-45.5)"
     ),
     env = paste0(
       dplyr::if_else(dplyr::coalesce(dome, FALSE), "Dome", "Outdoor"),
-      dplyr::if_else(dplyr::coalesce(windy, FALSE),  " · Wind",  ""),
-      dplyr::if_else(dplyr::coalesce(cold,  FALSE),  " · Cold",  ""),
-      dplyr::if_else(dplyr::coalesce(precip,FALSE),  " · Precip","")
+      dplyr::if_else(dplyr::coalesce(windy, FALSE),  " - Wind",  ""),
+      dplyr::if_else(dplyr::coalesce(cold,  FALSE),  " - Cold",  ""),
+      dplyr::if_else(dplyr::coalesce(precip, FALSE), " - Precip", "")
     ),
-    Category = paste(win_tier, "·", total_bucket, "·", env)
+    Category = paste(win_tier, total_bucket, env, sep = " - ")
   ) |>
   dplyr::arrange(date, dplyr::desc(fav_prob_blend))
 rt_df <- pretty_df %>%
@@ -4651,3 +4651,4 @@ if (reactable_available) {
 if (sys.nframe() == 0L) {
   invisible(run_week_simulation())
 }
+
