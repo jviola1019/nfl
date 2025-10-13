@@ -3,6 +3,39 @@
 # Requires: tidyverse, lubridate, nflreadr
 # ──────────────────────────────────────────────────────────────────────────────
 
+if (!exists("JOIN_KEY_ALIASES", inherits = FALSE)) {
+  JOIN_KEY_ALIASES <- list(
+    game_id = c("game_id", "gameid", "gameId", "gid"),
+    season  = c("season", "season_std", "Season", "season_year", "seasonYear", "year"),
+    week    = c("week", "week_std", "Week", "game_week", "gameWeek", "gameday_week", "wk")
+  )
+}
+
+if (!exists("PREDICTION_JOIN_KEYS", inherits = FALSE)) {
+  PREDICTION_JOIN_KEYS <- names(JOIN_KEY_ALIASES)
+}
+
+if (!exists("standardize_join_keys", inherits = FALSE)) {
+  standardize_join_keys <- function(df, key_alias = JOIN_KEY_ALIASES) {
+    if (is.null(df) || !inherits(df, "data.frame")) {
+      return(df)
+    }
+
+    out <- df
+    for (canonical in names(key_alias)) {
+      if (canonical %in% names(out)) next
+      alt_names <- unique(c(key_alias[[canonical]], canonical))
+      alt_names <- alt_names[alt_names != canonical]
+      match <- alt_names[alt_names %in% names(out)]
+      if (length(match)) {
+        out <- dplyr::rename(out, !!canonical := !!rlang::sym(match[1]))
+      }
+    }
+
+    out
+  }
+}
+
 suppressPackageStartupMessages({
   source("NFLbrier_logloss.R")
   library(tidyverse)
