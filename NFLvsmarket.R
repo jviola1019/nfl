@@ -23,6 +23,39 @@ suppressPackageStartupMessages({
   library(glue)
 })
 
+if (!exists("JOIN_KEY_ALIASES", inherits = FALSE)) {
+  JOIN_KEY_ALIASES <- list(
+    game_id = c("game_id", "gameid", "gameId", "gid"),
+    season  = c("season", "season_std", "Season", "season_year", "seasonYear", "year"),
+    week    = c("week", "week_std", "Week", "game_week", "gameWeek", "gameday_week", "wk")
+  )
+}
+
+if (!exists("PREDICTION_JOIN_KEYS", inherits = FALSE)) {
+  PREDICTION_JOIN_KEYS <- names(JOIN_KEY_ALIASES)
+}
+
+if (!exists("standardize_join_keys", inherits = FALSE)) {
+  standardize_join_keys <- function(df, key_alias = JOIN_KEY_ALIASES) {
+    if (is.null(df) || !inherits(df, "data.frame")) {
+      return(df)
+    }
+
+    out <- df
+    for (canonical in names(key_alias)) {
+      if (canonical %in% names(out)) next
+      alt_names <- unique(c(key_alias[[canonical]], canonical))
+      alt_names <- alt_names[alt_names != canonical]
+      match <- alt_names[alt_names %in% names(out)]
+      if (length(match)) {
+        out <- dplyr::rename(out, !!canonical := !!rlang::sym(match[1]))
+      }
+    }
+
+    out
+  }
+}
+
 xfun_meets_min <- tryCatch({
   if (!requireNamespace("xfun", quietly = TRUE)) {
     FALSE
@@ -377,6 +410,8 @@ normalize_provider <- function(x) {
 market_probs_from_lines <- function(lines_df, sched_df, provider = "ESPN BET") {
   if (is.null(lines_df) || !nrow(lines_df)) return(tibble())
 
+  sched_df <- standardize_join_keys(sched_df)
+
   provider_col <- pick_col(lines_df, c("provider", "book", "bookmaker", "sportsbook"))
   bet_col      <- pick_col(lines_df, c("bet_type", "market_type", "type", "wager_type"))
   side_col     <- pick_col(lines_df, c("side", "team", "participant", "selection"))
@@ -434,6 +469,7 @@ market_probs_from_lines <- function(lines_df, sched_df, provider = "ESPN BET") {
 }
 
 closing_spreads_tbl <- function(sched_df) {
+  sched_df <- standardize_join_keys(sched_df)
   sp_col <- pick_col(sched_df, c("close_spread","spread_close","home_spread_close","spread_line","spread","home_spread"))
   if (is.na(sp_col)) return(tibble(game_id = character(), home_main_spread = numeric()))
   sched_df %>%
@@ -458,6 +494,8 @@ standardize_side <- function(side_raw, home_team, away_team) {
 
 build_line_catalog <- function(final_df, lines_df, sched_df, provider = "ESPN BET") {
   if (is.null(lines_df) || !nrow(lines_df)) return(tibble())
+
+  sched_df <- standardize_join_keys(sched_df)
 
   bt_col  <- pick_col(lines_df, c("bet_type","market_type","type","wager_type"))
   side_col<- pick_col(lines_df, c("side","team","participant","selection"))
@@ -559,6 +597,8 @@ if (!exists("sched")) {
   sched <- nflreadr::load_schedules(seasons = seasons)
 }
 
+sched <- standardize_join_keys(sched)
+
 if (!exists("res")) {
   cache_dir <- file.path(path.expand("~"), ".cache", "nfl_sim_scores")
   if (dir.exists(cache_dir)) {
@@ -618,6 +658,7 @@ outcomes <- sched %>%
 spread_map_notice_emitted <- FALSE
 
 learn_spread_map <- function(sched_df) {
+  sched_df <- standardize_join_keys(sched_df)
   sp_col <- pick_col(sched_df, c("close_spread","spread_close","home_spread_close",
                                  "spread_line","spread","home_spread"))
   ml_h   <- pick_col(sched_df, c("home_ml_close","ml_home_close","moneyline_home_close",
@@ -669,6 +710,7 @@ learn_spread_map <- function(sched_df) {
 
 # ------------------ Market probs from schedule (ML first, else spread map) ----
 market_probs_from_sched <- function(sched_df, spread_mapper = NULL, lines_df = NULL, provider = "ESPN BET") {
+  sched_df <- standardize_join_keys(sched_df)
   sp_col <- pick_col(sched_df, c("close_spread","spread_close","home_spread_close",
                                  "spread_line","spread","home_spread"))
   ml_h   <- pick_col(sched_df, c("home_ml_close","ml_home_close","moneyline_home_close",
@@ -888,12 +930,14 @@ bootstrap_week_ci <- function(df, p_col_model, p_col_mkt, y_col = "y2",
 # ------------------ Assemble evaluation dataset -------------------------------
 stopifnot("per_game" %in% names(res))
 
+res$per_game <- standardize_join_keys(res$per_game)
+
 extra_blend_sources <- list()
 if (exists("final") && inherits(final, "data.frame")) {
-  extra_blend_sources <- c(extra_blend_sources, list(final))
+  extra_blend_sources <- c(extra_blend_sources, list(standardize_join_keys(final)))
 }
 if (exists("blend_oos") && inherits(blend_oos, "data.frame")) {
-  extra_blend_sources <- c(extra_blend_sources, list(blend_oos))
+  extra_blend_sources <- c(extra_blend_sources, list(standardize_join_keys(blend_oos)))
 }
 
 res$per_game <- derive_blend_probability(res$per_game, extra_blend_sources = extra_blend_sources)
