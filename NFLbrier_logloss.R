@@ -283,77 +283,6 @@ compare_to_market <- function(res,
   stopifnot(!is.na(pcol))
   
   dedupe_join_keys <- join_keys
-  dedupe_key_syms <- rlang::syms(dedupe_join_keys)
-
-  summarise_prob <- function(df, value_col, name) {
-    stopifnot(value_col %in% names(df))
-
-    df <- df %>%
-      dplyr::filter(
-        dplyr::if_all(dplyr::all_of(dedupe_join_keys), ~ !is.na(.)),
-        is.finite(.data[[value_col]])
-      )
-
-    dup <- df %>%
-      dplyr::count(!!!dedupe_key_syms) %>%
-      dplyr::filter(.data$n > 1L)
-
-    if (nrow(dup)) {
-      msg <- sprintf(
-        "compare_to_market(): collapsing %s duplicate rows for %d game/week combos using the mean.",
-        name,
-        nrow(dup)
-      )
-      message(msg)
-    }
-
-    df %>%
-      dplyr::group_by(!!!dedupe_key_syms) %>%
-      dplyr::summarise(
-        !!rlang::sym(value_col) := mean(.data[[value_col]], na.rm = TRUE),
-        .groups = "drop"
-      )
-  }
-
-  ensure_unique_join <- function(df, keys, name) {
-    dup <- df %>%
-      dplyr::count(dplyr::across(dplyr::all_of(keys))) %>%
-      dplyr::filter(.data$n > 1L)
-
-    if (!nrow(dup)) {
-      return(df)
-    }
-
-    message(sprintf(
-      "compare_to_market(): collapsing %d duplicate rows for %s using within-key means.",
-      nrow(dup), name
-    ))
-
-    first_non_na <- function(x) {
-      idx <- which(!is.na(x))[1]
-      if (is.na(idx)) {
-        NA
-      } else {
-        x[[idx]]
-      }
-    }
-
-    df %>%
-      dplyr::group_by(dplyr::across(dplyr::all_of(keys))) %>%
-      dplyr::summarise(
-        dplyr::across(
-          -dplyr::all_of(keys) & where(is.numeric),
-          ~ mean(.x, na.rm = TRUE),
-          .names = "{.col}"
-        ),
-        dplyr::across(
-          -dplyr::all_of(keys) & !where(is.numeric),
-          ~ first_non_na(.x),
-          .names = "{.col}"
-        ),
-        .groups = "drop"
-      )
-  }
 
   align_join_types <- function(df, template, keys) {
     if (!requireNamespace("vctrs", quietly = TRUE)) {
@@ -387,29 +316,35 @@ compare_to_market <- function(res,
   }
 
   preds_comp <- preds_src %>%
-    dplyr::transmute(game_id, season, week, p_model = .clamp01(.data[[pcol]])) %>%
-    summarise_prob("p_model", name = "model probability") %>%
-    ensure_unique_join(dedupe_join_keys, "model probabilities")
+    dplyr::transmute(game_id, season, week, p_model = .clamp01(.data[[pcol]]))
+  preds_comp <- preds_comp[stats::complete.cases(preds_comp[dedupe_join_keys]), , drop = FALSE]
+  preds_comp <- tibble::as_tibble(preds_comp) %>%
+    dplyr::filter(is.finite(p_model))
+  preds_comp <- collapse_duplicates(preds_comp, dedupe_join_keys, "Model probability table")
 
   mkt_tbl <- mkt_tbl %>%
-    dplyr::transmute(game_id, season, week, p_home_mkt_2w = .clamp01(p_home_mkt_2w)) %>%
-    summarise_prob("p_home_mkt_2w", name = "market probability") %>%
-    ensure_unique_join(dedupe_join_keys, "market probabilities")
+    dplyr::transmute(game_id, season, week, p_home_mkt_2w = .clamp01(p_home_mkt_2w))
+  mkt_tbl <- mkt_tbl[stats::complete.cases(mkt_tbl[dedupe_join_keys]), , drop = FALSE]
+  mkt_tbl <- tibble::as_tibble(mkt_tbl) %>%
+    dplyr::filter(is.finite(p_home_mkt_2w))
+  mkt_tbl <- collapse_duplicates(mkt_tbl, dedupe_join_keys, "Market probability table")
 
   outcomes <- outcomes %>%
-    dplyr::filter(dplyr::if_all(dplyr::all_of(dedupe_join_keys), ~ !is.na(.))) %>%
-    dplyr::group_by(!!!dedupe_key_syms) %>%
-    dplyr::summarise(
-      y2 = {
-        vals <- unique(y2[!is.na(y2)])
-        if (length(vals) > 1L) {
-          stop("compare_to_market(): conflicting outcomes for a single game/week combination.")
-        }
-        if (length(vals) == 0L) NA_integer_ else vals
-      },
-      .groups = "drop"
-    ) %>%
-    ensure_unique_join(dedupe_join_keys, "game outcomes")
+    dplyr::transmute(game_id, season, week, y2)
+  outcomes <- outcomes[stats::complete.cases(outcomes[dedupe_join_keys]), , drop = FALSE]
+  outcomes <- tibble::as_tibble(outcomes) %>%
+    dplyr::filter(!is.na(y2))
+
+  conflicts <- outcomes %>%
+    dplyr::group_by(dplyr::across(dplyr::all_of(dedupe_join_keys))) %>%
+    dplyr::summarise(n_unique = dplyr::n_distinct(y2[!is.na(y2)]), .groups = "drop") %>%
+    dplyr::filter(.data$n_unique > 1L)
+
+  if (nrow(conflicts)) {
+    stop("compare_to_market(): conflicting outcomes for one or more game/week combinations.")
+  }
+
+  outcomes <- collapse_duplicates(outcomes, dedupe_join_keys, "Outcome table")
 
   mkt_tbl <- standardize_join_keys(mkt_tbl)
   outcomes <- standardize_join_keys(outcomes)
