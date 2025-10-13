@@ -127,6 +127,216 @@ if (!exists("standardize_join_keys", inherits = FALSE)) {
   }
 }
 
+# -----------------------------------------------------------------------------
+# Local environment helpers and configuration utilities
+# -----------------------------------------------------------------------------
+
+local_options <- function(new, .env = parent.frame()) {
+  if (!length(new)) {
+    return(invisible(NULL))
+  }
+  old <- options(new)
+  do.call("on.exit", list(substitute(options(old)), add = TRUE), envir = .env)
+  options(new)
+  invisible(old)
+}
+
+local_seed <- function(seed, .env = parent.frame()) {
+  if (length(seed) != 1 || is.na(seed) || !is.numeric(seed)) {
+    return(invisible(NULL))
+  }
+  has_seed <- exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE)
+  if (has_seed) {
+    old_seed <- get(".Random.seed", envir = .GlobalEnv, inherits = FALSE)
+    do.call(
+      "on.exit",
+      list(substitute(assign(".Random.seed", old_seed, envir = .GlobalEnv)), add = TRUE),
+      envir = .env
+    )
+  } else {
+    do.call(
+      "on.exit",
+      list(substitute(rm(".Random.seed", envir = .GlobalEnv)), add = TRUE),
+      envir = .env
+    )
+  }
+  set.seed(as.integer(seed))
+  invisible(NULL)
+}
+
+assert_required_columns <- function(df, cols, label) {
+  if (is.null(df) || !is.data.frame(df)) {
+    stop(sprintf("%s must be a data.frame; received %s", label, class(df)[1]), call. = FALSE)
+  }
+  missing <- setdiff(cols, names(df))
+  if (length(missing)) {
+    stop(
+      sprintf(
+        "%s is missing required columns: %s",
+        label,
+        paste(missing, collapse = ", ")
+      ),
+      call. = FALSE
+    )
+  }
+  invisible(df)
+}
+
+validate_numeric_scalar <- function(value, name, lower = -Inf, upper = Inf,
+                                     allow_na = FALSE, integer = FALSE) {
+  if (length(value) != 1) {
+    stop(sprintf("%s must be a scalar numeric value", name), call. = FALSE)
+  }
+  if (is.na(value)) {
+    if (allow_na) return(value)
+    stop(sprintf("%s must not be NA", name), call. = FALSE)
+  }
+  if (!is.numeric(value)) {
+    stop(sprintf("%s must be numeric", name), call. = FALSE)
+  }
+  if (!is.na(lower) && value < lower) {
+    stop(sprintf("%s must be >= %s", name, lower), call. = FALSE)
+  }
+  if (!is.na(upper) && value > upper) {
+    stop(sprintf("%s must be <= %s", name, upper), call. = FALSE)
+  }
+  if (isTRUE(integer)) {
+    value <- as.integer(round(value))
+  }
+  value
+}
+
+validate_logical_scalar <- function(value, name, allow_na = FALSE) {
+  if (length(value) != 1) {
+    stop(sprintf("%s must be a scalar logical value", name), call. = FALSE)
+  }
+  if (is.na(value)) {
+    if (allow_na) return(value)
+    stop(sprintf("%s must not be NA", name), call. = FALSE)
+  }
+  if (!is.logical(value)) {
+    stop(sprintf("%s must be logical", name), call. = FALSE)
+  }
+  value
+}
+
+validate_character_scalar <- function(value, name, allow_empty = FALSE) {
+  if (length(value) != 1) {
+    stop(sprintf("%s must be a scalar character value", name), call. = FALSE)
+  }
+  if (is.na(value)) {
+    if (allow_empty) return("")
+    stop(sprintf("%s must not be NA", name), call. = FALSE)
+  }
+  value <- as.character(value)
+  if (!allow_empty && !nzchar(value)) {
+    stop(sprintf("%s must be a non-empty string", name), call. = FALSE)
+  }
+  value
+}
+
+current_season_year <- function() {
+  if (requireNamespace("lubridate", quietly = TRUE)) {
+    return(lubridate::year(Sys.Date()))
+  }
+  as.integer(format(Sys.Date(), "%Y"))
+}
+
+default_simulation_config <- function(overrides = list()) {
+  defaults <- list(
+    season = current_season_year(),
+    week_to_sim = 5L,
+    trials = 100000L,
+    recent_games = 6L,
+    seed = 471L,
+    glmm_blend_weight = 0.30,
+    blend_meta_model = getOption("nfl_sim.blend_model", default = "glmnet"),
+    blend_alpha = getOption("nfl_sim.blend_alpha", default = 0.25),
+    calibration_method = getOption("nfl_sim.calibration", default = "isotonic"),
+    use_sos = TRUE,
+    sos_strength = 0.30,
+    use_recency_decay = TRUE,
+    recency_halflife = 4,
+    rest_short_penalty = -0.7,
+    rest_long_bonus = 0.5,
+    bye_bonus = 1.0,
+    den_altitude_bonus = 0.6,
+    dome_bonus_total = 0.8,
+    outdoor_wind_penalty = -1.0,
+    cold_temp_penalty = -0.6,
+    rain_snow_penalty = -0.8,
+    rho_score = NA_real_,
+    skill_avail_point_per_flag = 0.55,
+    trench_avail_point_per_flag = 0.65,
+    secondary_avail_point_per_flag = 0.45,
+    front7_avail_point_per_flag = 0.50,
+    calibration_years = 5L,
+    calibration_trials = 20000L,
+    calibration_seed_offset = 12345L,
+    backtest_trials = 8000L,
+    hfa_lookback_years = 9L,
+    qb_epa_to_points_scalar = 34,
+    save_logs = TRUE,
+    quiet = FALSE
+  )
+  utils::modifyList(defaults, overrides, keep.null = TRUE)
+}
+
+validate_simulation_config <- function(config) {
+  config$season <- validate_numeric_scalar(config$season, "season", lower = 1999, integer = TRUE)
+  config$week_to_sim <- validate_numeric_scalar(config$week_to_sim, "week_to_sim", lower = 1, upper = 23, integer = TRUE)
+  config$trials <- validate_numeric_scalar(config$trials, "trials", lower = 1, integer = TRUE)
+  config$recent_games <- validate_numeric_scalar(config$recent_games, "recent_games", lower = 1, integer = TRUE)
+  config$seed <- validate_numeric_scalar(config$seed, "seed", allow_na = TRUE, integer = TRUE)
+  config$glmm_blend_weight <- validate_numeric_scalar(config$glmm_blend_weight, "glmm_blend_weight", lower = 0, upper = 1)
+  config$blend_meta_model <- tolower(validate_character_scalar(config$blend_meta_model, "blend_meta_model", allow_empty = TRUE))
+  if (!config$blend_meta_model %in% c("glmnet", "glm", "")) {
+    stop("blend_meta_model must be one of 'glmnet', 'glm', or ''", call. = FALSE)
+  }
+  config$blend_alpha <- validate_numeric_scalar(config$blend_alpha, "blend_alpha", lower = 0, upper = 1)
+  config$calibration_method <- tolower(validate_character_scalar(config$calibration_method, "calibration_method", allow_empty = TRUE))
+  if (!config$calibration_method %in% c("isotonic", "beta", "logistic", "")) {
+    stop("calibration_method must be 'isotonic', 'beta', 'logistic', or ''", call. = FALSE)
+  }
+  config$use_sos <- validate_logical_scalar(config$use_sos, "use_sos")
+  config$sos_strength <- validate_numeric_scalar(config$sos_strength, "sos_strength", lower = 0, upper = 1.5)
+  config$use_recency_decay <- validate_logical_scalar(config$use_recency_decay, "use_recency_decay")
+  config$recency_halflife <- validate_numeric_scalar(config$recency_halflife, "recency_halflife", lower = 0.1)
+  config$rest_short_penalty <- validate_numeric_scalar(config$rest_short_penalty, "rest_short_penalty", lower = -10, upper = 10)
+  config$rest_long_bonus <- validate_numeric_scalar(config$rest_long_bonus, "rest_long_bonus", lower = -10, upper = 10)
+  config$bye_bonus <- validate_numeric_scalar(config$bye_bonus, "bye_bonus", lower = -10, upper = 10)
+  config$den_altitude_bonus <- validate_numeric_scalar(config$den_altitude_bonus, "den_altitude_bonus", lower = -10, upper = 10)
+  config$dome_bonus_total <- validate_numeric_scalar(config$dome_bonus_total, "dome_bonus_total", lower = -10, upper = 10)
+  config$outdoor_wind_penalty <- validate_numeric_scalar(config$outdoor_wind_penalty, "outdoor_wind_penalty", lower = -15, upper = 5)
+  config$cold_temp_penalty <- validate_numeric_scalar(config$cold_temp_penalty, "cold_temp_penalty", lower = -15, upper = 5)
+  config$rain_snow_penalty <- validate_numeric_scalar(config$rain_snow_penalty, "rain_snow_penalty", lower = -15, upper = 5)
+  config$rho_score <- validate_numeric_scalar(config$rho_score, "rho_score", lower = -0.99, upper = 0.99, allow_na = TRUE)
+  config$skill_avail_point_per_flag <- validate_numeric_scalar(config$skill_avail_point_per_flag, "skill_avail_point_per_flag", lower = 0)
+  config$trench_avail_point_per_flag <- validate_numeric_scalar(config$trench_avail_point_per_flag, "trench_avail_point_per_flag", lower = 0)
+  config$secondary_avail_point_per_flag <- validate_numeric_scalar(config$secondary_avail_point_per_flag, "secondary_avail_point_per_flag", lower = 0)
+  config$front7_avail_point_per_flag <- validate_numeric_scalar(config$front7_avail_point_per_flag, "front7_avail_point_per_flag", lower = 0)
+  config$calibration_years <- validate_numeric_scalar(config$calibration_years, "calibration_years", lower = 1, integer = TRUE)
+  config$calibration_trials <- validate_numeric_scalar(config$calibration_trials, "calibration_trials", lower = 1000, integer = TRUE)
+  config$calibration_seed_offset <- validate_numeric_scalar(config$calibration_seed_offset, "calibration_seed_offset", integer = TRUE)
+  config$backtest_trials <- validate_numeric_scalar(config$backtest_trials, "backtest_trials", lower = 1000, integer = TRUE)
+  config$hfa_lookback_years <- validate_numeric_scalar(config$hfa_lookback_years, "hfa_lookback_years", lower = 1, integer = TRUE)
+  config$qb_epa_to_points_scalar <- validate_numeric_scalar(config$qb_epa_to_points_scalar, "qb_epa_to_points_scalar", lower = 0)
+  config$save_logs <- validate_logical_scalar(config$save_logs, "save_logs")
+  config$quiet <- validate_logical_scalar(config$quiet, "quiet")
+  config
+}
+
+resolve_simulation_config <- function(config = NULL) {
+  if (is.null(config)) {
+    config <- list()
+  }
+  if (!is.list(config)) {
+    stop("config must be a list", call. = FALSE)
+  }
+  cfg <- utils::modifyList(default_simulation_config(), config, keep.null = TRUE)
+  validate_simulation_config(cfg)
+}
+
 suppressPackageStartupMessages({
   source("NFLbrier_logloss.R")
   library(tidyverse)
@@ -138,8 +348,6 @@ suppressPackageStartupMessages({
   library(nnet)      # multinomial calibration
   library(randtoolbox) # Sobol QMC
   library(httr2)
-  options(nflreadr.cache = TRUE)
-  options(live_refresh = TRUE)
   library(dplyr, warn.conflicts = FALSE)
 })
 
@@ -158,19 +366,32 @@ has_namespace <- function(pkg, needs_new_xfun = FALSE) {
   tryCatch(requireNamespace(pkg, quietly = TRUE), error = function(e) FALSE)
 }
 
-gt_available <- has_namespace("gt", needs_new_xfun = TRUE)
-reactable_available <- has_namespace("reactable")
+run_week_simulation <- function(config = NULL) {
+  config <- resolve_simulation_config(config)
+  quiet_mode <- isTRUE(config$quiet)
 
-if (!gt_available) {
-  if (!xfun_meets_min) {
-    message("Package 'gt' skipped because 'xfun' >= 0.52 is unavailable; falling back to simple tables.")
-  } else {
-    message("Package 'gt' is not available; skipping gt-based tables.")
+  inform <- function(...) {
+    if (!quiet_mode) message(...)
+    invisible(NULL)
   }
-}
-if (!reactable_available) {
-  message("Package 'reactable' is not available; interactive slate table will be skipped.")
-}
+
+  local_options(list(nflreadr.cache = TRUE, live_refresh = TRUE))
+  if (!is.na(config$seed)) {
+    local_seed(config$seed)
+  }
+
+  gt_available <- has_namespace("gt", needs_new_xfun = TRUE)
+  reactable_available <- has_namespace("reactable")
+  if (!gt_available) {
+    if (!xfun_meets_min) {
+      inform("Package 'gt' skipped because 'xfun' >= 0.52 is unavailable; falling back to simple tables.")
+    } else {
+      inform("Package 'gt' is not available; skipping gt-based tables.")
+    }
+  }
+  if (!reactable_available) {
+    inform("Package 'reactable' is not available; interactive slate table will be skipped.")
+  }
 
 # Only define if it doesn't already exist
 if (!exists(".get_this_file", inherits = FALSE)) {
@@ -271,48 +492,47 @@ margin_probs_from_summary <- function(margin_mean, margin_sd, tie_prob) {
 
 
 # ------------------------ USER CONTROLS ---------------------------------------
-SEASON      <- year(Sys.Date())
-WEEK_TO_SIM <- 5               # ← single switch for the week
-N_TRIALS    <- 100000
-N_RECENT    <- 6               # last N games for "form"
-SEED        <- 471
-set.seed(SEED)
+  SEASON      <- config$season
+  WEEK_TO_SIM <- config$week_to_sim
+  N_TRIALS    <- config$trials
+  N_RECENT    <- config$recent_games
+  SEED        <- config$seed
 
-# ----- Priors / blending knobs -----
-GLMM_BLEND_W <- 0.30   # weight on GLMM μ vs your PPD×pace μ (0..1)
+  # ----- Priors / blending knobs -----
+  GLMM_BLEND_W <- config$glmm_blend_weight   # weight on GLMM μ vs your PPD×pace μ (0..1)
 
-# Meta-model and calibration controls for the market/model blend
-BLEND_META_MODEL    <- getOption("nfl_sim.blend_model",    default = "glmnet")
-BLEND_ALPHA         <- getOption("nfl_sim.blend_alpha",    default = 0.25)
-CALIBRATION_METHOD  <- getOption("nfl_sim.calibration",    default = "isotonic")
+  # Meta-model and calibration controls for the market/model blend
+  BLEND_META_MODEL   <- if (nzchar(config$blend_meta_model)) config$blend_meta_model else "glmnet"
+  BLEND_ALPHA        <- config$blend_alpha
+  CALIBRATION_METHOD <- if (nzchar(config$calibration_method)) config$calibration_method else "isotonic"
 
-# SoS weighting knobs
-USE_SOS            <- TRUE     # turn on/off SoS weighting
-SOS_STRENGTH       <- 0.30     # 0=no effect; 1=full strength; try 0.4–0.8
+  # SoS weighting knobs
+  USE_SOS      <- config$use_sos     # turn on/off SoS weighting
+  SOS_STRENGTH <- config$sos_strength     # 0=no effect; 1=full strength
 
-# Recency weighting for recent form (exponential decay)
-USE_RECENCY_DECAY  <- TRUE
-RECENCY_HALFLIFE   <- 4        # games; bigger = flatter weights
+  # Recency weighting for recent form (exponential decay)
+  USE_RECENCY_DECAY <- config$use_recency_decay
+  RECENCY_HALFLIFE  <- config$recency_halflife        # games; bigger = flatter weights
 
-# Outside-factor base knobs (league-wide defaults, can be overridden per game)
-REST_SHORT_PENALTY <- -0.7     # ≤6 days rest
-REST_LONG_BONUS    <- +0.5     # ≥9 days rest (non-bye)
-BYE_BONUS          <- +1.0     # coming off a bye
-DEN_ALTITUDE_BONUS <- +0.6     # small bump for DEN home HFA flavor
+  # Outside-factor base knobs (league-wide defaults, can be overridden per game)
+  REST_SHORT_PENALTY <- config$rest_short_penalty     # ≤6 days rest
+  REST_LONG_BONUS    <- config$rest_long_bonus        # ≥9 days rest (non-bye)
+  BYE_BONUS          <- config$bye_bonus              # coming off a bye
+  DEN_ALTITUDE_BONUS <- config$den_altitude_bonus     # small bump for DEN home HFA flavor
 
-# Pace/environment (light-touch, additive points to totals split evenly)
-DOME_BONUS_TOTAL   <- +0.8
-OUTDOOR_WIND_PEN   <- -1.0     # apply if you set wind flag on a game
-COLD_TEMP_PEN      <- -0.6     # apply if you set cold flag on a game
-RAIN_SNOW_PEN      <- -0.8
+  # Pace/environment (light-touch, additive points to totals split evenly)
+  DOME_BONUS_TOTAL <- config$dome_bonus_total
+  OUTDOOR_WIND_PEN <- config$outdoor_wind_penalty     # apply if you set wind flag on a game
+  COLD_TEMP_PEN    <- config$cold_temp_penalty        # apply if you set cold flag on a game
+  RAIN_SNOW_PEN    <- config$rain_snow_penalty
 
-RHO_SCORE      <- NA  # if NA, we’ll estimate it from data
+  RHO_SCORE <- config$rho_score  # if NA, we’ll estimate it from data
 
-# Player availability impact scalars (points per aggregated severity unit)
-SKILL_AVAIL_POINT_PER_FLAG     <- 0.55
-TRENCH_AVAIL_POINT_PER_FLAG    <- 0.65
-SECONDARY_AVAIL_POINT_PER_FLAG <- 0.45
-FRONT7_AVAIL_POINT_PER_FLAG    <- 0.50
+  # Player availability impact scalars (points per aggregated severity unit)
+  SKILL_AVAIL_POINT_PER_FLAG     <- config$skill_avail_point_per_flag
+  TRENCH_AVAIL_POINT_PER_FLAG    <- config$trench_avail_point_per_flag
+  SECONDARY_AVAIL_POINT_PER_FLAG <- config$secondary_avail_point_per_flag
+  FRONT7_AVAIL_POINT_PER_FLAG    <- config$front7_avail_point_per_flag
 
 # Reference sheet for common tuning knobs.  Call `show_tuning_help()` from an
 # interactive session to review the levers and the metrics they typically move.
@@ -355,8 +575,12 @@ show_tuning_help <- function(metric = NULL) {
       dplyr::filter(stringr::str_detect(stringr::str_to_lower(metrics_to_watch), metric_pattern))
   }
   if (nrow(guide) == 0) {
-    message("No tuning rows matched. Available metrics: ",
-            paste(sort(unique(.tuning_parameters$metrics_to_watch)), collapse = ", "))
+    inform(
+      paste0(
+        "No tuning rows matched. Available metrics: ",
+        paste(sort(unique(.tuning_parameters$metrics_to_watch)), collapse = ", ")
+      )
+    )
     return(invisible(guide))
   }
   print(guide)
@@ -364,7 +588,7 @@ show_tuning_help <- function(metric = NULL) {
 }
 
 if (interactive() && !isTRUE(getOption("nfl_sim.quiet_tuning_help", FALSE))) {
-  message("Tuning reference: run show_tuning_help() for parameter guidance or pass a metric name (e.g. 'ret_total').")
+  inform("Tuning reference: run show_tuning_help() for parameter guidance or pass a metric name (e.g. 'ret_total').")
 }
 
 # Optional: per-game manual adjustments (apply to mu &/or sd after all calcs)
@@ -387,7 +611,7 @@ game_modifiers <- tibble(
 )
 
 # ------------------------ DATA LOAD -------------------------------------------
-seasons_hfa <- (SEASON - 9):(SEASON - 0)
+seasons_hfa <- (SEASON - config$hfa_lookback_years):(SEASON - 0)
 sched <- load_schedules(seasons = seasons_hfa) |>
   mutate(game_completed = !is.na(home_score) & !is.na(away_score))
 
@@ -455,6 +679,12 @@ week_slate <- sched %>%
     venue = as.character(venue)   # <-- only the normalized column
   ) %>%
   distinct()
+
+assert_required_columns(
+  week_slate,
+  c("game_id", "season", "week", "home_team", "away_team"),
+  "Week slate"
+)
 
 sched <- sched %>%
   mutate(
@@ -611,7 +841,7 @@ safe_load_injuries <- function(seasons, prefer_fast = TRUE, ...) {
 
   use_fast <- isTRUE(prefer_fast) && requireNamespace("nflfastR", quietly = TRUE)
   if (isTRUE(prefer_fast) && !use_fast) {
-    message("nflfastR not installed; using nflreadr::load_injuries() instead.")
+    inform("nflfastR not installed; using nflreadr::load_injuries() instead.")
   }
 
   missing <- integer(0)
@@ -625,7 +855,7 @@ safe_load_injuries <- function(seasons, prefer_fast = TRUE, ...) {
           msg <- conditionMessage(e)
           if (grepl("404", msg, fixed = TRUE)) {
             missing <<- c(missing, season)
-            message(sprintf(
+            inform(sprintf(
               "Injury release for season %s is unavailable yet; skipping it.",
               season
             ))
@@ -650,7 +880,7 @@ safe_load_injuries <- function(seasons, prefer_fast = TRUE, ...) {
         msg <- conditionMessage(e)
         if (grepl("404", msg, fixed = TRUE)) {
           missing <<- c(missing, season)
-          message(sprintf(
+          inform(sprintf(
             "Injury release for season %s is unavailable yet; skipping it.",
             season
           ))
@@ -1153,7 +1383,7 @@ qb_importance <- qb_onoff %>%
 # Convert EPA/play difference into points per game.
 # Rule of thumb: 1 EPA/play over ~55 team offensive plays ≈ 55 points (too big),
 # but QB only affects the *dropback* slice. A conservative scalar works well:
-EPA_TO_POINTS_SCALAR <- 34   # ~0.15 EPA/play → ~5 points, ~0.10 → ~3.4 points
+EPA_TO_POINTS_SCALAR <- config$qb_epa_to_points_scalar   # ~0.15 EPA/play → ~5 points, ~0.10 → ~3.4 points
 qb_importance <- qb_importance %>%
   mutate(
     qb_points_importance = pmin(pmax(epa_diff * EPA_TO_POINTS_SCALAR, 0), 10)  # cap at +10
@@ -1817,12 +2047,12 @@ games_ready <- games_ready %>%
 # ──────────────────────────────────────────────────────────────────────────────
 
 # Tunables (keep same knobs you already use)
-N_CALIB_YEARS   <- 5
-CALIB_HALFLIFE  <- RECENCY_HALFLIFE
-CALIB_USE_SOS   <- USE_SOS
-CALIB_SOS_POW   <- SOS_STRENGTH
-CALIB_TRIALS    <- 20000        # light sim per game-week for calibration
-CALIB_SEED_BASE <- SEED + 12345 # stable seed offset for backtest sims
+  N_CALIB_YEARS   <- config$calibration_years
+  CALIB_HALFLIFE  <- config$recency_halflife
+  CALIB_USE_SOS   <- config$use_sos
+  CALIB_SOS_POW   <- config$sos_strength
+  CALIB_TRIALS    <- config$calibration_trials        # light sim per game-week for calibration
+  CALIB_SEED_BASE <- if (is.na(SEED)) config$calibration_seed_offset else SEED + config$calibration_seed_offset
 
 # Build "recent form" at a (cut_season, cut_week) same as earlier but local
 recent_form_at_sim <- function(cut_season, cut_week, teams,
@@ -2188,7 +2418,7 @@ if (file.exists(.calib_path)) {
     wks <- weeks_by_season[[as.character(s0)]]
     for (wk in wks) {
       idx <- idx + 1L
-      message(sprintf("Calibrating: season %d week %d ...", s0, wk))
+    inform(sprintf("Calibrating: season %d week %d ...", s0, wk))
       out[[idx]] <- build_one(s0, wk)
       flush.console()
     }
@@ -2202,7 +2432,7 @@ if (file.exists(.calib_path)) {
 
 if (!nrow(calib_sim_df)) {
   map_iso <- function(p) p
-  message("Simulator-based isotonic: no calibration data found; using identity.")
+  inform("Simulator-based isotonic: no calibration data found; using identity.")
 } else {
   # light binning to avoid heavy duplicates, then isotonic on simulator probs
   K <- 120                 # fewer bins = more samples per bin
@@ -2238,7 +2468,7 @@ if (!nrow(calib_sim_df)) {
   
   
   mae <- mean(abs(binned$x - binned$y), na.rm = TRUE)
-  message(sprintf("Simulator-based isotonic fit — bins=%d | MAE(iso)=%.4f", nrow(binned), mae))
+  inform(sprintf("Simulator-based isotonic fit — bins=%d | MAE(iso)=%.4f", nrow(binned), mae))
 }
 
 # ----- 3-way multinomial calibration (H/A/T) -----
@@ -2560,6 +2790,12 @@ games_ready <- games_ready %>%
     )
   )
 
+assert_required_columns(
+  games_ready,
+  c("game_id", "mu_home", "mu_away", "sd_home", "sd_away"),
+  "Simulation game inputs"
+)
+
 
 results_list <- lapply(seq_len(nrow(games_ready)), function(i) {
   set.seed(SEED + i)
@@ -2637,7 +2873,7 @@ resolved_list <- Map(function(sim_df, ot_hp) {
 
 overall_tie_rate <- sum(vapply(resolved_list, function(tb) sum(tb$tie), integer(1))) /
   (N_TRIALS * length(resolved_list))
-message(sprintf("Final tie rate: %.3f%% | alpha_1pt=%.3f", 100*overall_tie_rate, alpha_1pt))
+inform(sprintf("Final tie rate: %.3f%% | alpha_1pt=%.3f", 100*overall_tie_rate, alpha_1pt))
 
 # Per-game resolver: convert a portion of regulation ties into OT results
 
@@ -3269,7 +3505,7 @@ market_probs_from_sched <- function(sched_df) {
     dplyr::select(game_id, season, week, p_home_mkt_2w)
 
   if (!any(is.finite(out$p_home_mkt_2w))) {
-    message(
+    inform(
       "market_probs_from_sched(): no usable closing moneyline or spread columns found; returning NA probabilities."
     )
   }
@@ -4043,12 +4279,12 @@ final <- final %>%
   )
 
 
-message("Blend (ridge+iso) added: home_p_2w_blend/home_win_prob_blend/away_win_prob_blend")
+inform("Blend (ridge+iso) added: home_p_2w_blend/home_win_prob_blend/away_win_prob_blend")
 # ---- END deployment ridge+isotonic block ----
 
 # === BACKTEST to create `res` for market comparison (required by compare_to_market) ===
 # Pick the window you want (last 8 completed seasons works well)
-BACKTEST_TRIALS <- 8000L
+  BACKTEST_TRIALS <- config$backtest_trials
 res <- if (exists("calib_sim_df")) {
   score_weeks_fast(
     start_season = SEASON - 8,
@@ -4137,7 +4373,7 @@ if (exists("res") && exists("blend_oos") && nrow(blend_oos)) {
         dplyr::count(dplyr::across(dplyr::all_of(blend_join_cols))) %>%
         dplyr::filter(.data$n > 1L)
       if (nrow(dup_hist)) {
-        message(
+        inform(
           sprintf(
             "Blended history contained %d duplicate game/week combos; using the mean probability per combo.",
             nrow(dup_hist)
@@ -4205,7 +4441,7 @@ if (exists("res") && exists("blend_oos") && nrow(blend_oos)) {
       ))
     }
 
-    message(sprintf("res_blend structure verified; only %s differs from res$per_game.", prob_col))
+    inform(sprintf("res_blend structure verified; only %s differs from res$per_game.", prob_col))
 
     if (nrow(res_blend$per_game) != orig_n_per_game) {
       stop(sprintf(
@@ -4318,12 +4554,14 @@ rt_df <- pretty_df %>%
   )
 
 # spot-check a few probabilities
-print(
-  final %>%
-    dplyr::select(matchup, home_win_prob_cal, away_win_prob_cal, tie_prob,
-           home_p_2w_cal, away_p_2w_cal) %>%
-    slice_head(n = 5)
-)
+if (!quiet_mode) {
+  print(
+    final %>%
+      dplyr::select(matchup, home_win_prob_cal, away_win_prob_cal, tie_prob,
+             home_p_2w_cal, away_p_2w_cal) %>%
+      slice_head(n = 5)
+  )
+}
 
 
 if (reactable_available) {
@@ -4377,23 +4615,39 @@ if (reactable_available) {
     )
   )
 } else {
-  message("Interactive slate table skipped because 'reactable' is not available.")
+  inform("Interactive slate table skipped because 'reactable' is not available.")
+}
+  log_dir <- file.path(getwd(), "run_logs")
+  run_id <- format(Sys.time(), "%Y%m%d_%H%M%S")
+
+  if (isTRUE(config$save_logs)) {
+    if (!dir.exists(log_dir)) dir.create(log_dir, recursive = TRUE)
+
+    cfg <- list(
+      SEASON = SEASON, WEEK_TO_SIM = WEEK_TO_SIM, N_TRIALS = N_TRIALS, SEED = SEED,
+      USE_SOS = USE_SOS, SOS_STRENGTH = SOS_STRENGTH,
+      USE_RECENCY_DECAY = USE_RECENCY_DECAY, RECENCY_HALFLIFE = RECENCY_HALFLIFE,
+      GLMM_BLEND_W_fixed = if (exists("GLMM_BLEND_W")) GLMM_BLEND_W else NA_real_,
+      RHO_SCORE = RHO_SCORE, PTS_CAP_HI = PTS_CAP_HI
+    )
+
+    saveRDS(cfg, file.path(log_dir, paste0("config_", run_id, ".rds")))
+    saveRDS(final, file.path(log_dir, paste0("final_", run_id, ".rds")))
+    saveRDS(games_ready, file.path(log_dir, paste0("games_ready_", run_id, ".rds")))
+  } else {
+    run_id <- NULL
+  }
+
+  list(
+    final = final,
+    games = games_ready,
+    config = config,
+    run_id = run_id,
+    reactable_available = reactable_available,
+    gt_available = gt_available
+  )
 }
 
-log_dir <- file.path(getwd(), "run_logs")
-if (!dir.exists(log_dir)) dir.create(log_dir, recursive = TRUE)
-
-run_id <- format(Sys.time(), "%Y%m%d_%H%M%S")
-cfg <- list(
-  SEASON = SEASON, WEEK_TO_SIM = WEEK_TO_SIM, N_TRIALS = N_TRIALS, SEED = SEED,
-  USE_SOS = USE_SOS, SOS_STRENGTH = SOS_STRENGTH,
-  USE_RECENCY_DECAY = USE_RECENCY_DECAY, RECENCY_HALFLIFE = RECENCY_HALFLIFE,
-  GLMM_BLEND_W_fixed = if (exists("GLMM_BLEND_W")) GLMM_BLEND_W else NA_real_,
-  RHO_SCORE = RHO_SCORE, PTS_CAP_HI = PTS_CAP_HI
-)
-saveRDS(cfg, file.path(log_dir, paste0("config_", run_id, ".rds")))
-saveRDS(final, file.path(log_dir, paste0("final_", run_id, ".rds")))
-saveRDS(games_ready, file.path(log_dir, paste0("games_ready_", run_id, ".rds")))
-
-
-
+if (sys.nframe() == 0L) {
+  invisible(run_week_simulation())
+}
