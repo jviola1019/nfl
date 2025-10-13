@@ -62,6 +62,16 @@ compare_to_market <- function(res,
   # --- helpers (scoped to this function) ---
   .clamp01 <- function(x, eps = 1e-12) pmin(pmax(x, eps), 1 - eps)
   .pick_col <- function(df, cands) { nm <- intersect(cands, names(df)); if (length(nm)) nm[1] else NA_character_ }
+  .first_non_missing <- function(x) {
+    if (!length(x)) {
+      return(x)
+    }
+    idx <- which(!is.na(x))[1]
+    if (length(idx) == 0L || is.na(idx)) {
+      return(x[NA_integer_])
+    }
+    x[idx]
+  }
   american_to_prob <- function(odds) ifelse(odds < 0, (-odds)/((-odds)+100), 100/(odds+100))
   devig_2way <- function(p_home_raw, p_away_raw){
     den <- p_home_raw + p_away_raw
@@ -93,7 +103,43 @@ compare_to_market <- function(res,
     ))
   }
 
-  sched_eval <- sched %>% dplyr::filter(season %in% seasons_eval, game_type %in% c("REG","Regular"))
+  sched_eval <- sched %>%
+    dplyr::filter(season %in% seasons_eval, game_type %in% c("REG","Regular"))
+
+  dedupe_sched <- function(df, keys) {
+    if (!length(keys)) {
+      return(df)
+    }
+
+    dup <- df %>%
+      dplyr::filter(dplyr::if_all(dplyr::all_of(keys), ~ !is.na(.))) %>%
+      dplyr::count(dplyr::across(dplyr::all_of(keys))) %>%
+      dplyr::filter(.data$n > 1L)
+
+    if (!nrow(dup)) {
+      return(df)
+    }
+
+    message(sprintf(
+      "compare_to_market(): collapsing %d duplicate schedule rows using first non-missing values.",
+      nrow(dup)
+    ))
+
+    non_key_cols <- setdiff(names(df), keys)
+
+    df %>%
+      dplyr::group_by(dplyr::across(dplyr::all_of(keys))) %>%
+      dplyr::summarise(
+        dplyr::across(
+          dplyr::all_of(non_key_cols),
+          ~ .first_non_missing(.x),
+          .names = "{.col}"
+        ),
+        .groups = "drop"
+      )
+  }
+
+  sched_eval <- dedupe_sched(sched_eval, join_keys)
 
   # Prefer an existing helper that already knows how to source market probs.
   mkt_tbl <- NULL
@@ -164,11 +210,16 @@ compare_to_market <- function(res,
         .groups = "drop"
       )
 
-    sched_eval <- sched_eval %>%
-      dplyr::left_join(
-        espn_tbl,
-        by = c("game_date" = "date", "home_team", "away_team")
-      )
+    join_args <- list(
+      x = sched_eval,
+      y = espn_tbl,
+      by = c("game_date" = "date", "home_team", "away_team")
+    )
+    if ("relationship" %in% names(formals(dplyr::left_join))) {
+      join_args$relationship <- "many-to-one"
+      join_args$multiple <- "all"
+    }
+    sched_eval <- rlang::exec(dplyr::left_join, !!!join_args)
   }
   
   
