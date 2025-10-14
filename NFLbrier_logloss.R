@@ -351,6 +351,11 @@ compare_to_market <- function(res,
       join_args$multiple <- "all"
     }
     sched_eval <- rlang::exec(dplyr::left_join, !!!join_args)
+    sched_eval <- collapse_duplicates(
+      sched_eval,
+      join_keys,
+      label = "Schedule table after odds merge"
+    )
   }
   
   
