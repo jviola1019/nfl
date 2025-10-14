@@ -4543,6 +4543,11 @@ if (exists("res") && exists("blend_oos") && nrow(blend_oos)) {
       dplyr::summarise(p_blend = mean(p_blend, na.rm = TRUE), .groups = "drop")
 
     blend_oos_join <- align_join_col_types(blend_oos_join, base_per_game, blend_join_cols)
+    blend_oos_join <- collapse_by_keys_strict(
+      blend_oos_join,
+      blend_join_cols,
+      label = "Blend history table"
+    )
 
     if (nrow(blend_oos_join)) {
       dup_hist <- blend_oos %>%
