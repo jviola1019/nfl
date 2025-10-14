@@ -875,7 +875,7 @@ safe_load_injuries <- function(seasons, prefer_fast = TRUE, ...) {
     }
 
     tryCatch(
-      nflreadr::load_injuries(seasons = season, ...),
+      suppressWarnings(nflreadr::load_injuries(seasons = season, ...)),
       error = function(e) {
         msg <- conditionMessage(e)
         if (grepl("404", msg, fixed = TRUE)) {
@@ -894,13 +894,10 @@ safe_load_injuries <- function(seasons, prefer_fast = TRUE, ...) {
   injuries <- dplyr::bind_rows(pieces)
 
   if (length(missing)) {
-    warning(
-      sprintf(
-        "Injury releases missing for seasons: %s. Downstream metrics will omit those seasons.",
-        paste(missing, collapse = ", ")
-      ),
-      call. = FALSE
-    )
+    inform(sprintf(
+      "Injury releases missing for seasons: %s. Downstream metrics will omit those seasons.",
+      paste(missing, collapse = ", ")
+    ))
   }
 
   injuries
@@ -4013,6 +4010,9 @@ weeks_ago <- function(season, week, S, W) (S - season) * 18 + (W - week)
 cw <- sched %>% dplyr::filter(game_type %in% c("REG","Regular")) %>%
   dplyr::arrange(season, week) %>% dplyr::distinct(season, week)
 
+glmnet_available <- has_namespace("glmnet")
+glmnet_fallback_notified <- FALSE
+
 blend_oos <- purrr::map_dfr(seq_len(nrow(cw)), function(i){
   S <- cw$season[i]; W <- cw$week[i]
   test  <- comp0 %>% dplyr::filter(season == S, week == W)
@@ -4041,22 +4041,64 @@ blend_oos <- purrr::map_dfr(seq_len(nrow(cw)), function(i){
 
   p_raw_tr <- p_raw_te <- NULL
 
+  if (model_name == "glmnet" && !glmnet_available) {
+    if (!glmnet_fallback_notified) {
+      inform("Package 'glmnet' is unavailable; falling back to logistic regression for the blend meta-model.")
+      glmnet_fallback_notified <<- TRUE
+    }
+    model_name <- "glm"
+  }
+
   if (model_name == "glm") {
     df_tr <- as.data.frame(Xtr)
     df_tr$y <- ytr
-    glm_fit <- try(stats::glm(y ~ ., family = binomial(), data = df_tr, weights = wtr), silent = TRUE)
+    glm_fit <- try(stats::glm(y ~ ., family = quasibinomial(), data = df_tr, weights = wtr), silent = TRUE)
     if (!inherits(glm_fit, "try-error")) {
-      p_raw_tr <- stats::predict(glm_fit, type = "response")
-      p_raw_te <- stats::predict(glm_fit, newdata = as.data.frame(Xte), type = "response")
+      p_raw_tr <- suppressWarnings(stats::predict(glm_fit, type = "response"))
+      p_raw_te <- suppressWarnings(stats::predict(glm_fit, newdata = as.data.frame(Xte), type = "response"))
     } else {
-      model_name <- "glmnet"  # fallback
+      if (glmnet_available) {
+        model_name <- "glmnet"  # fallback
+      } else {
+        if (!glmnet_fallback_notified) {
+          inform("Blend logistic regression failed and 'glmnet' is unavailable; using market probabilities instead.")
+          glmnet_fallback_notified <<- TRUE
+        }
+        test$p_blend <- test$p_mkt
+        return(test)
+      }
     }
   }
 
   if (model_name != "glm") {
-    cv <- fit_glmnet()
+    if (!glmnet_available) {
+      if (!glmnet_fallback_notified) {
+        inform("Package 'glmnet' is unavailable; using market probabilities for blend outputs.")
+        glmnet_fallback_notified <<- TRUE
+      }
+      test$p_blend <- test$p_mkt
+      return(test)
+    }
+    cv <- try(fit_glmnet(), silent = TRUE)
+    if (inherits(cv, "try-error")) {
+      if (!glmnet_fallback_notified) {
+        inform("Fitting 'glmnet' failed; reverting to market probabilities for blend outputs.")
+        glmnet_fallback_notified <<- TRUE
+      }
+      test$p_blend <- test$p_mkt
+      return(test)
+    }
     p_raw_tr <- as.numeric(predict(cv, newx = Xtr, s = "lambda.min", type = "response"))
     p_raw_te <- as.numeric(predict(cv, newx = Xte, s = "lambda.min", type = "response"))
+  }
+
+  if (is.null(p_raw_tr) || is.null(p_raw_te)) {
+    if (!glmnet_fallback_notified) {
+      inform("Blend meta-model produced no predictions; defaulting to market probabilities.")
+      glmnet_fallback_notified <<- TRUE
+    }
+    test$p_blend <- test$p_mkt
+    return(test)
   }
 
   calibrator <- make_calibrator(CALIBRATION_METHOD, p_raw_tr, ytr, weights = wtr)
@@ -4177,20 +4219,44 @@ if (nrow(train_deploy) >= 500) {
   # recency weights over the training window (weeks ago from end of window)
   endS <- max(train_deploy$season); endW <- max(train_deploy$week[train_deploy$season==endS])
   w    <- 0.98 ^ pmax(0, weeks_ago(train_deploy$season, train_deploy$week, endS, endW))
-  
-  cv <- cv.glmnet(mm$x, mm$y, family = "binomial", alpha = 0.25, weights = w, nfolds = 10)
-  fit_deploy <- list(cv = cv, feat = colnames(mm$x))
-  
-  # isotonic on the blend scores (train side)
-  p_tr <- as.numeric(predict(cv, newx = mm$x, s = "lambda.min", type = "response"))
-  tb <- tibble::tibble(p = .clp(p_tr), y = mm$y) %>%
-    dplyr::mutate(bin = pmin(pmax(floor(p*100),0),100)) %>%
-    dplyr::group_by(bin) %>% dplyr::summarise(x = mean(p), y = mean(y), .groups="drop") %>%
-    dplyr::arrange(x)
-  iso <- stats::isoreg(c(0, tb$x, 1), c(0.01, tb$y, 0.99))
-  xs  <- iso$x[!duplicated(iso$x)]
-  ys  <- iso$yf[!duplicated(iso$x)]
-  map_blend <- function(p){ p <- .clp(p); .clp(stats::approx(xs, ys, xout = p, rule = 2)$y) }
+
+  p_tr <- NULL
+
+  if (glmnet_available) {
+    cv <- glmnet::cv.glmnet(mm$x, mm$y, family = "binomial", alpha = 0.25, weights = w, nfolds = 10)
+    fit_deploy <- list(engine = "glmnet", model = cv, feat = colnames(mm$x))
+    p_tr <- as.numeric(predict(cv, newx = mm$x, s = "lambda.min", type = "response"))
+  } else {
+    df_tr <- as.data.frame(mm$x)
+    df_tr$y <- mm$y
+    glm_fit <- try(stats::glm(y ~ ., family = quasibinomial(), data = df_tr, weights = w), silent = TRUE)
+    if (!inherits(glm_fit, "try-error")) {
+      fit_deploy <- list(engine = "glm", model = glm_fit, feat = colnames(mm$x))
+      p_tr <- as.numeric(suppressWarnings(stats::predict(glm_fit, type = "response")))
+      if (!glmnet_fallback_notified) {
+        inform("Blend deployment model using logistic regression because 'glmnet' is unavailable.")
+        glmnet_fallback_notified <<- TRUE
+      }
+    } else {
+      if (!glmnet_fallback_notified) {
+        inform("Blend deployment model fallback failed; using market probabilities for deployment.")
+        glmnet_fallback_notified <<- TRUE
+      }
+      fit_deploy <- NULL
+    }
+  }
+
+  if (!is.null(fit_deploy) && !is.null(p_tr)) {
+    # isotonic on the blend scores (train side)
+    tb <- tibble::tibble(p = .clp(p_tr), y = mm$y) %>%
+      dplyr::mutate(bin = pmin(pmax(floor(p*100),0),100)) %>%
+      dplyr::group_by(bin) %>% dplyr::summarise(x = mean(p), y = mean(y), .groups="drop") %>%
+      dplyr::arrange(x)
+    iso <- stats::isoreg(c(0, tb$x, 1), c(0.01, tb$y, 0.99))
+    xs  <- iso$x[!duplicated(iso$x)]
+    ys  <- iso$yf[!duplicated(iso$x)]
+    map_blend <- function(p){ p <- .clp(p); .clp(stats::approx(xs, ys, xout = p, rule = 2)$y) }
+  }
 }
 
 # ---- Apply to CURRENT slate (`final`) ----
@@ -4227,11 +4293,28 @@ if (!is.null(fit_deploy)) {
     if (length(miss)) {
       for (m in miss) X[[m]] <- 0
     }
-    X <- as.matrix(X[, need, drop = FALSE])
-    
-    p_raw[mask] <- as.numeric(
-      predict(fit_deploy$cv, newx = X, s = "lambda.min", type = "response")
+    X <- X[, need, drop = FALSE]
+
+    preds <- switch(
+      fit_deploy$engine,
+      glmnet = {
+        as.numeric(predict(fit_deploy$model, newx = as.matrix(X), s = "lambda.min", type = "response"))
+      },
+      glm = {
+        as.numeric(suppressWarnings(stats::predict(fit_deploy$model, newdata = as.data.frame(X), type = "response")))
+      },
+      {
+        if (!glmnet_fallback_notified) {
+          inform("Unknown blend deployment engine; defaulting to market probabilities.")
+          glmnet_fallback_notified <<- TRUE
+        }
+        rep(NA_real_, sum(mask))
+      }
     )
+
+    if (any(is.finite(preds))) {
+      p_raw[mask] <- preds
+    }
   }
 }
 
