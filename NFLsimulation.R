@@ -3,6 +3,93 @@
 # Requires: tidyverse, lubridate, nflreadr
 # ------------------------------------------------------------------------------
 
+ensure_dependencies <- function(pkgs,
+                                load = FALSE,
+                                install = !isFALSE(getOption("nfl.auto_install_deps", TRUE))) {
+  pkgs <- unique(pkgs)
+  if (!length(pkgs)) {
+    return(invisible(NULL))
+  }
+
+  is_installed <- vapply(pkgs, requireNamespace, logical(1), quietly = TRUE)
+  missing <- pkgs[!is_installed]
+
+  if (length(missing) && install) {
+    repos <- getOption("repos")
+    if (is.null(repos) || identical(repos["CRAN"], "@CRAN@") || is.na(repos["CRAN"])) {
+      options(repos = c(CRAN = "https://cloud.r-project.org"))
+    }
+
+    utils::install.packages(missing, quiet = TRUE)
+    is_installed <- vapply(pkgs, requireNamespace, logical(1), quietly = TRUE)
+    missing <- pkgs[!is_installed]
+  }
+
+  if (length(missing)) {
+    stop(
+      sprintf(
+        "Missing required package%s: %s. Install manually or set options(nfl.auto_install_deps = TRUE).",
+        if (length(missing) > 1) "s" else "",
+        paste(missing, collapse = ", ")
+      ),
+      call. = FALSE
+    )
+  }
+
+  if (isTRUE(load)) {
+    for (pkg in pkgs) {
+      suppressPackageStartupMessages(
+        library(pkg, character.only = TRUE)
+      )
+    }
+  }
+
+  invisible(NULL)
+}
+
+ensure_dependencies(c(
+  "dplyr", "tibble", "purrr",
+  "lubridate", "nflreadr", "scales", "digest",
+  "glmmTMB", "nnet", "randtoolbox", "httr2", "rlang", "vctrs"
+))
+
+separate_matchup_cols <- function(df,
+                                  column = "matchup",
+                                  into = c("away_team", "home_team"),
+                                  sep = " @ ",
+                                  remove = FALSE) {
+  if (!is.data.frame(df) || !column %in% names(df) || length(into) < 1) {
+    return(df)
+  }
+
+  values <- df[[column]]
+  split_vals <- strsplit(ifelse(is.na(values), "", as.character(values)), sep, fixed = TRUE)
+
+  extract_part <- function(idx) {
+    vapply(seq_along(split_vals), function(i) {
+      if (is.na(values[i])) {
+        return(NA_character_)
+      }
+      parts <- split_vals[[i]]
+      if (length(parts) >= idx) {
+        parts[idx]
+      } else {
+        NA_character_
+      }
+    }, character(1))
+  }
+
+  for (i in seq_along(into)) {
+    df[[into[i]]] <- extract_part(i)
+  }
+
+  if (remove) {
+    df[[column]] <- NULL
+  }
+
+  df
+}
+
 if (!exists("JOIN_KEY_ALIASES", inherits = FALSE)) {
   JOIN_KEY_ALIASES <- list(
     game_id = c("game_id", "gameid", "gameId", "gid"),
@@ -339,7 +426,9 @@ resolve_simulation_config <- function(config = NULL) {
 
 suppressPackageStartupMessages({
   source("NFLbrier_logloss.R")
-  library(tidyverse)
+  library(dplyr, warn.conflicts = FALSE)
+  library(tibble)
+  library(purrr)
   library(lubridate)
   library(nflreadr)
   library(scales)
@@ -348,7 +437,6 @@ suppressPackageStartupMessages({
   library(nnet)      # multinomial calibration
   library(randtoolbox) # Sobol QMC
   library(httr2)
-  library(dplyr, warn.conflicts = FALSE)
 })
 
 xfun_meets_min <- tryCatch({
@@ -570,9 +658,9 @@ show_tuning_help <- function(metric = NULL) {
   stopifnot(length(metric) <= 1)
   guide <- .tuning_parameters
   if (!is.null(metric) && nzchar(metric)) {
-    metric_pattern <- stringr::str_to_lower(metric)
+  metric_pattern <- tolower(metric)
     guide <- guide %>%
-      dplyr::filter(stringr::str_detect(stringr::str_to_lower(metrics_to_watch), metric_pattern))
+      dplyr::filter(grepl(metric_pattern, tolower(metrics_to_watch)))
   }
   if (nrow(guide) == 0) {
     inform(
@@ -754,10 +842,10 @@ stadium_coords <- tribble(
   "Bank of America Stadium",         35.2251, -80.8526, FALSE,
   "State Farm Stadium",              33.5277, -112.2626, TRUE
 ) %>%
-  mutate(venue_key = stringr::str_to_lower(stringr::str_replace_all(venue, "[^a-zA-Z0-9]+", " ")))
+  mutate(venue_key = tolower(gsub("[^a-zA-Z0-9]+", " ", venue)))
 week_slate <- week_slate %>%
   dplyr::mutate(
-    venue_key = stringr::str_to_lower(stringr::str_replace_all(venue, "[^a-zA-Z0-9]+", " "))
+    venue_key = tolower(gsub("[^a-zA-Z0-9]+", " ", venue))
   ) %>%
   dplyr::left_join(stadium_coords %>% dplyr::select(venue_key, dome), by = "venue_key")
 
@@ -1594,7 +1682,7 @@ extract_first <- function(x, nm) {
 
 weather_inputs <- week_slate %>%
   mutate(
-    venue_key = stringr::str_to_lower(stringr::str_replace_all(venue, "[^a-zA-Z0-9]+", " ")),
+    venue_key = tolower(gsub("[^a-zA-Z0-9]+", " ", venue)), 
     date_iso  = format(as.Date(game_date), "%Y-%m-%d")
   ) %>%
   dplyr::left_join(stadium_coords %>% dplyr::select(venue_key, lat, lon, dome), by = "venue_key") %>%
@@ -1709,9 +1797,9 @@ for (nm in c("pressure","qb_hit","sack")) {
 pbp_hist <- pbp_hist %>%
   mutate(
     press_ind = as.numeric(
-      tidyr::replace_na(pressure == 1, FALSE) |
-        tidyr::replace_na(qb_hit   == 1, FALSE) |
-        tidyr::replace_na(sack     == 1, FALSE)
+      (ifelse(is.na(pressure), FALSE, pressure == 1)) |
+        (ifelse(is.na(qb_hit),   FALSE, qb_hit == 1)) |
+        (ifelse(is.na(sack),     FALSE, sack == 1))
     )
   )
 
@@ -2989,8 +3077,7 @@ final <- final %>%
 
 # (Use home/away + date to find the correct row in games_ready)
 final <- final %>%
-  tidyr::separate(matchup, into = c("away_team","home_team"),
-                  sep = " @ ", remove = FALSE) %>%
+  separate_matchup_cols("matchup", c("away_team", "home_team"), sep = " @ ", remove = FALSE) %>%
   dplyr::left_join(
     games_ready %>% 
       dplyr::transmute(game_id,
@@ -3033,7 +3120,7 @@ final <- final |>
 
 # Canonical calibrated probs (3-way) + canonical two-way derived from them
 final_canon <- final |>
-  tidyr::separate(matchup, into = c("away_team","home_team"), sep = " @ ", remove = FALSE) |>
+  separate_matchup_cols("matchup", c("away_team", "home_team"), sep = " @ ", remove = FALSE) |>
   dplyr::select(
     date, matchup, home_team, away_team,
     home_win_prob_cal, away_win_prob_cal, tie_prob,
@@ -3558,34 +3645,40 @@ stopifnot(!is.na(date_col), !is.na(home_col), !is.na(away_col))
 
 
 #Add rest features to schedule
-rest_features <- sched %>%
+rest_base <- sched %>%
   dplyr::filter(game_type %in% c("REG","Regular")) %>%
   dplyr::transmute(
     game_id,
     date = as.Date(.data[[date_col]]),
     home_team = .data[[home_col]],
     away_team = .data[[away_col]]
-  ) %>%
-  tidyr::pivot_longer(
-    c(home_team, away_team),
-    names_to = "ha",
-    values_to = "team"
-  ) %>%
-  dplyr::mutate(ha = ifelse(ha == "home_team","home","away")) %>%
+  )
+
+rest_long <- dplyr::bind_rows(
+  rest_base %>% dplyr::transmute(game_id, date, team = home_team, ha = "home"),
+  rest_base %>% dplyr::transmute(game_id, date, team = away_team, ha = "away")
+) %>%
   dplyr::arrange(team, date) %>%
   dplyr::group_by(team) %>%
   dplyr::mutate(rest_days = as.integer(difftime(date, dplyr::lag(date), units = "days"))) %>%
-  dplyr::ungroup() %>%
-  tidyr::pivot_wider(
-    id_cols = game_id,
-    names_from = ha,
-    values_from = c(team, rest_days),
-    names_vary = "slowest"
+  dplyr::ungroup()
+
+rest_features <- rest_base %>%
+  dplyr::select(game_id) %>%
+  dplyr::distinct() %>%
+  dplyr::left_join(
+    rest_long %>%
+      dplyr::filter(ha == "home") %>%
+      dplyr::transmute(game_id, home_rest = rest_days),
+    by = "game_id"
   ) %>%
-  dplyr::transmute(
-    game_id,
-    home_rest = rest_days_home,
-    away_rest = rest_days_away,
+  dplyr::left_join(
+    rest_long %>%
+      dplyr::filter(ha == "away") %>%
+      dplyr::transmute(game_id, away_rest = rest_days),
+    by = "game_id"
+  ) %>%
+  dplyr::mutate(
     short_week_home = as.integer(home_rest <= 6),
     short_week_away = as.integer(away_rest <= 6),
     bye_home        = as.integer(home_rest >= 13),
@@ -4574,7 +4667,7 @@ if (exists("cmp_blend") && !is.null(cmp_blend)) {
 
 # ------------------ INTERACTIVE SLATE TABLE (reactable) ------------------
 pretty_df <- final |>
-  tidyr::separate(matchup, into = c("away_team","home_team"), sep = " @ ", remove = FALSE) |>
+  separate_matchup_cols("matchup", c("away_team", "home_team"), sep = " @ ", remove = FALSE) |>
   dplyr::left_join(
     games_ready |>
       dplyr::select(game_id, game_date, home_team, away_team, venue, dome, windy, cold, precip),

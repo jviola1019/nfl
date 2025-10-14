@@ -1,3 +1,51 @@
+if (!exists("ensure_dependencies", mode = "function")) {
+  ensure_dependencies <- function(pkgs,
+                                  load = FALSE,
+                                  install = !isFALSE(getOption("nfl.auto_install_deps", TRUE))) {
+    pkgs <- unique(pkgs)
+    if (!length(pkgs)) {
+      return(invisible(NULL))
+    }
+
+    is_installed <- vapply(pkgs, requireNamespace, logical(1), quietly = TRUE)
+    missing <- pkgs[!is_installed]
+
+    if (length(missing) && install) {
+      repos <- getOption("repos")
+      if (is.null(repos) || identical(repos["CRAN"], "@CRAN@") || is.na(repos["CRAN"])) {
+        options(repos = c(CRAN = "https://cloud.r-project.org"))
+      }
+
+      utils::install.packages(missing, quiet = TRUE)
+      is_installed <- vapply(pkgs, requireNamespace, logical(1), quietly = TRUE)
+      missing <- pkgs[!is_installed]
+    }
+
+    if (length(missing)) {
+      stop(
+        sprintf(
+          "Missing required package%s: %s. Install manually or set options(nfl.auto_install_deps = TRUE).",
+          if (length(missing) > 1) "s" else "",
+          paste(missing, collapse = ", ")
+        ),
+        call. = FALSE
+      )
+    }
+
+    if (isTRUE(load)) {
+      for (pkg in pkgs) {
+        suppressPackageStartupMessages(
+          library(pkg, character.only = TRUE)
+        )
+      }
+    }
+
+    invisible(NULL)
+  }
+}
+
+ensure_dependencies(c("dplyr", "tibble", "purrr", "rlang", "vctrs"))
+
 if (!exists("JOIN_KEY_ALIASES", inherits = FALSE)) {
   JOIN_KEY_ALIASES <- list(
     game_id = c("game_id", "gameid", "gameId", "gid"),
