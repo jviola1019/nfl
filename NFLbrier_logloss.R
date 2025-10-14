@@ -1,51 +1,3 @@
-if (!exists("ensure_dependencies", mode = "function")) {
-  ensure_dependencies <- function(pkgs,
-                                  load = FALSE,
-                                  install = !isFALSE(getOption("nfl.auto_install_deps", TRUE))) {
-    pkgs <- unique(pkgs)
-    if (!length(pkgs)) {
-      return(invisible(NULL))
-    }
-
-    is_installed <- vapply(pkgs, requireNamespace, logical(1), quietly = TRUE)
-    missing <- pkgs[!is_installed]
-
-    if (length(missing) && install) {
-      repos <- getOption("repos")
-      if (is.null(repos) || identical(repos["CRAN"], "@CRAN@") || is.na(repos["CRAN"])) {
-        options(repos = c(CRAN = "https://cloud.r-project.org"))
-      }
-
-      utils::install.packages(missing, quiet = TRUE)
-      is_installed <- vapply(pkgs, requireNamespace, logical(1), quietly = TRUE)
-      missing <- pkgs[!is_installed]
-    }
-
-    if (length(missing)) {
-      stop(
-        sprintf(
-          "Missing required package%s: %s. Install manually or set options(nfl.auto_install_deps = TRUE).",
-          if (length(missing) > 1) "s" else "",
-          paste(missing, collapse = ", ")
-        ),
-        call. = FALSE
-      )
-    }
-
-    if (isTRUE(load)) {
-      for (pkg in pkgs) {
-        suppressPackageStartupMessages(
-          library(pkg, character.only = TRUE)
-        )
-      }
-    }
-
-    invisible(NULL)
-  }
-}
-
-ensure_dependencies(c("dplyr", "tibble", "purrr", "rlang", "vctrs"))
-
 if (!exists("JOIN_KEY_ALIASES", inherits = FALSE)) {
   JOIN_KEY_ALIASES <- list(
     game_id = c("game_id", "gameid", "gameId", "gid"),
@@ -73,89 +25,6 @@ if (!exists("standardize_join_keys", inherits = FALSE)) {
       if (length(match)) {
         out <- dplyr::rename(out, !!canonical := !!rlang::sym(match[1]))
       }
-    }
-
-    out
-  }
-}
-
-if (!exists("collapse_duplicates", inherits = FALSE)) {
-  collapse_duplicates <- function(df, keys, label = "data frame") {
-    if (is.null(df) || !inherits(df, "data.frame") || !nrow(df) || !length(keys)) {
-      return(df)
-    }
-
-    missing_keys <- setdiff(keys, names(df))
-    if (length(missing_keys)) {
-      stop(sprintf(
-        "%s is missing required key columns: %s",
-        label,
-        paste(missing_keys, collapse = ", ")
-      ))
-    }
-
-    pick_first_non_missing <- function(x) {
-      if (!length(x)) {
-        return(x)
-      }
-      idx <- which(!is.na(x))[1]
-      if (length(idx) && !is.na(idx)) {
-        x[[idx]]
-      } else {
-        x[[1]]
-      }
-    }
-
-    df_tbl <- tibble::as_tibble(df)
-    complete_mask <- stats::complete.cases(df_tbl[keys])
-    df_complete <- df_tbl[complete_mask, , drop = FALSE]
-    df_incomplete <- df_tbl[!complete_mask, , drop = FALSE]
-
-    if (!nrow(df_complete)) {
-      return(df_tbl)
-    }
-
-    dup <- df_complete %>%
-      dplyr::count(dplyr::across(dplyr::all_of(keys))) %>%
-      dplyr::filter(.data$n > 1L)
-
-    if (!nrow(dup)) {
-      return(df_tbl)
-    }
-
-    message(sprintf(
-      "%s: collapsing %d duplicate rows using first non-missing values.",
-      label,
-      nrow(dup)
-    ))
-
-    non_key_cols <- setdiff(names(df_complete), keys)
-
-    collapsed_complete <- df_complete %>%
-      dplyr::group_by(dplyr::across(dplyr::all_of(keys))) %>%
-      dplyr::summarise(
-        dplyr::across(
-          dplyr::all_of(non_key_cols),
-          pick_first_non_missing,
-          .names = "{.col}"
-        ),
-        .groups = "drop"
-      )
-
-    out <- dplyr::bind_rows(collapsed_complete, df_incomplete) %>%
-      dplyr::select(dplyr::all_of(names(df_tbl)))
-
-    dup_check <- out %>%
-      dplyr::filter(dplyr::if_all(dplyr::all_of(keys), ~ !is.na(.))) %>%
-      dplyr::count(dplyr::across(dplyr::all_of(keys))) %>%
-      dplyr::filter(.data$n > 1L)
-
-    if (nrow(dup_check)) {
-      stop(sprintf(
-        "%s: unable to resolve duplicates for %d key combinations.",
-        label,
-        nrow(dup_check)
-      ))
     }
 
     out
@@ -351,11 +220,6 @@ compare_to_market <- function(res,
       join_args$multiple <- "all"
     }
     sched_eval <- rlang::exec(dplyr::left_join, !!!join_args)
-    sched_eval <- collapse_duplicates(
-      sched_eval,
-      join_keys,
-      label = "Schedule table after odds merge"
-    )
   }
   
   
