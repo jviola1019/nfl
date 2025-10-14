@@ -425,6 +425,7 @@ resolve_simulation_config <- function(config = NULL) {
 }
 
 suppressPackageStartupMessages({
+  options(nfl.auto_install_deps = TRUE)
   source("NFLbrier_logloss.R")
   library(dplyr, warn.conflicts = FALSE)
   library(tibble)
