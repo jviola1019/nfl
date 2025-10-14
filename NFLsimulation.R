@@ -50,7 +50,7 @@ ensure_dependencies <- function(pkgs,
 ensure_dependencies(c(
   "dplyr", "tibble", "purrr",
   "lubridate", "nflreadr", "scales", "digest",
-  "nnet", "httr2", "rlang", "vctrs", "MASS"
+  "glmmTMB", "nnet", "randtoolbox", "httr2", "rlang", "vctrs"
 ))
 
 separate_matchup_cols <- function(df,
@@ -438,17 +438,6 @@ suppressPackageStartupMessages({
   library(digest)
   library(nnet)      # multinomial calibration
   library(httr2)
-  if (SIM_HAS_GLMMTMB) {
-    library(glmmTMB)   # NB GLMM (preferred)
-  } else {
-    library(MASS)      # fallback for NB model
-    message("Package 'glmmTMB' unavailable; using MASS::glm.nb fallback for NB prior.")
-  }
-  if (SIM_HAS_RANDTOOLBOX) {
-    library(randtoolbox) # Sobol QMC
-  } else {
-    message("Package 'randtoolbox' unavailable; using pseudo-random fallback for QMC draws.")
-  }
 })
 
 xfun_meets_min <- tryCatch({
