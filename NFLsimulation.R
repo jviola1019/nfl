@@ -3,6 +3,93 @@
 # Requires: tidyverse, lubridate, nflreadr
 # ------------------------------------------------------------------------------
 
+ensure_dependencies <- function(pkgs,
+                                load = FALSE,
+                                install = !isFALSE(getOption("nfl.auto_install_deps", TRUE))) {
+  pkgs <- unique(pkgs)
+  if (!length(pkgs)) {
+    return(invisible(NULL))
+  }
+
+  is_installed <- vapply(pkgs, requireNamespace, logical(1), quietly = TRUE)
+  missing <- pkgs[!is_installed]
+
+  if (length(missing) && install) {
+    repos <- getOption("repos")
+    if (is.null(repos) || identical(repos["CRAN"], "@CRAN@") || is.na(repos["CRAN"])) {
+      options(repos = c(CRAN = "https://cloud.r-project.org"))
+    }
+
+    utils::install.packages(missing, quiet = TRUE)
+    is_installed <- vapply(pkgs, requireNamespace, logical(1), quietly = TRUE)
+    missing <- pkgs[!is_installed]
+  }
+
+  if (length(missing)) {
+    stop(
+      sprintf(
+        "Missing required package%s: %s. Install manually or set options(nfl.auto_install_deps = TRUE).",
+        if (length(missing) > 1) "s" else "",
+        paste(missing, collapse = ", ")
+      ),
+      call. = FALSE
+    )
+  }
+
+  if (isTRUE(load)) {
+    for (pkg in pkgs) {
+      suppressPackageStartupMessages(
+        library(pkg, character.only = TRUE)
+      )
+    }
+  }
+
+  invisible(NULL)
+}
+
+ensure_dependencies(c(
+  "dplyr", "tibble", "purrr",
+  "lubridate", "nflreadr", "scales", "digest",
+  "nnet", "httr2", "rlang", "vctrs", "MASS"
+))
+
+separate_matchup_cols <- function(df,
+                                  column = "matchup",
+                                  into = c("away_team", "home_team"),
+                                  sep = " @ ",
+                                  remove = FALSE) {
+  if (!is.data.frame(df) || !column %in% names(df) || length(into) < 1) {
+    return(df)
+  }
+
+  values <- df[[column]]
+  split_vals <- strsplit(ifelse(is.na(values), "", as.character(values)), sep, fixed = TRUE)
+
+  extract_part <- function(idx) {
+    vapply(seq_along(split_vals), function(i) {
+      if (is.na(values[i])) {
+        return(NA_character_)
+      }
+      parts <- split_vals[[i]]
+      if (length(parts) >= idx) {
+        parts[idx]
+      } else {
+        NA_character_
+      }
+    }, character(1))
+  }
+
+  for (i in seq_along(into)) {
+    df[[into[i]]] <- extract_part(i)
+  }
+
+  if (remove) {
+    df[[column]] <- NULL
+  }
+
+  df
+}
+
 if (!exists("JOIN_KEY_ALIASES", inherits = FALSE)) {
   JOIN_KEY_ALIASES <- list(
     game_id = c("game_id", "gameid", "gameId", "gid"),
@@ -337,18 +424,31 @@ resolve_simulation_config <- function(config = NULL) {
   validate_simulation_config(cfg)
 }
 
+SIM_HAS_GLMMTMB <- requireNamespace("glmmTMB", quietly = TRUE)
+SIM_HAS_RANDTOOLBOX <- requireNamespace("randtoolbox", quietly = TRUE)
+
 suppressPackageStartupMessages({
   source("NFLbrier_logloss.R")
-  library(tidyverse)
+  library(dplyr, warn.conflicts = FALSE)
+  library(tibble)
+  library(purrr)
   library(lubridate)
   library(nflreadr)
   library(scales)
   library(digest)
-  library(glmmTMB)   # NB GLMM
   library(nnet)      # multinomial calibration
-  library(randtoolbox) # Sobol QMC
   library(httr2)
-  library(dplyr, warn.conflicts = FALSE)
+  if (SIM_HAS_GLMMTMB) {
+    library(glmmTMB)   # NB GLMM (preferred)
+  } else {
+    library(MASS)      # fallback for NB model
+    message("Package 'glmmTMB' unavailable; using MASS::glm.nb fallback for NB prior.")
+  }
+  if (SIM_HAS_RANDTOOLBOX) {
+    library(randtoolbox) # Sobol QMC
+  } else {
+    message("Package 'randtoolbox' unavailable; using pseudo-random fallback for QMC draws.")
+  }
 })
 
 xfun_meets_min <- tryCatch({
@@ -570,9 +670,9 @@ show_tuning_help <- function(metric = NULL) {
   stopifnot(length(metric) <= 1)
   guide <- .tuning_parameters
   if (!is.null(metric) && nzchar(metric)) {
-    metric_pattern <- stringr::str_to_lower(metric)
+  metric_pattern <- tolower(metric)
     guide <- guide %>%
-      dplyr::filter(stringr::str_detect(stringr::str_to_lower(metrics_to_watch), metric_pattern))
+      dplyr::filter(grepl(metric_pattern, tolower(metrics_to_watch)))
   }
   if (nrow(guide) == 0) {
     inform(
@@ -754,10 +854,10 @@ stadium_coords <- tribble(
   "Bank of America Stadium",         35.2251, -80.8526, FALSE,
   "State Farm Stadium",              33.5277, -112.2626, TRUE
 ) %>%
-  mutate(venue_key = stringr::str_to_lower(stringr::str_replace_all(venue, "[^a-zA-Z0-9]+", " ")))
+  mutate(venue_key = tolower(gsub("[^a-zA-Z0-9]+", " ", venue)))
 week_slate <- week_slate %>%
   dplyr::mutate(
-    venue_key = stringr::str_to_lower(stringr::str_replace_all(venue, "[^a-zA-Z0-9]+", " "))
+    venue_key = tolower(gsub("[^a-zA-Z0-9]+", " ", venue))
   ) %>%
   dplyr::left_join(stadium_coords %>% dplyr::select(venue_key, dome), by = "venue_key")
 
@@ -1594,7 +1694,7 @@ extract_first <- function(x, nm) {
 
 weather_inputs <- week_slate %>%
   mutate(
-    venue_key = stringr::str_to_lower(stringr::str_replace_all(venue, "[^a-zA-Z0-9]+", " ")),
+    venue_key = tolower(gsub("[^a-zA-Z0-9]+", " ", venue)), 
     date_iso  = format(as.Date(game_date), "%Y-%m-%d")
   ) %>%
   dplyr::left_join(stadium_coords %>% dplyr::select(venue_key, lat, lon, dome), by = "venue_key") %>%
@@ -1709,9 +1809,9 @@ for (nm in c("pressure","qb_hit","sack")) {
 pbp_hist <- pbp_hist %>%
   mutate(
     press_ind = as.numeric(
-      tidyr::replace_na(pressure == 1, FALSE) |
-        tidyr::replace_na(qb_hit   == 1, FALSE) |
-        tidyr::replace_na(sack     == 1, FALSE)
+      (ifelse(is.na(pressure), FALSE, pressure == 1)) |
+        (ifelse(is.na(qb_hit),   FALSE, qb_hit == 1)) |
+        (ifelse(is.na(sack),     FALSE, sack == 1))
     )
   )
 
@@ -1759,32 +1859,73 @@ stacked <- bind_rows(
   df_hist %>% transmute(team = away, opp = home, is_home = 0L, points = y_away)
 )
 
+if (nrow(stacked)) {
+  team_levels <- sort(unique(c(stacked$team, stacked$opp)))
+  stacked <- stacked %>%
+    dplyr::mutate(
+      team = factor(team, levels = team_levels),
+      opp  = factor(opp,  levels = team_levels)
+    )
+} else {
+  team_levels <- character()
+}
+
 # Fast, stable NB GLMM
 .nb_cache_dir <- file.path(path.expand("~"), ".cache", "nfl_sim_nb")
 if (!dir.exists(.nb_cache_dir)) dir.create(.nb_cache_dir, recursive = TRUE)
-.nb_key  <- digest::digest(list("nb2", as.Date(slate_date), nrow(stacked)))
+.nb_method <- if (SIM_HAS_GLMMTMB) "glmmTMB" else "glm_nb"
+.nb_key  <- digest::digest(list("nb2", as.Date(slate_date), nrow(stacked), .nb_method))
 .nb_path <- file.path(.nb_cache_dir, paste0(.nb_key, ".rds"))
 
 if (file.exists(.nb_path)) {
   fit_nb <- readRDS(.nb_path)
 } else {
-  fit_nb <- try(
-    glmmTMB(points ~ is_home + (1|team) + (1|opp), family = nbinom2, data = stacked),
-    silent = TRUE
-  )
+  if (SIM_HAS_GLMMTMB) {
+    fit_nb <- try(
+      glmmTMB(points ~ is_home + (1|team) + (1|opp), family = nbinom2, data = stacked),
+      silent = TRUE
+    )
+  } else {
+    fit_nb <- try(
+      MASS::glm.nb(points ~ is_home + team + opp, data = stacked),
+      silent = TRUE
+    )
+  }
   if (!inherits(fit_nb, "try-error")) saveRDS(fit_nb, .nb_path)
 }
 
 
 
 # Predict mu for this slate (home and away roles)
-glmm_preds <- week_slate %>%
-  transmute(home_team, away_team,
-            mu_home_glmm = if (inherits(fit_nb,"try-error")) NA_real_ else
-              as.numeric(predict(fit_nb, newdata = tibble(team=home_team, opp=away_team, is_home=1L), type="response")),
-            mu_away_glmm = if (inherits(fit_nb,"try-error")) NA_real_ else
-              as.numeric(predict(fit_nb, newdata = tibble(team=away_team, opp=home_team, is_home=0L), type="response"))
+predict_nb_safe <- function(fit, team_vec, opp_vec, is_home_flag) {
+  if (inherits(fit, "try-error") || !length(team_vec)) {
+    return(rep(NA_real_, length(team_vec)))
+  }
+  if (!length(team_levels)) {
+    return(rep(NA_real_, length(team_vec)))
+  }
+  new_df <- tibble::tibble(
+    team = factor(team_vec, levels = team_levels),
+    opp  = factor(opp_vec,  levels = team_levels),
+    is_home = is_home_flag
   )
+  if (any(is.na(new_df$team)) || any(is.na(new_df$opp))) {
+    return(rep(NA_real_, nrow(new_df)))
+  }
+  out <- try(suppressWarnings(predict(fit, newdata = new_df, type = "response")), silent = TRUE)
+  if (inherits(out, "try-error")) {
+    rep(NA_real_, nrow(new_df))
+  } else {
+    as.numeric(out)
+  }
+}
+
+glmm_preds <- week_slate %>%
+  dplyr::mutate(
+    mu_home_glmm = predict_nb_safe(fit_nb, home_team, away_team, 1L),
+    mu_away_glmm = predict_nb_safe(fit_nb, away_team, home_team, 0L)
+  ) %>%
+  dplyr::transmute(home_team, away_team, mu_home_glmm, mu_away_glmm)
 
 # --- Turnover & ST small priors (season-to-date, shrunk) ---------------------
 to_game <- sched %>%
@@ -2172,7 +2313,14 @@ simulate_game_nb <- function(mu_home, sd_home, mu_away, sd_away,
                              n_trials = N_TRIALS, rho = RHO_SCORE, cap = PTS_CAP_HI, seed = SEED) {
   # 1) Sobol QMC + antithetic
   n_half <- ceiling(n_trials/2)
-  U <- randtoolbox::sobol(n = n_half, dim = 2, scrambling = 0, seed = seed, normal = FALSE)
+  if (length(seed) == 1 && is.numeric(seed) && is.finite(seed)) {
+    local_seed(seed)
+  }
+  if (SIM_HAS_RANDTOOLBOX) {
+    U <- randtoolbox::sobol(n = n_half, dim = 2, scrambling = 0, seed = seed, normal = FALSE)
+  } else {
+    U <- matrix(stats::runif(n_half * 2), ncol = 2)
+  }
   U <- rbind(U, 1 - U)   # antithetic pairs
   Z1 <- qnorm(U[,1]); Z2 <- qnorm(U[,2])
   Z2c <- rho * Z1 + sqrt(pmax(1 - rho^2, 0)) * Z2
@@ -2989,8 +3137,7 @@ final <- final %>%
 
 # (Use home/away + date to find the correct row in games_ready)
 final <- final %>%
-  tidyr::separate(matchup, into = c("away_team","home_team"),
-                  sep = " @ ", remove = FALSE) %>%
+  separate_matchup_cols("matchup", c("away_team", "home_team"), sep = " @ ", remove = FALSE) %>%
   dplyr::left_join(
     games_ready %>% 
       dplyr::transmute(game_id,
@@ -3033,7 +3180,7 @@ final <- final |>
 
 # Canonical calibrated probs (3-way) + canonical two-way derived from them
 final_canon <- final |>
-  tidyr::separate(matchup, into = c("away_team","home_team"), sep = " @ ", remove = FALSE) |>
+  separate_matchup_cols("matchup", c("away_team", "home_team"), sep = " @ ", remove = FALSE) |>
   dplyr::select(
     date, matchup, home_team, away_team,
     home_win_prob_cal, away_win_prob_cal, tie_prob,
@@ -3528,6 +3675,9 @@ outcomes_hist <- sched %>%
   dplyr::transmute(game_id, season, week,
                    y2 = as.integer(.data[[home_pts_col]] > .data[[away_pts_col]]))
 
+dedupe_keys_hist <- c("game_id", "season", "week")
+outcomes_hist <- collapse_by_keys_strict(outcomes_hist, dedupe_keys_hist, "Historical outcomes")
+
 # your calibrated model 2-way prob history for those seasons
 preds_hist <- if (exists("res") && "per_game" %in% names(res)) {
   res$per_game %>%
@@ -3545,10 +3695,14 @@ preds_hist <- if (exists("res") && "per_game" %in% names(res)) {
   stop("Need either `res$per_game` or `calib_sim_df` in scope for preds_hist.")
 }
 
+preds_hist <- collapse_by_keys_strict(preds_hist, dedupe_keys_hist, "Historical model predictions")
+
 # market probs for those same games
 mkt_hist <- market_probs_from_sched(
   sched %>% dplyr::filter(season %in% seasons_hist, game_type %in% c("REG","Regular"))
 )
+
+mkt_hist <- collapse_by_keys_strict(mkt_hist, dedupe_keys_hist, "Historical market probabilities")
 
 # Pick the right columns from sched
 date_col <- .pick_col2(sched, c("gameday","game_date","game_datetime","game_time","kickoff","start_time","date"))
@@ -3558,34 +3712,40 @@ stopifnot(!is.na(date_col), !is.na(home_col), !is.na(away_col))
 
 
 #Add rest features to schedule
-rest_features <- sched %>%
+rest_base <- sched %>%
   dplyr::filter(game_type %in% c("REG","Regular")) %>%
   dplyr::transmute(
     game_id,
     date = as.Date(.data[[date_col]]),
     home_team = .data[[home_col]],
     away_team = .data[[away_col]]
-  ) %>%
-  tidyr::pivot_longer(
-    c(home_team, away_team),
-    names_to = "ha",
-    values_to = "team"
-  ) %>%
-  dplyr::mutate(ha = ifelse(ha == "home_team","home","away")) %>%
+  )
+
+rest_long <- dplyr::bind_rows(
+  rest_base %>% dplyr::transmute(game_id, date, team = home_team, ha = "home"),
+  rest_base %>% dplyr::transmute(game_id, date, team = away_team, ha = "away")
+) %>%
   dplyr::arrange(team, date) %>%
   dplyr::group_by(team) %>%
   dplyr::mutate(rest_days = as.integer(difftime(date, dplyr::lag(date), units = "days"))) %>%
-  dplyr::ungroup() %>%
-  tidyr::pivot_wider(
-    id_cols = game_id,
-    names_from = ha,
-    values_from = c(team, rest_days),
-    names_vary = "slowest"
+  dplyr::ungroup()
+
+rest_features <- rest_base %>%
+  dplyr::select(game_id) %>%
+  dplyr::distinct() %>%
+  dplyr::left_join(
+    rest_long %>%
+      dplyr::filter(ha == "home") %>%
+      dplyr::transmute(game_id, home_rest = rest_days),
+    by = "game_id"
   ) %>%
-  dplyr::transmute(
-    game_id,
-    home_rest = rest_days_home,
-    away_rest = rest_days_away,
+  dplyr::left_join(
+    rest_long %>%
+      dplyr::filter(ha == "away") %>%
+      dplyr::transmute(game_id, away_rest = rest_days),
+    by = "game_id"
+  ) %>%
+  dplyr::mutate(
     short_week_home = as.integer(home_rest <= 6),
     short_week_away = as.integer(away_rest <= 6),
     bye_home        = as.integer(home_rest >= 13),
@@ -3607,6 +3767,7 @@ ctx <- sched %>%
     high_wind   = as.integer(is.finite(wind_mph) & wind_mph >= 12)
   ) %>%
   dplyr::left_join(rest_features, by = "game_id")
+ctx <- collapse_by_keys_strict(ctx, dedupe_keys_hist, "Context features")
 
 if (nrow(inj_hist_features)) {
   inj_home <- inj_hist_features %>%
@@ -4574,7 +4735,7 @@ if (exists("cmp_blend") && !is.null(cmp_blend)) {
 
 # ------------------ INTERACTIVE SLATE TABLE (reactable) ------------------
 pretty_df <- final |>
-  tidyr::separate(matchup, into = c("away_team","home_team"), sep = " @ ", remove = FALSE) |>
+  separate_matchup_cols("matchup", c("away_team", "home_team"), sep = " @ ", remove = FALSE) |>
   dplyr::left_join(
     games_ready |>
       dplyr::select(game_id, game_date, home_team, away_team, venue, dome, windy, cold, precip),
