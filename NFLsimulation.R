@@ -1048,6 +1048,16 @@ pick_col <- function(df, candidates, label){
   nm[1]
 }
 
+# Internal helper used throughout the simulation/reporting pipeline to pull the
+# first available column name from a set of aliases without throwing if none
+# exist. This mirrors the late-file definition historically relied upon by the
+# market helpers but needs to be present before first use when the script is
+# sourced end-to-end.
+.pick_col2 <- function(df, cands){
+  nm <- intersect(cands, names(df))
+  if (length(nm)) nm[1] else NA_character_
+}
+
 season_col    <- pick_col(sched, c("season","Season","season_year","year"), "season")
 week_col      <- pick_col(sched, c("week","Week","game_week","gameday"), "week")
 gametype_col  <- pick_col(sched, c("game_type","season_type","season_type_name"), "game type")
@@ -3770,10 +3780,6 @@ score_weeks <- function(start_season, end_season, weeks = NULL, trials = 40000L)
 .clp <- function(x, eps=1e-12) pmin(pmax(x, eps), 1-eps)
 .lgt <- function(p) log(p/(1-p))
 .inv <- function(z) 1/(1+exp(-z))
-.pick_col2 <- function(df, cands){
-  nm <- intersect(cands, names(df))
-  if (length(nm)) nm[1] else NA_character_
-}
 american_to_prob <- function(odds) ifelse(odds < 0, (-odds)/((-odds)+100), 100/(odds+100))
 
 align_blend_with_margin <- function(p_blend,
