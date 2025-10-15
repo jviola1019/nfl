@@ -16,8 +16,18 @@ load_market_helpers <- local({
       candidates <- c(candidates, wd_candidate)
     }
 
-    this_ofile <- tryCatch(sys.frames()[[1]]$ofile, error = function(e) "")
-    if (nzchar(this_ofile)) {
+    this_ofile <- tryCatch({
+      candidate <- sys.frames()[[1]]$ofile
+      if (!length(candidate) || is.null(candidate)) {
+        ""
+      } else if (!is.character(candidate)) {
+        as.character(candidate[[1L]])
+      } else {
+        candidate[[1L]]
+      }
+    }, error = function(e) "")
+    if (is.character(this_ofile) && length(this_ofile) && nzchar(this_ofile[[1L]])) {
+      this_ofile <- this_ofile[[1L]]
       script_candidate <- file.path(dirname(this_ofile), "NFLmarket.R")
       if (file.exists(script_candidate)) {
         candidates <- c(candidates, script_candidate)
