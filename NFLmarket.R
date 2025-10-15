@@ -246,6 +246,7 @@ enrich_with_pre_kickoff_espn_lines <- function(sched,
         join_args$by <- NULL
       }
     }
+  )
 
     if (!is.null(join_args$by)) {
       if ("relationship" %in% names(formals(dplyr::left_join))) {
