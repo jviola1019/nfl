@@ -318,6 +318,7 @@ if (!exists("build_res_blend", inherits = FALSE)) {
 
 suppressPackageStartupMessages({
   source("NFLbrier_logloss.R")
+  source("NFLmarket.R")
   library(tidyverse)
   library(lubridate)
   library(nflreadr)
@@ -349,6 +350,8 @@ has_namespace <- function(pkg, needs_new_xfun = FALSE) {
 
 gt_available <- has_namespace("gt", needs_new_xfun = TRUE)
 reactable_available <- has_namespace("reactable")
+
+MARKET_PROVIDER <- "ESPN BET"
 
 if (!gt_available) {
   if (!xfun_meets_min) {
@@ -4251,37 +4254,42 @@ res <- if (exists("calib_sim_df")) {
   )
 }
 
-# === Evaluate *blended* probabilities vs market with paired week-block CIs ===
-# We reuse your existing `compare_to_market()` which expects res$per_game$p2_cal.
-# We create res_blend by overwriting p2_cal with the blended p for the same games.
-
-if (exists("res") && exists("blend_oos") && nrow(blend_oos)) {
-  join_keys <- if (exists("PREDICTION_JOIN_KEYS", inherits = TRUE)) PREDICTION_JOIN_KEYS else c("game_id", "season", "week")
-  prob_col_candidates <- c("p2_cal", "home_p_2w_cal", "p2_home_cal", "home_p2w_cal")
-
-  res_blend <- build_res_blend(
-    res = res,
-    blend_oos = blend_oos,
-    join_keys = join_keys,
-    prob_candidates = prob_col_candidates,
-    verbose = TRUE
+# === Evaluate blend vs market and build reports/HTML ===
+market_report <- NULL
+if (exists("res") && is.list(res) && exists("final") && inherits(final, "data.frame")) {
+  blend_input <- if (exists("blend_oos")) blend_oos else NULL
+  market_report <- tryCatch(
+    generate_market_report(
+      res = res,
+      final = final,
+      sched = sched,
+      blend_oos = blend_input,
+      provider = MARKET_PROVIDER,
+      html_file = file.path(getwd(), "NFLmarket_report.html"),
+      html_title = sprintf("%s vs Market Verification", format(Sys.Date(), "%Y %B %d")),
+      moneyline_html = file.path(getwd(), "NFLmarket_moneylines.html"),
+      moneyline_title = "Model vs Market Moneylines",
+      moneyline_vig = 0.10,
+      verbose = TRUE
+    ),
+    error = function(e) {
+      message(sprintf("generate_market_report() failed: %s", conditionMessage(e)))
+      NULL
+    }
   )
 
-  if (!is.null(res_blend)) {
+  if (!is.null(market_report)) {
+    cmp_blend <- market_report$comparison
     cat("\n=== Blended vs market (paired, week-block bootstrap) ===\n")
-    cmp_blend <- compare_to_market(res_blend, sched)
-    # cmp_blend$overall$... has Brier/LogLoss and deltas; 95% CIs printed by the function
-  } else {
-    message("Blended backtest comparison skipped because blended results could not be constructed.")
+    if (!is.null(cmp_blend$overall)) {
+      print(cmp_blend$overall)
+    }
+    if (!is.null(cmp_blend$by_season)) {
+      head(cmp_blend$by_season) %>% print()
+    }
   }
 } else {
-  message("Blended backtest comparison skipped: missing res or blend_oos inputs.")
-}
-
-# Optional quick peeks:
-if (exists("cmp_blend") && !is.null(cmp_blend)) {
-  print(cmp_blend$overall)
-  head(cmp_blend$by_season)
+  message("Market report skipped: missing res/final inputs.")
 }
 
 
