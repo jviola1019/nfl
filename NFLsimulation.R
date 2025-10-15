@@ -199,6 +199,440 @@ if (!exists("standardize_join_keys", inherits = FALSE)) {
   }
 }
 
+if (!exists("parse_datetime_vector", inherits = FALSE)) {
+  parse_datetime_vector <- function(x, tz = "UTC") {
+    if (is.null(x)) {
+      return(as.POSIXct(rep(NA_real_, 0), tz = tz))
+    }
+
+    if (inherits(x, "POSIXt")) {
+      return(lubridate::with_tz(x, tz))
+    }
+
+    x_chr <- as.character(x)
+    n <- length(x_chr)
+    out <- as.POSIXct(rep(NA_real_, n), tz = tz)
+    if (!n) {
+      return(out)
+    }
+
+    mask <- !is.na(x_chr) & nzchar(x_chr)
+    if (!any(mask)) {
+      return(out)
+    }
+
+    orders <- c(
+      "Y-m-d H:M:S z", "Y-m-d H:M:S", "Y-m-d H:M", "Y-m-d I:M:S p", "Y-m-d I:M p",
+      "Ymd HMS", "Ymd HM", "Ymd IMS p"
+    )
+    parsed <- suppressWarnings(lubridate::parse_date_time(x_chr[mask], orders = orders, tz = tz))
+    out[mask] <- parsed
+    out
+  }
+}
+
+if (!exists("parse_time_components", inherits = FALSE)) {
+  parse_time_components <- function(time_chr) {
+    n <- length(time_chr)
+    hour <- rep(NA_integer_, n)
+    minute <- rep(NA_integer_, n)
+    if (!n) {
+      return(list(hour = hour, minute = minute))
+    }
+
+    vals <- as.character(time_chr)
+    vals[!nzchar(vals)] <- NA_character_
+    vals[grepl("(?i)^(tbd|tba)$", vals, perl = TRUE)] <- NA_character_
+    vals <- stringr::str_replace_all(vals, "(?i)\n", " ")
+    vals <- stringr::str_trim(vals)
+    vals <- stringr::str_replace_all(vals, "(?i)(am|pm)$", " \1")
+    vals <- stringr::str_replace_all(vals, "(?i)\b(ET|EST|EDT|CT|CST|CDT|MT|MST|MDT|PT|PST|PDT)\b", "")
+    mask <- !is.na(vals) & nzchar(vals)
+
+    if (any(mask)) {
+      combos <- paste("1970-01-01", vals[mask])
+      orders <- c("Y-m-d H:M:S", "Y-m-d I:M:S p", "Y-m-d H:M", "Y-m-d I:M p")
+      parsed <- suppressWarnings(lubridate::parse_date_time(combos, orders = orders, tz = "UTC"))
+      hour[mask] <- suppressWarnings(lubridate::hour(parsed))
+      minute[mask] <- suppressWarnings(lubridate::minute(parsed))
+    }
+
+    list(hour = hour, minute = minute)
+  }
+}
+
+if (!exists("select_first_column", inherits = FALSE)) {
+  select_first_column <- function(df, candidates) {
+    intersect(candidates, names(df))[1]
+  }
+}
+
+if (!exists("coerce_numeric_safely", inherits = FALSE)) {
+  coerce_numeric_safely <- function(x) {
+    if (is.numeric(x)) {
+      return(x)
+    }
+    suppressWarnings(as.numeric(x))
+  }
+}
+
+if (!exists("clamp_probability", inherits = FALSE)) {
+  clamp_probability <- function(p, eps = 1e-06) {
+    p <- coerce_numeric_safely(p)
+    p <- dplyr::if_else(is.na(p), NA_real_, p)
+    pmin(pmax(p, eps), 1 - eps)
+  }
+}
+
+if (!exists("probability_to_american", inherits = FALSE)) {
+  probability_to_american <- function(prob) {
+    prob <- clamp_probability(prob)
+    dplyr::if_else(
+      prob >= 0.5,
+      -round(100 * prob / (1 - prob)),
+      round(100 * (1 - prob) / prob)
+    )
+  }
+}
+
+if (!exists("apply_moneyline_vig", inherits = FALSE)) {
+  apply_moneyline_vig <- function(odds, vig = 0.10) {
+    odds <- coerce_numeric_safely(odds)
+    vig <- coerce_numeric_safely(vig)
+    vig[is.na(vig)] <- 0
+    dplyr::case_when(
+      !is.finite(odds) ~ NA_real_,
+      odds < 0        ~ -as.numeric(round(abs(odds) * (1 + vig))),
+      TRUE            ~ as.numeric(round(odds / (1 + vig)))
+    )
+  }
+}
+
+if (!exists("expected_value_units", inherits = FALSE)) {
+  expected_value_units <- function(prob, odds) {
+    prob <- clamp_probability(prob)
+    odds <- coerce_numeric_safely(odds)
+    dec <- dplyr::if_else(
+      odds < 0,
+      1 + 100 / abs(odds),
+      1 + odds / 100
+    )
+    prob * (dec - 1) - (1 - prob)
+  }
+}
+
+if (!exists("extract_game_level_scores", inherits = FALSE)) {
+  extract_game_level_scores <- function(market_comparison_result) {
+    if (is.null(market_comparison_result) ||
+        !is.list(market_comparison_result) ||
+        !"comp" %in% names(market_comparison_result)) {
+      return(tibble::tibble())
+    }
+
+    market_comparison_result$comp %>%
+      dplyr::transmute(
+        game_id,
+        season,
+        week,
+        model_prob = p_model,
+        market_prob = p_mkt,
+        actual_home_win = y2,
+        brier_model = b_model,
+        brier_market = b_mkt,
+        logloss_model = ll_model,
+        logloss_market = ll_mkt
+      )
+  }
+}
+
+if (!exists("build_moneyline_comparison_table", inherits = FALSE)) {
+  build_moneyline_comparison_table <- function(market_comparison_result,
+                                               enriched_schedule,
+                                               join_keys = PREDICTION_JOIN_KEYS,
+                                               vig = 0.10,
+                                               verbose = TRUE) {
+    scores <- extract_game_level_scores(market_comparison_result)
+    if (!nrow(scores)) {
+      if (verbose) message("build_moneyline_comparison_table(): no comparison scores available; returning empty tibble.")
+      return(tibble::tibble())
+    }
+
+    if (is.null(enriched_schedule) || !nrow(enriched_schedule)) {
+      if (verbose) message("build_moneyline_comparison_table(): schedule input is empty; returning scores without context.")
+      return(scores)
+    }
+
+    schedule_std <- standardize_join_keys(enriched_schedule)
+    join_cols <- intersect(join_keys, intersect(names(schedule_std), names(scores)))
+
+    if (!length(join_cols)) {
+      if (verbose) message("build_moneyline_comparison_table(): no shared join keys between schedule and scores; returning scores.")
+      return(scores)
+    }
+
+    schedule_collapsed <- collapse_by_keys_relaxed(
+      schedule_std,
+      keys = join_cols,
+      label = "HTML schedule context"
+    )
+
+    pull_or_default <- function(df, col_name, default = NA) {
+      if (is.na(col_name) || !col_name %in% names(df)) {
+        rep(default, nrow(df))
+      } else {
+        df[[col_name]]
+      }
+    }
+
+    home_team_col <- select_first_column(schedule_collapsed, c("home_team", "team_home", "home"))
+    away_team_col <- select_first_column(schedule_collapsed, c("away_team", "team_away", "away"))
+    date_col <- select_first_column(schedule_collapsed, c("game_date", "gameDate", "date"))
+    home_ml_col <- select_first_column(schedule_collapsed, c("espn_final_home_ml", "home_ml", "ml_home", "home_moneyline"))
+    away_ml_col <- select_first_column(schedule_collapsed, c("espn_final_away_ml", "away_ml", "ml_away", "away_moneyline"))
+
+    schedule_context <- schedule_collapsed %>%
+      dplyr::mutate(
+        home_team = as.character(pull_or_default(schedule_collapsed, home_team_col, NA_character_)),
+        away_team = as.character(pull_or_default(schedule_collapsed, away_team_col, NA_character_)),
+        game_date = suppressWarnings(as.Date(pull_or_default(schedule_collapsed, date_col, NA_character_))),
+        market_home_ml = coerce_numeric_safely(pull_or_default(schedule_collapsed, home_ml_col, NA_real_)),
+        market_away_ml = coerce_numeric_safely(pull_or_default(schedule_collapsed, away_ml_col, NA_real_))
+      ) %>%
+      dplyr::transmute(
+        dplyr::across(dplyr::all_of(join_cols)),
+        home_team,
+        away_team,
+        game_date,
+        market_home_ml,
+        market_away_ml
+      )
+
+    combined <- scores %>%
+      dplyr::inner_join(schedule_context, by = join_cols) %>%
+      dplyr::mutate(
+        matchup = dplyr::if_else(
+          is.na(home_team) | is.na(away_team),
+          NA_character_,
+          paste(away_team, "@", home_team)
+        ),
+        market_home_ml = dplyr::if_else(
+          is.na(market_home_ml),
+          probability_to_american(market_prob),
+          market_home_ml
+        ),
+        market_away_ml = dplyr::if_else(
+          is.na(market_away_ml),
+          probability_to_american(1 - market_prob),
+          market_away_ml
+        ),
+        model_home_ml = probability_to_american(model_prob),
+        model_home_ml_vig = apply_moneyline_vig(model_home_ml, vig = vig),
+        model_away_ml = probability_to_american(1 - model_prob),
+        model_away_ml_vig = apply_moneyline_vig(model_away_ml, vig = vig),
+        model_edge_prob = model_prob - market_prob,
+        model_ev_units = expected_value_units(model_prob, market_home_ml),
+        market_beats_model = brier_market < brier_model,
+        actual_winner = dplyr::case_when(
+          is.na(actual_home_win) ~ NA_character_,
+          actual_home_win == 1L  ~ home_team,
+          actual_home_win == 0L  ~ away_team,
+          TRUE ~ NA_character_
+        )
+      ) %>%
+      dplyr::arrange(season, week, game_date, matchup)
+
+    combined
+  }
+}
+
+if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
+  export_moneyline_comparison_html <- function(comparison_tbl,
+                                               file,
+                                               title = "Model vs Market Moneylines",
+                                               verbose = TRUE) {
+    if (missing(file) || !length(file) || is.na(file)) {
+      stop("export_moneyline_comparison_html(): 'file' must be a valid output path.")
+    }
+
+    if (!nrow(comparison_tbl)) {
+      if (verbose) message("export_moneyline_comparison_html(): comparison table empty; skipping export.")
+      return(invisible(NULL))
+    }
+
+    dir_path <- dirname(file)
+    if (nzchar(dir_path) && dir_path != "." && !dir.exists(dir_path)) {
+      dir.create(dir_path, recursive = TRUE, showWarnings = FALSE)
+    }
+
+    display_tbl <- comparison_tbl %>%
+      dplyr::transmute(
+        Season = season,
+        Week = week,
+        Date = game_date,
+        Matchup = matchup,
+        `Model Home Prob` = model_prob,
+        `Market Home Prob` = market_prob,
+        `Probability Edge` = model_edge_prob,
+        `Market Home ML` = market_home_ml,
+        `Market Away ML` = market_away_ml,
+        `Model Home ML` = model_home_ml,
+        `Model Home ML (vig 10%)` = model_home_ml_vig,
+        `Model Away ML` = model_away_ml,
+        `Model Away ML (vig 10%)` = model_away_ml_vig,
+        `Model EV Units` = model_ev_units,
+        `Market beat Model?` = dplyr::if_else(market_beats_model, "Yes", "No"),
+        Winner = actual_winner
+      )
+
+    saved <- FALSE
+
+    if (requireNamespace("gt", quietly = TRUE)) {
+      gt_tbl <- display_tbl %>%
+        gt::gt() %>%
+        gt::fmt_percent(
+          columns = c("Model Home Prob", "Market Home Prob", "Probability Edge"),
+          decimals = 1
+        ) %>%
+        gt::fmt_number(
+          columns = c(
+            "Market Home ML", "Market Away ML",
+            "Model Home ML", "Model Home ML (vig 10%)",
+            "Model Away ML", "Model Away ML (vig 10%)"
+          ),
+          decimals = 0,
+          drop_trailing_zeros = TRUE,
+          use_seps = FALSE
+        ) %>%
+        gt::fmt_number(columns = "Model EV Units", decimals = 3) %>%
+        gt::cols_align(
+          align = "center",
+          columns = c("Season", "Week", "Market beat Model?")
+        ) %>%
+        gt::cols_label(
+          `Probability Edge` = "Prob Edge",
+          `Model EV Units` = "Model EV (units)"
+        ) %>%
+        gt::tab_header(title = title) %>%
+        gt::tab_options(
+          table.font.names = c("Source Sans Pro", "Helvetica Neue", "Arial", "sans-serif"),
+          table.background.color = "#f9fafb",
+          heading.background.color = "#0f172a",
+          heading.title.color = "#ecfdf5",
+          column_labels.background.color = "#15803d",
+          column_labels.font.weight = "bold",
+          column_labels.text_transform = "uppercase",
+          row.striping.background_color = "#e5e7eb"
+        ) %>%
+        gt::opt_row_striping() %>%
+        gt::data_color(
+          columns = "Market beat Model?",
+          colors = scales::col_factor(
+            palette = c("No" = "#d1d5db", "Yes" = "#166534"),
+            domain = c("No", "Yes")
+          )
+        ) %>%
+        gt::tab_style(
+          style = list(
+            gt::cell_fill(color = "#14532d"),
+            gt::cell_text(color = "#f9fafb", weight = "bold")
+          ),
+          locations = gt::cells_column_labels(columns = gt::everything())
+        )
+
+      try({
+        gt::gtsave(gt_tbl, file = file)
+        saved <- TRUE
+      }, silent = TRUE)
+    }
+
+    if (!saved) {
+      css_block <- "body {font-family: 'Source Sans Pro', Arial, sans-serif; background-color: #111827; color: #e5e7eb;}\n"
+      css_block <- paste0(
+        css_block,
+        "table {width: 100%; border-collapse: collapse; background-color: #f9fafb; color: #111827;}\n",
+        "th {background-color: #15803d; color: #ecfdf5; text-transform: uppercase; letter-spacing: 0.08em;}\n",
+        "td, th {padding: 10px 12px; border-bottom: 1px solid #d1d5db; text-align: center;}\n",
+        "tr:nth-child(even) {background-color: #e5e7eb;}\n",
+        "tr.market-win {background-color: #dcfce7;}\n",
+        "caption {caption-side: top; font-size: 1.25rem; font-weight: 600; margin-bottom: 0.75rem; color: #ecfdf5;}\n"
+      )
+
+      formatted_tbl <- display_tbl %>%
+        dplyr::mutate(
+          `Model Home Prob` = scales::percent(`Model Home Prob`, accuracy = 0.1),
+          `Market Home Prob` = scales::percent(`Market Home Prob`, accuracy = 0.1),
+          `Probability Edge` = scales::percent(`Probability Edge`, accuracy = 0.1),
+          `Model EV Units` = format(round(`Model EV Units`, 3), nsmall = 3),
+          dplyr::across(
+            c(`Market Home ML`, `Market Away ML`, `Model Home ML`, `Model Home ML (vig 10%)`,
+              `Model Away ML`, `Model Away ML (vig 10%)`),
+            ~ ifelse(is.na(.x), "", format(round(.x, 0), trim = TRUE))
+          )
+        )
+
+      if (requireNamespace("htmltools", quietly = TRUE)) {
+        rows <- purrr::map(
+          seq_len(nrow(formatted_tbl)),
+          ~ {
+            row_vals <- formatted_tbl[.x, , drop = FALSE]
+            row_list <- as.list(row_vals)
+            row_class <- ifelse(row_list[["Market beat Model?"]] == "Yes", "market-win", "")
+            htmltools::tags$tr(
+              class = row_class,
+              purrr::map(row_list, ~ htmltools::tags$td(.x))
+            )
+          }
+        )
+
+        table_html <- htmltools::tags$table(
+          htmltools::tags$caption(title),
+          htmltools::tags$thead(htmltools::tags$tr(purrr::map(names(formatted_tbl), htmltools::tags$th))),
+          htmltools::tags$tbody(rows)
+        )
+
+        doc <- htmltools::tags$html(
+          htmltools::tags$head(htmltools::tags$style(css_block)),
+          htmltools::tags$body(table_html)
+        )
+
+        htmltools::save_html(doc, file = file)
+        saved <- TRUE
+      } else {
+        header <- paste(names(formatted_tbl), collapse = "</th><th>")
+        body <- purrr::map_chr(
+          seq_len(nrow(formatted_tbl)),
+          function(idx) {
+            row_vals <- formatted_tbl[idx, , drop = FALSE]
+            row_list <- as.list(row_vals)
+            row_class <- ifelse(row_list[["Market beat Model?"]] == "Yes", " class=\"market-win\"", "")
+            cells <- paste(unlist(row_list, use.names = FALSE), collapse = "</td><td>")
+            sprintf("<tr%s><td>%s</td></tr>", row_class, cells)
+          }
+        )
+        html <- paste0(
+          "<html><head><style>",
+          css_block,
+          "</style></head><body><table><caption>",
+          title,
+          "</caption><thead><tr><th>",
+          header,
+          "</th></tr></thead><tbody>",
+          paste(body, collapse = ""),
+          "</tbody></table></body></html>"
+        )
+        writeLines(html, con = file)
+        saved <- TRUE
+      }
+    }
+
+    if (saved && verbose) {
+      message(sprintf("export_moneyline_comparison_html(): wrote HTML report to %s", normalizePath(file, winslash = "/", mustWork = FALSE)))
+    }
+
+    invisible(NULL)
+  }
+}
+
 if (!exists("build_res_blend", inherits = FALSE)) {
   build_res_blend <- function(res,
                               blend_oos,
@@ -645,6 +1079,67 @@ week_slate <- sched %>%
   ) %>%
   distinct()
 
+kickoff_time_col  <- .pick_col2(sched, c("game_time_et", "gametime_et", "game_time", "gametime", "start_time", "kickoff"))
+kickoff_tz_col    <- .pick_col2(sched, c("game_time_tz", "gametime_tz", "game_time_zone", "kickoff_tz"))
+kickoff_utc_col   <- .pick_col2(sched, c("game_datetime", "game_date_time", "game_time_utc", "kickoff_utc"))
+
+n_sched <- nrow(sched)
+kickoff_time_raw <- if (!is.na(kickoff_time_col)) as.character(sched[[kickoff_time_col]]) else rep(NA_character_, n_sched)
+kickoff_tz_raw   <- if (!is.na(kickoff_tz_col)) as.character(sched[[kickoff_tz_col]]) else rep(NA_character_, n_sched)
+kickoff_utc_vec  <- if (!is.na(kickoff_utc_col)) {
+  parse_datetime_vector(sched[[kickoff_utc_col]], tz = "UTC")
+} else {
+  as.POSIXct(rep(NA_real_, n_sched), tz = "UTC")
+}
+
+time_parts <- parse_time_components(kickoff_time_raw)
+hour_vals <- time_parts$hour
+minute_vals <- time_parts$minute
+hour_clean <- ifelse(is.na(hour_vals), 0L, hour_vals)
+minute_clean <- ifelse(is.na(minute_vals), 0L, minute_vals)
+
+base_dates <- as.Date(sched$game_date)
+base_et <- as.POSIXct(base_dates, tz = "America/New_York")
+fallback_et <- base_et + lubridate::hours(hour_clean) + lubridate::minutes(minute_clean)
+fallback_et[is.na(base_dates) | is.na(hour_vals)] <- NA
+
+kickoff_et <- fallback_et
+mask_utc <- !is.na(kickoff_utc_vec)
+if (any(mask_utc)) {
+  kickoff_et[mask_utc] <- lubridate::with_tz(kickoff_utc_vec[mask_utc], "America/New_York")
+}
+
+kickoff_utc <- kickoff_utc_vec
+missing_utc <- is.na(kickoff_utc) & !is.na(kickoff_et)
+if (any(missing_utc)) {
+  kickoff_utc[missing_utc] <- lubridate::with_tz(kickoff_et[missing_utc], "UTC")
+}
+
+kickoff_info <- tibble::tibble(
+  game_id = sched$game_id,
+  kickoff_time_raw = kickoff_time_raw,
+  kickoff_tz_raw = kickoff_tz_raw,
+  kickoff_utc = kickoff_utc,
+  kickoff_et = kickoff_et,
+  kickoff_et_hour = ifelse(
+    !is.na(kickoff_et),
+    as.integer(lubridate::hour(lubridate::with_tz(kickoff_et, "America/New_York"))),
+    NA_integer_
+  ),
+  kickoff_display_et = ifelse(
+    !is.na(kickoff_et),
+    format(lubridate::with_tz(kickoff_et, "America/New_York"), "%a %b %d %I:%M %p ET"),
+    NA_character_
+  )
+)
+
+week_slate <- week_slate %>%
+  dplyr::left_join(
+    kickoff_info %>%
+      dplyr::select(game_id, kickoff_et, kickoff_utc, kickoff_et_hour, kickoff_time_raw, kickoff_tz_raw, kickoff_display_et),
+    by = "game_id"
+  )
+
 sched <- sched %>%
   mutate(
     season_std    = .data[[season_col]],
@@ -764,25 +1259,50 @@ team_tz <- tribble(
   "WAS","America/New_York"
 )
 
+week_slate <- week_slate %>%
+  dplyr::left_join(team_tz %>% dplyr::rename(home_tz = tz), by = c("home_team" = "team")) %>%
+  dplyr::left_join(team_tz %>% dplyr::rename(away_tz = tz), by = c("away_team" = "team")) %>%
+  dplyr::mutate(
+    kickoff_tz = dplyr::coalesce(kickoff_tz_raw, home_tz),
+    kickoff_et_hour = dplyr::coalesce(
+      kickoff_et_hour,
+      ifelse(
+        !is.na(kickoff_et),
+        as.integer(lubridate::hour(lubridate::with_tz(kickoff_et, "America/New_York"))),
+        NA_integer_
+      )
+    ),
+    kickoff_local = dplyr::case_when(
+      !is.na(kickoff_utc) & !is.na(kickoff_tz) ~ lubridate::with_tz(kickoff_utc, kickoff_tz),
+      !is.na(kickoff_et) & !is.na(kickoff_tz) ~ lubridate::with_tz(kickoff_et, kickoff_tz),
+      TRUE ~ kickoff_et
+    ),
+    kickoff_local_hour = ifelse(!is.na(kickoff_local), as.integer(lubridate::hour(kickoff_local)), NA_integer_),
+    kickoff_display_local = dplyr::case_when(
+      !is.na(kickoff_local) ~ format(kickoff_local, "%a %b %d %I:%M %p %Z"),
+      !is.na(kickoff_display_et) ~ kickoff_display_et,
+      TRUE ~ NA_character_
+    )
+  )
+
 #tz_penalty() vector:
 tz_penalty <- function(home_tz, away_tz, kick_et_hour = 13L){
   west <- c("America/Los_Angeles","America/Denver","America/Phoenix")
   east <- c("America/New_York","America/Detroit","America/Indiana/Indianapolis")
   is_we <- (away_tz %in% west) & (home_tz %in% east)
-  is_early <- kick_et_hour <= 13L
+  hour_clean <- suppressWarnings(as.integer(kick_et_hour))
+  hour_clean[is.na(hour_clean)] <- 13L
+  is_early <- hour_clean <= 13L
   pen <- ifelse(!is.na(home_tz) & !is.na(away_tz) & is_we & is_early, -0.4, 0)  # tax (negative)
   pen
 }
 
 # Then build travel_tbl WITHOUT multiplying by -1:
 travel_tbl <- week_slate %>%
-  left_join(team_tz, by = c("home_team" = "team")) %>%
-  rename(home_tz = tz) %>%
-  left_join(team_tz, by = c("away_team" = "team")) %>%
-  rename(away_tz = tz) %>%
-  mutate(
+  dplyr::mutate(
+    kickoff_et_hour = dplyr::coalesce(kickoff_et_hour, 13L),
     travel_mu_adj_home = 0,
-    travel_mu_adj_away = tz_penalty(home_tz, away_tz, 13)  # already negative when taxed
+    travel_mu_adj_away = tz_penalty(home_tz, away_tz, kickoff_et_hour)  # already negative when taxed
   ) %>%
   dplyr::select(game_id, travel_mu_adj_home, travel_mu_adj_away)
 
@@ -1532,7 +2052,7 @@ get_hourly_weather <- function(lat, lon, date_iso, hours = c(13)) {
 .wx_cache_dir <- file.path(path.expand("~"), ".cache", "nfl_sim_weather")
 if (!dir.exists(.wx_cache_dir)) dir.create(.wx_cache_dir, recursive = TRUE)
 
-safe_hourly <- function(lat, lon, date_iso) {
+safe_hourly <- function(lat, lon, date_iso, kickoff_hour_local = NA_integer_) {
   # Guard against missing or non-finite inputs which can bubble up from
   # incomplete stadium metadata or neutral-site games. `is.finite()` returns
   # `NA` for `NA_real_`, which caused an error inside the `if` statement when
@@ -1543,7 +2063,17 @@ safe_hourly <- function(lat, lon, date_iso) {
   key  <- digest::digest(list(round(lat,4), round(lon,4), date_iso))
   path <- file.path(.wx_cache_dir, paste0(key, ".rds"))
   if (file.exists(path)) return(readRDS(path))
-  out <- get_hourly_weather(lat, lon, date_iso, hours = c(13, 16, 20))
+  hours <- if (!is.na(kickoff_hour_local)) {
+    candidates <- kickoff_hour_local + c(-1L, 0L, 1L)
+    candidates <- candidates[candidates >= 0 & candidates <= 23]
+    if (!length(candidates)) {
+      candidates <- kickoff_hour_local
+    }
+    unique(as.integer(candidates))
+  } else {
+    c(13L, 16L, 20L)
+  }
+  out <- get_hourly_weather(lat, lon, date_iso, hours = hours)
   if (is.data.frame(out)) saveRDS(out, path)
   out
 }
@@ -1557,7 +2087,8 @@ extract_first <- function(x, nm) {
 weather_inputs <- week_slate %>%
   mutate(
     venue_key = stringr::str_to_lower(stringr::str_replace_all(venue, "[^a-zA-Z0-9]+", " ")),
-    date_iso  = format(as.Date(game_date), "%Y-%m-%d")
+    date_iso  = format(as.Date(game_date), "%Y-%m-%d"),
+    kickoff_local_hour = kickoff_local_hour
   ) %>%
   dplyr::left_join(stadium_coords %>% dplyr::select(venue_key, lat, lon, dome), by = "venue_key") %>%
   mutate(
@@ -1566,7 +2097,7 @@ weather_inputs <- week_slate %>%
   )
 
 weather_lookup <- purrr::pmap(
-  list(weather_inputs$lat, weather_inputs$lon, weather_inputs$date_iso),
+  list(weather_inputs$lat, weather_inputs$lon, weather_inputs$date_iso, weather_inputs$kickoff_local_hour),
   safe_hourly
 )
 
@@ -4282,6 +4813,31 @@ if (exists("res") && exists("blend_oos") && nrow(blend_oos)) {
 if (exists("cmp_blend") && !is.null(cmp_blend)) {
   print(cmp_blend$overall)
   head(cmp_blend$by_season)
+}
+
+
+if (exists("cmp_blend") && !is.null(cmp_blend)) {
+  join_keys_html <- if (exists("PREDICTION_JOIN_KEYS", inherits = TRUE)) PREDICTION_JOIN_KEYS else c("game_id", "season", "week")
+  report_tbl <- build_moneyline_comparison_table(
+    market_comparison_result = cmp_blend,
+    enriched_schedule = sched,
+    join_keys = join_keys_html,
+    vig = 0.10,
+    verbose = TRUE
+  )
+
+  if (nrow(report_tbl)) {
+    html_report_path <- file.path(getwd(), "NFLvsmarket_report.html")
+    report_title <- sprintf("Model vs Market Moneylines — Week %s, %s", WEEK_TO_SIM, SEASON)
+    export_moneyline_comparison_html(
+      comparison_tbl = report_tbl,
+      file = html_report_path,
+      title = report_title,
+      verbose = TRUE
+    )
+  } else {
+    message("Market comparison HTML skipped because report table was empty.")
+  }
 }
 
 
