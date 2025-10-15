@@ -222,11 +222,13 @@ enrich_with_pre_kickoff_espn_lines <- function(sched,
 
   sched_std <- standardize_join_keys(sched)
 
+  join_args <- list(x = sched_std)
+
   if (!is.null(espn_lines) && nrow(espn_lines)) {
     espn_std <- standardize_join_keys(espn_lines)
 
     join_cols <- intersect(join_keys, intersect(names(sched_std), names(espn_std)))
-    join_args <- list(x = sched_std, y = espn_std)
+    join_args$y <- espn_std
 
     if (length(join_cols)) {
       join_args$by <- join_cols
@@ -246,7 +248,6 @@ enrich_with_pre_kickoff_espn_lines <- function(sched,
         join_args$by <- NULL
       }
     }
-  )
 
     if (!is.null(join_args$by)) {
       if ("relationship" %in% names(formals(dplyr::left_join))) {
@@ -814,12 +815,17 @@ export_moneyline_comparison_html <- function(comparison_tbl,
   }
 
   if (saved && verbose) {
-    message(sprintf("export_moneyline_comparison_html(): wrote HTML report to %s", normalizePath(file, winslash = "/", mustWork = FALSE)))
+    message(sprintf(
+      "export_moneyline_comparison_html(): wrote HTML report to %s",
+      normalizePath(file, winslash = "/", mustWork = FALSE)
+    ))
   }
 
   invisible(NULL)
 }
 
 if (interactive()) {
-  message("NFLmarket.R loaded. Use load_latest_market_inputs(), enrich_with_pre_kickoff_espn_lines(), and evaluate_market_vs_blend() as needed.")
+  message(
+    "NFLmarket.R loaded. Use load_latest_market_inputs(), enrich_with_pre_kickoff_espn_lines(), and evaluate_market_vs_blend() as needed."
+  )
 }
