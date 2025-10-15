@@ -467,7 +467,7 @@ evaluate_market_vs_blend <- function(res,
                                      verbose = TRUE,
                                      html_output_path = NULL,
                                      html_vig = 0.10,
-                                     html_title = "Model vs Market Moneylines",
+                                     html_title = "Blend vs Market Moneylines",
                                      ...) {
   res_blend <- build_res_blend(
     res = res,
@@ -527,6 +527,9 @@ extract_game_level_scores <- function(market_comparison_result) {
       game_id,
       season,
       week,
+      blend_home_prob = p_model,
+      market_home_prob = p_mkt,
+      # legacy aliases retained for callers expecting `model_prob` / `market_prob`
       model_prob = p_model,
       market_prob = p_mkt,
       actual_home_win = y2,
@@ -599,6 +602,10 @@ build_moneyline_comparison_table <- function(market_comparison_result,
     )
 
   combined <- scores %>%
+    dplyr::mutate(
+      blend_home_prob = dplyr::coalesce(blend_home_prob, model_prob),
+      market_home_prob = dplyr::coalesce(market_home_prob, market_prob)
+    ) %>%
     dplyr::inner_join(schedule_context, by = join_cols) %>%
     dplyr::mutate(
       matchup = dplyr::if_else(
@@ -606,29 +613,88 @@ build_moneyline_comparison_table <- function(market_comparison_result,
         NA_character_,
         paste(away_team, "@", home_team)
       ),
+      blend_home_prob = clamp_probability(blend_home_prob),
+      blend_away_prob = clamp_probability(1 - blend_home_prob),
+      market_home_prob = clamp_probability(market_home_prob),
+      market_away_prob = clamp_probability(1 - market_home_prob),
       market_home_ml = dplyr::if_else(
         is.na(market_home_ml),
-        probability_to_american(market_prob),
+        probability_to_american(market_home_prob),
         market_home_ml
       ),
       market_away_ml = dplyr::if_else(
         is.na(market_away_ml),
-        probability_to_american(1 - market_prob),
+        probability_to_american(market_away_prob),
         market_away_ml
       ),
-      model_home_ml = probability_to_american(model_prob),
-      model_home_ml_vig = apply_moneyline_vig(model_home_ml, vig = vig),
-      model_away_ml = probability_to_american(1 - model_prob),
-      model_away_ml_vig = apply_moneyline_vig(model_away_ml, vig = vig),
-      model_edge_prob = model_prob - market_prob,
-      model_ev_units = expected_value_units(model_prob, market_home_ml),
-      market_beats_model = brier_market < brier_model,
+      blend_home_ml = probability_to_american(blend_home_prob),
+      blend_home_ml_vig = apply_moneyline_vig(blend_home_ml, vig = vig),
+      blend_away_ml = probability_to_american(blend_away_prob),
+      blend_away_ml_vig = apply_moneyline_vig(blend_away_ml, vig = vig),
+      blend_edge_prob_home = blend_home_prob - market_home_prob,
+      blend_edge_prob_away = blend_away_prob - market_away_prob,
+      blend_ev_units_home = expected_value_units(blend_home_prob, market_home_ml),
+      blend_ev_units_away = expected_value_units(blend_away_prob, market_away_ml),
+      blend_favorite_side = dplyr::if_else(blend_home_prob >= blend_away_prob, "home", "away"),
+      blend_favorite = dplyr::if_else(blend_favorite_side == "home", home_team, away_team),
+      market_moneyline = dplyr::if_else(
+        blend_favorite_side == "home",
+        market_home_ml,
+        market_away_ml
+      ),
+      market_moneyline = dplyr::if_else(
+        is.na(market_moneyline),
+        probability_to_american(
+          dplyr::if_else(blend_favorite_side == "home", market_home_prob, market_away_prob)
+        ),
+        market_moneyline
+      ),
+      blend_moneyline = dplyr::if_else(
+        blend_favorite_side == "home",
+        blend_home_ml,
+        blend_away_ml
+      ),
+      blend_moneyline_vig = dplyr::if_else(
+        blend_favorite_side == "home",
+        blend_home_ml_vig,
+        blend_away_ml_vig
+      ),
+      blend_prob_fav = dplyr::if_else(
+        blend_favorite_side == "home",
+        blend_home_prob,
+        blend_away_prob
+      ),
+      market_prob_fav = dplyr::if_else(
+        blend_favorite_side == "home",
+        market_home_prob,
+        market_away_prob
+      ),
+      blend_edge_prob = blend_prob_fav - market_prob_fav,
+      blend_ev_units = dplyr::if_else(
+        blend_favorite_side == "home",
+        blend_ev_units_home,
+        blend_ev_units_away
+      ),
+      blend_beats_market = dplyr::case_when(
+        is.na(blend_ev_units) ~ NA,
+        TRUE ~ blend_ev_units > 0
+      ),
       actual_winner = dplyr::case_when(
         is.na(actual_home_win) ~ NA_character_,
         actual_home_win == 1L  ~ home_team,
         actual_home_win == 0L  ~ away_team,
         TRUE ~ NA_character_
-      )
+      ),
+      # legacy aliases preserved for downstream code expecting model_* naming
+      model_prob = blend_home_prob,
+      market_prob = market_home_prob,
+      model_home_ml = blend_home_ml,
+      model_home_ml_vig = blend_home_ml_vig,
+      model_away_ml = blend_away_ml,
+      model_away_ml_vig = blend_away_ml_vig,
+      model_edge_prob = blend_edge_prob_home,
+      model_ev_units = blend_ev_units_home,
+      market_beats_model = brier_market < brier_model
     ) %>%
     dplyr::arrange(season, week, game_date, matchup)
 
@@ -637,7 +703,7 @@ build_moneyline_comparison_table <- function(market_comparison_result,
 
 export_moneyline_comparison_html <- function(comparison_tbl,
                                              file,
-                                             title = "Model vs Market Moneylines",
+                                             title = "Blend vs Market Moneylines",
                                              verbose = TRUE) {
   if (missing(file) || !length(file) || is.na(file)) {
     stop("export_moneyline_comparison_html(): 'file' must be a valid output path.")
@@ -659,17 +725,20 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       Week = week,
       Date = game_date,
       Matchup = matchup,
-      `Model Home Prob` = model_prob,
-      `Market Home Prob` = market_prob,
-      `Probability Edge` = model_edge_prob,
-      `Market Home ML` = market_home_ml,
-      `Market Away ML` = market_away_ml,
-      `Model Home ML` = model_home_ml,
-      `Model Home ML (vig 10%)` = model_home_ml_vig,
-      `Model Away ML` = model_away_ml,
-      `Model Away ML (vig 10%)` = model_away_ml_vig,
-      `Model EV Units` = model_ev_units,
-      `Market beat Model?` = dplyr::if_else(market_beats_model, "Yes", "No"),
+      `Blend Favorite` = blend_favorite,
+      `Market Moneyline` = market_moneyline,
+      `Blend Moneyline (vig)` = blend_moneyline_vig,
+      `Blend Edge` = blend_edge_prob,
+      `Blend EV Units` = blend_ev_units,
+      `Blend Beat Market?` = dplyr::case_when(
+        is.na(blend_beats_market) ~ "N/A",
+        blend_beats_market ~ "Yes",
+        TRUE ~ "No"
+      ),
+      `Market Home Prob` = market_home_prob,
+      `Blend Home Prob` = blend_home_prob,
+      `Market Away Prob` = market_away_prob,
+      `Blend Away Prob` = blend_away_prob,
       Winner = actual_winner
     )
 
@@ -679,51 +748,54 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     gt_tbl <- display_tbl %>%
       gt::gt() %>%
       gt::fmt_percent(
-        columns = c("Model Home Prob", "Market Home Prob", "Probability Edge"),
+        columns = c(
+          "Blend Edge",
+          "Market Home Prob", "Blend Home Prob",
+          "Market Away Prob", "Blend Away Prob"
+        ),
         decimals = 1
       ) %>%
       gt::fmt_number(
-        columns = c(
-          "Market Home ML", "Market Away ML",
-          "Model Home ML", "Model Home ML (vig 10%)",
-          "Model Away ML", "Model Away ML (vig 10%)"
-        ),
+        columns = c("Market Moneyline", "Blend Moneyline (vig)"),
         decimals = 0,
         drop_trailing_zeros = TRUE,
         use_seps = FALSE
       ) %>%
-      gt::fmt_number(columns = "Model EV Units", decimals = 3) %>%
+      gt::fmt_number(columns = "Blend EV Units", decimals = 3) %>%
       gt::cols_align(
         align = "center",
-        columns = c("Season", "Week", "Market beat Model?")
+        columns = c("Season", "Week", "Blend Beat Market?", "Blend Favorite")
       ) %>%
       gt::cols_label(
-        `Probability Edge` = "Prob Edge",
-        `Model EV Units` = "Model EV (units)"
+        `Blend Edge` = "Blend Edge (pp)",
+        `Blend EV Units` = "Blend EV (units)",
+        `Blend Moneyline (vig)` = "Blend ML (vig)"
       ) %>%
       gt::tab_header(title = title) %>%
       gt::tab_options(
         table.font.names = c("Source Sans Pro", "Helvetica Neue", "Arial", "sans-serif"),
-        table.background.color = "#f9fafb",
-        heading.background.color = "#0f172a",
+        table.background.color = "#0b1120",
+        table.font.color = "#e2e8f0",
+        heading.background.color = "#064e3b",
         heading.title.color = "#ecfdf5",
-        column_labels.background.color = "#15803d",
+        heading.subtitle.color = "#ecfdf5",
+        column_labels.background.color = "#166534",
         column_labels.font.weight = "bold",
         column_labels.text_transform = "uppercase",
-        row.striping.background_color = "#e5e7eb"
+        row.striping.background_color = "#111827"
       ) %>%
       gt::opt_row_striping() %>%
       gt::data_color(
-        columns = "Market beat Model?",
+        columns = "Blend Beat Market?",
         colors = scales::col_factor(
-          palette = c("No" = "#d1d5db", "Yes" = "#166534"),
-          domain = c("No", "Yes")
+          palette = c("No" = "#374151", "Yes" = "#15803d", "N/A" = "#4b5563"),
+          domain = c("No", "Yes", "N/A")
         )
       ) %>%
       gt::tab_style(
         style = list(
           gt::cell_fill(color = "#14532d"),
-          gt::cell_text(color = "#f9fafb", weight = "bold")
+          gt::cell_text(color = "#ecfdf5", weight = "bold")
         ),
         locations = gt::cells_column_labels(columns = gt::everything())
       )
@@ -735,26 +807,28 @@ export_moneyline_comparison_html <- function(comparison_tbl,
   }
 
   if (!saved) {
-    css_block <- "body {font-family: 'Source Sans Pro', Arial, sans-serif; background-color: #111827; color: #e5e7eb;}\n"
+    css_block <- "body {font-family: 'Source Sans Pro', Arial, sans-serif; background-color: #0b1120; color: #e2e8f0;}\n"
     css_block <- paste0(
       css_block,
-      "table {width: 100%; border-collapse: collapse; background-color: #f9fafb; color: #111827;}\n",
-      "th {background-color: #15803d; color: #ecfdf5; text-transform: uppercase; letter-spacing: 0.08em;}\n",
-      "td, th {padding: 10px 12px; border-bottom: 1px solid #d1d5db; text-align: center;}\n",
-      "tr:nth-child(even) {background-color: #e5e7eb;}\n",
-      "tr.market-win {background-color: #dcfce7;}\n",
+      "table {width: 100%; border-collapse: collapse; background-color: #111827; color: #e2e8f0;}\n",
+      "th {background-color: #14532d; color: #ecfdf5; text-transform: uppercase; letter-spacing: 0.08em;}\n",
+      "td, th {padding: 10px 12px; border-bottom: 1px solid #1f2937; text-align: center;}\n",
+      "tr:nth-child(even) {background-color: #1f2933;}\n",
+      "tr.blend-win {background-color: #14532d;}\n",
+      "tr.blend-win td {color: #ecfdf5;}\n",
       "caption {caption-side: top; font-size: 1.25rem; font-weight: 600; margin-bottom: 0.75rem; color: #ecfdf5;}\n"
     )
 
     formatted_tbl <- display_tbl %>%
       dplyr::mutate(
-        `Model Home Prob` = scales::percent(`Model Home Prob`, accuracy = 0.1),
+        `Blend Edge` = scales::percent(`Blend Edge`, accuracy = 0.1),
         `Market Home Prob` = scales::percent(`Market Home Prob`, accuracy = 0.1),
-        `Probability Edge` = scales::percent(`Probability Edge`, accuracy = 0.1),
-        `Model EV Units` = format(round(`Model EV Units`, 3), nsmall = 3),
+        `Blend Home Prob` = scales::percent(`Blend Home Prob`, accuracy = 0.1),
+        `Market Away Prob` = scales::percent(`Market Away Prob`, accuracy = 0.1),
+        `Blend Away Prob` = scales::percent(`Blend Away Prob`, accuracy = 0.1),
+        `Blend EV Units` = format(round(`Blend EV Units`, 3), nsmall = 3),
         dplyr::across(
-          c(`Market Home ML`, `Market Away ML`, `Model Home ML`, `Model Home ML (vig 10%)`,
-            `Model Away ML`, `Model Away ML (vig 10%)`),
+          c(`Market Moneyline`, `Blend Moneyline (vig)`),
           ~ ifelse(is.na(.x), "", format(round(.x, 0), trim = TRUE))
         )
       )
@@ -765,7 +839,7 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         ~ {
           row_vals <- formatted_tbl[.x, , drop = FALSE]
           row_list <- as.list(row_vals)
-          row_class <- ifelse(row_list[["Market beat Model?"]] == "Yes", "market-win", "")
+          row_class <- ifelse(row_list[["Blend Beat Market?"]] == "Yes", "blend-win", "")
           htmltools::tags$tr(
             class = row_class,
             purrr::map(row_list, ~ htmltools::tags$td(.x))
@@ -793,7 +867,7 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         function(idx) {
           row_vals <- formatted_tbl[idx, , drop = FALSE]
           row_list <- as.list(row_vals)
-          row_class <- ifelse(row_list[["Market beat Model?"]] == "Yes", " class=\"market-win\"", "")
+          row_class <- ifelse(row_list[["Blend Beat Market?"]] == "Yes", " class=\"blend-win\"", "")
           cells <- paste(unlist(row_list, use.names = FALSE), collapse = "</td><td>")
           sprintf("<tr%s><td>%s</td></tr>", row_class, cells)
         }
@@ -822,6 +896,46 @@ export_moneyline_comparison_html <- function(comparison_tbl,
   }
 
   invisible(NULL)
+}
+
+open_moneyline_report <- function(file, prefer_viewer = TRUE, verbose = TRUE) {
+  if (missing(file) || is.null(file) || !nzchar(file)) {
+    if (verbose) warning("open_moneyline_report(): file path is missing or empty.")
+    return(invisible(FALSE))
+  }
+
+  normalized <- tryCatch(normalizePath(file, winslash = "/", mustWork = TRUE),
+                         error = function(e) file)
+  if (!file.exists(normalized)) {
+    if (verbose) warning(sprintf("open_moneyline_report(): %s does not exist.", normalized))
+    return(invisible(FALSE))
+  }
+
+  opened <- FALSE
+
+  if (prefer_viewer && requireNamespace("rstudioapi", quietly = TRUE)) {
+    opened <- tryCatch({
+      rstudioapi::viewer(normalized)
+      TRUE
+    }, error = function(e) FALSE)
+  }
+
+  if (!opened) {
+    opened <- tryCatch({
+      utils::browseURL(normalized)
+      TRUE
+    }, error = function(e) FALSE)
+  }
+
+  if (verbose) {
+    if (opened) {
+      message(sprintf("open_moneyline_report(): opened %s", normalized))
+    } else {
+      message(sprintf("open_moneyline_report(): unable to automatically open %s", normalized))
+    }
+  }
+
+  invisible(opened)
 }
 
 if (interactive()) {
