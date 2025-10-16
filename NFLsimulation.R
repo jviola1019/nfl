@@ -298,6 +298,88 @@ if (!exists("extract_game_level_scores", inherits = FALSE)) {
   }
 }
 
+if (!exists("build_snapshot_moneyline_result", inherits = FALSE)) {
+  build_snapshot_moneyline_result <- function(final_df,
+                                             season,
+                                             week,
+                                             model_prob_candidates = c(
+                                               "home_p_2w_blend",
+                                               "home_win_prob_blend",
+                                               "home_p_2w_cal"
+                                             ),
+                                             market_prob_candidates = c(
+                                               "home_p_2w_mkt",
+                                               "market_home_prob",
+                                               "market_prob"
+                                             ),
+                                             verbose = TRUE) {
+    if (is.null(final_df) || !nrow(final_df)) {
+      if (verbose) message("build_snapshot_moneyline_result(): final slate is empty; skipping snapshot.")
+      return(tibble::tibble())
+    }
+
+    required_keys <- c("game_id", "season", "week")
+    missing_keys <- setdiff(required_keys, names(final_df))
+    if (length(missing_keys)) {
+      if (verbose) {
+        message(sprintf(
+          "build_snapshot_moneyline_result(): final slate missing required columns: %s",
+          paste(missing_keys, collapse = ", ")
+        ))
+      }
+      return(tibble::tibble())
+    }
+
+    snapshot <- final_df %>%
+      dplyr::filter(.data$season == season, .data$week == week) %>%
+      dplyr::ungroup()
+
+    if (!nrow(snapshot)) {
+      if (verbose) {
+        message(sprintf(
+          "build_snapshot_moneyline_result(): no rows for season %s week %s.",
+          season,
+          week
+        ))
+      }
+      return(tibble::tibble())
+    }
+
+    model_prob_col <- select_first_column(snapshot, model_prob_candidates)
+    market_prob_col <- select_first_column(snapshot, market_prob_candidates)
+
+    if (is.na(model_prob_col)) {
+      if (verbose) {
+        message("build_snapshot_moneyline_result(): unable to locate a model probability column on the final slate.")
+      }
+      return(tibble::tibble())
+    }
+
+    if (is.na(market_prob_col)) {
+      if (verbose) {
+        message("build_snapshot_moneyline_result(): unable to locate a market probability column on the final slate.")
+      }
+      return(tibble::tibble())
+    }
+
+    model_prob <- clamp_probability(snapshot[[model_prob_col]])
+    market_prob <- clamp_probability(snapshot[[market_prob_col]])
+
+    tibble::tibble(
+      game_id = snapshot$game_id,
+      season = snapshot$season,
+      week = snapshot$week,
+      p_model = model_prob,
+      p_mkt = market_prob,
+      y2 = as.integer(rep(NA_integer_, nrow(snapshot))),
+      b_model = rep(NA_real_, nrow(snapshot)),
+      b_mkt = rep(NA_real_, nrow(snapshot)),
+      ll_model = rep(NA_real_, nrow(snapshot)),
+      ll_mkt = rep(NA_real_, nrow(snapshot))
+    )
+  }
+}
+
 if (!exists("build_moneyline_comparison_table", inherits = FALSE)) {
   build_moneyline_comparison_table <- function(market_comparison_result,
                                                enriched_schedule,
@@ -342,6 +424,9 @@ if (!exists("build_moneyline_comparison_table", inherits = FALSE)) {
     date_col <- select_first_column(schedule_collapsed, c("game_date", "gameDate", "date"))
     home_ml_col <- select_first_column(schedule_collapsed, c("espn_final_home_ml", "home_ml", "ml_home", "home_moneyline"))
     away_ml_col <- select_first_column(schedule_collapsed, c("espn_final_away_ml", "away_ml", "ml_away", "away_moneyline"))
+    home_median_col <- select_first_column(schedule_collapsed, c("blend_home_median", "home_median_blend", "home_median"))
+    away_median_col <- select_first_column(schedule_collapsed, c("blend_away_median", "away_median_blend", "away_median"))
+    total_median_col <- select_first_column(schedule_collapsed, c("blend_total_median", "total_median_blend", "total_median"))
 
     schedule_context <- schedule_collapsed %>%
       dplyr::mutate(
@@ -349,7 +434,10 @@ if (!exists("build_moneyline_comparison_table", inherits = FALSE)) {
         away_team = as.character(pull_or_default(schedule_collapsed, away_team_col, NA_character_)),
         game_date = suppressWarnings(as.Date(pull_or_default(schedule_collapsed, date_col, NA_character_))),
         market_home_ml = coerce_numeric_safely(pull_or_default(schedule_collapsed, home_ml_col, NA_real_)),
-        market_away_ml = coerce_numeric_safely(pull_or_default(schedule_collapsed, away_ml_col, NA_real_))
+        market_away_ml = coerce_numeric_safely(pull_or_default(schedule_collapsed, away_ml_col, NA_real_)),
+        blend_home_median = coerce_numeric_safely(pull_or_default(schedule_collapsed, home_median_col, NA_real_)),
+        blend_away_median = coerce_numeric_safely(pull_or_default(schedule_collapsed, away_median_col, NA_real_)),
+        blend_total_median = coerce_numeric_safely(pull_or_default(schedule_collapsed, total_median_col, NA_real_))
       ) %>%
       dplyr::transmute(
         dplyr::across(dplyr::all_of(join_cols)),
@@ -357,7 +445,10 @@ if (!exists("build_moneyline_comparison_table", inherits = FALSE)) {
         away_team,
         game_date,
         market_home_ml,
-        market_away_ml
+        market_away_ml,
+        blend_home_median,
+        blend_away_median,
+        blend_total_median
       )
 
     combined <- scores %>%
@@ -438,6 +529,26 @@ if (!exists("build_moneyline_comparison_table", inherits = FALSE)) {
           is.na(blend_ev_units) ~ NA,
           TRUE ~ blend_ev_units > 0
         ),
+        market_ev_units = dplyr::if_else(
+          is.na(blend_ev_units),
+          NA_real_,
+          -blend_ev_units
+        ),
+        market_winning = dplyr::case_when(
+          is.na(market_ev_units) ~ NA,
+          market_ev_units > 0 ~ TRUE,
+          TRUE ~ FALSE
+        ),
+        blend_recommendation = dplyr::case_when(
+          is.na(blend_ev_units) ~ "No play",
+          blend_ev_units > 0 ~ paste("Bet", blend_favorite, "moneyline"),
+          TRUE ~ "Pass"
+        ),
+        blend_confidence = dplyr::case_when(
+          is.na(blend_ev_units) ~ NA_real_,
+          blend_ev_units < 0 ~ 0,
+          TRUE ~ blend_ev_units
+        ),
         actual_winner = dplyr::case_when(
           is.na(actual_home_win) ~ NA_character_,
           actual_home_win == 1L  ~ home_team,
@@ -503,13 +614,28 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
         Date = game_date,
         Matchup = matchup,
         `Blend Favorite` = blend_favorite,
+        `Blend Recommendation` = blend_recommendation,
+        `Blend Stake (Units)` = blend_confidence,
         `Market Moneyline` = market_moneyline,
-        `Blend Moneyline (vig)` = blend_moneyline_vig,
+        `Market Home Moneyline` = market_home_ml,
+        `Market Away Moneyline` = market_away_ml,
+        `Blend Home Moneyline (vig)` = blend_home_ml_vig,
+        `Blend Away Moneyline (vig)` = blend_away_ml_vig,
+        `Blend Favorite Moneyline (vig)` = blend_moneyline_vig,
+        `Blend Median Home Score` = blend_home_median,
+        `Blend Median Away Score` = blend_away_median,
+        `Blend Median Total` = blend_total_median,
         `Blend Edge` = blend_edge_prob,
         `Blend EV Units` = blend_ev_units,
+        `Market EV Units` = market_ev_units,
         `Blend Beat Market?` = dplyr::case_when(
           is.na(blend_beats_market) ~ "N/A",
           blend_beats_market ~ "Yes",
+          TRUE ~ "No"
+        ),
+        `Market Winning?` = dplyr::case_when(
+          is.na(market_winning) ~ "N/A",
+          market_winning ~ "Yes",
           TRUE ~ "No"
         ),
         `Market Home Prob` = market_home_prob,
@@ -533,20 +659,41 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
           decimals = 1
         ) %>%
         gt::fmt_number(
-          columns = c("Market Moneyline", "Blend Moneyline (vig)"),
+          columns = c(
+            "Market Moneyline",
+            "Market Home Moneyline",
+            "Market Away Moneyline",
+            "Blend Home Moneyline (vig)",
+            "Blend Away Moneyline (vig)",
+            "Blend Favorite Moneyline (vig)"
+          ),
           decimals = 0,
           drop_trailing_zeros = TRUE,
           use_seps = FALSE
         ) %>%
-        gt::fmt_number(columns = "Blend EV Units", decimals = 3) %>%
+        gt::fmt_number(
+          columns = c("Blend Median Home Score", "Blend Median Away Score", "Blend Median Total"),
+          decimals = 1,
+          drop_trailing_zeros = TRUE
+        ) %>%
+        gt::fmt_number(
+          columns = c("Blend EV Units", "Market EV Units", "Blend Stake (Units)"),
+          decimals = 3,
+          drop_trailing_zeros = FALSE
+        ) %>%
         gt::cols_align(
           align = "center",
-          columns = c("Season", "Week", "Blend Beat Market?", "Blend Favorite")
+          columns = c(
+            "Season", "Week", "Blend Favorite", "Blend Recommendation",
+            "Blend Beat Market?", "Market Winning?"
+          )
         ) %>%
         gt::cols_label(
           `Blend Edge` = "Blend Edge (pp)",
           `Blend EV Units` = "Blend EV (units)",
-          `Blend Moneyline (vig)` = "Blend ML (vig)"
+          `Market EV Units` = "Market EV (units)",
+          `Blend Stake (Units)` = "Blend Stake", 
+          `Blend Favorite Moneyline (vig)` = "Blend ML (vig)"
         ) %>%
         gt::tab_header(title = title) %>%
         gt::tab_options(
@@ -603,9 +750,22 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
           `Blend Home Prob` = scales::percent(`Blend Home Prob`, accuracy = 0.1),
           `Market Away Prob` = scales::percent(`Market Away Prob`, accuracy = 0.1),
           `Blend Away Prob` = scales::percent(`Blend Away Prob`, accuracy = 0.1),
+          `Blend Median Home Score` = format(round(`Blend Median Home Score`, 1), nsmall = 1),
+          `Blend Median Away Score` = format(round(`Blend Median Away Score`, 1), nsmall = 1),
+          `Blend Median Total` = format(round(`Blend Median Total`, 1), nsmall = 1),
           `Blend EV Units` = format(round(`Blend EV Units`, 3), nsmall = 3),
+          `Market EV Units` = format(round(`Market EV Units`, 3), nsmall = 3),
+          `Blend Stake (Units)` = dplyr::if_else(
+            is.na(`Blend Stake (Units)`),
+            "",
+            format(round(`Blend Stake (Units)`, 3), nsmall = 3)
+          ),
           dplyr::across(
-            c(`Market Moneyline`, `Blend Moneyline (vig)`),
+            c(
+              `Market Moneyline`, `Market Home Moneyline`, `Market Away Moneyline`,
+              `Blend Home Moneyline (vig)`, `Blend Away Moneyline (vig)`,
+              `Blend Favorite Moneyline (vig)`
+            ),
             ~ ifelse(is.na(.x), "", format(round(.x, 0), trim = TRUE))
           )
         )
@@ -718,7 +878,8 @@ if (!exists("build_res_blend", inherits = FALSE)) {
       standardize_join_keys() %>%
       dplyr::filter(dplyr::if_all(dplyr::all_of(join_keys), ~ !is.na(.))) %>%
       dplyr::group_by(dplyr::across(dplyr::all_of(join_keys))) %>%
-      dplyr::summarise(p_blend = mean(p_blend, na.rm = TRUE), .groups = "drop")
+      dplyr::summarise(p_blend = mean(p_blend, na.rm = TRUE), .groups = "drop") %>%
+      dplyr::rename(.blend_prob = p_blend)
 
     if (!nrow(blend_join)) {
       if (verbose) message("build_res_blend(): blend history has no complete join keys; skipping blend attachment.")
@@ -773,18 +934,30 @@ if (!exists("build_res_blend", inherits = FALSE)) {
       return(NULL)
     }
 
-    if (!"p_blend" %in% names(per_game_with_blend)) {
+    blend_col <- "\.blend_prob"
+    if (!blend_col %in% names(per_game_with_blend)) {
+      alt_cols <- intersect(c("p_blend", "p_blend.y", "p_blend.x"), names(per_game_with_blend))
+      if (length(alt_cols)) {
+        per_game_with_blend[[blend_col]] <- per_game_with_blend[[alt_cols[1L]]]
+      }
+    }
+
+    if (!blend_col %in% names(per_game_with_blend)) {
       if (verbose) message("build_res_blend(): joined table missing p_blend column; skipping blend attachment.")
       return(NULL)
     }
 
     per_game_with_blend[[prob_col]] <- dplyr::if_else(
-      is.finite(per_game_with_blend$p_blend),
-      per_game_with_blend$p_blend,
+      is.finite(per_game_with_blend[[blend_col]]),
+      per_game_with_blend[[blend_col]],
       per_game_with_blend[[prob_col]]
     )
 
-    per_game_with_blend <- dplyr::select(per_game_with_blend, -p_blend)
+    if ("p_blend" %in% base_cols) {
+      per_game_with_blend$p_blend <- per_game_with_blend[[blend_col]]
+    }
+
+    per_game_with_blend <- dplyr::select(per_game_with_blend, -dplyr::any_of(c(blend_col, "p_blend.x", "p_blend.y")))
 
     missing_cols <- setdiff(base_cols, names(per_game_with_blend))
     if (length(missing_cols)) {
@@ -4828,6 +5001,51 @@ final <- final %>%
 message("Blend (ridge+iso) added: home_p_2w_blend/home_win_prob_blend/away_win_prob_blend")
 # ---- END deployment ridge+isotonic block ----
 
+# Prepare snapshot for the current slate's moneyline report before kicking off
+# any backtesting so the HTML export can rely on the same sequentially derived
+# probabilities the simulation just produced.
+moneyline_report_inputs <- NULL
+
+join_keys_html <- if (exists("PREDICTION_JOIN_KEYS", inherits = TRUE)) {
+  PREDICTION_JOIN_KEYS
+} else {
+  c("game_id", "season", "week")
+}
+
+upcoming_snapshot <- build_snapshot_moneyline_result(
+  final_df = final,
+  season = SEASON,
+  week = WEEK_TO_SIM,
+  verbose = TRUE
+)
+
+if (nrow(upcoming_snapshot)) {
+  upcoming_result <- list(comp = upcoming_snapshot)
+  preview_tbl <- build_moneyline_comparison_table(
+    market_comparison_result = upcoming_result,
+    enriched_schedule = sched,
+    join_keys = join_keys_html,
+    vig = 0.10,
+    verbose = TRUE
+  )
+
+  if (nrow(preview_tbl)) {
+    moneyline_report_inputs <- list(
+      comparison = upcoming_result,
+      join_keys = join_keys_html,
+      preview = preview_tbl
+    )
+    message(sprintf(
+      "Prepared current-week moneyline snapshot for %d games.",
+      nrow(preview_tbl)
+    ))
+  } else {
+    message("Moneyline snapshot preview empty after schedule join; will fall back to backtest comparison if available.")
+  }
+} else {
+  message("Moneyline snapshot skipped because no upcoming slate probabilities were available.")
+}
+
 # === BACKTEST to create `res` for market comparison (required by compare_to_market) ===
 # Pick the window you want (last 8 completed seasons works well)
 BACKTEST_TRIALS <- 8000L
@@ -4877,27 +5095,29 @@ if (exists("cmp_blend") && !is.null(cmp_blend)) {
   head(cmp_blend$by_season)
 }
 
-
 if (exists("cmp_blend") && !is.null(cmp_blend)) {
-  join_keys_html <- if (exists("PREDICTION_JOIN_KEYS", inherits = TRUE)) PREDICTION_JOIN_KEYS else c("game_id", "season", "week")
+  join_keys_hist <- if (exists("PREDICTION_JOIN_KEYS", inherits = TRUE)) PREDICTION_JOIN_KEYS else c("game_id", "season", "week")
   report_tbl <- build_moneyline_comparison_table(
     market_comparison_result = cmp_blend,
     enriched_schedule = sched,
-    join_keys = join_keys_html,
+    join_keys = join_keys_hist,
     vig = 0.10,
     verbose = TRUE
   )
 
-  if (nrow(report_tbl)) {
-    report_title <- sprintf("Blend vs Market Moneylines — Week %s, %s", WEEK_TO_SIM, SEASON)
-    report_path <- export_moneyline_comparison_html(
-      comparison_tbl = report_tbl,
-      title = report_title,
-      verbose = TRUE,
-      auto_open = TRUE
-    )
-  } else {
+  if (!nrow(report_tbl)) {
     message("Market comparison HTML skipped because report table was empty.")
+  } else if (is.null(moneyline_report_inputs)) {
+    moneyline_report_inputs <- list(
+      comparison = cmp_blend,
+      join_keys = join_keys_hist,
+      preview = report_tbl
+    )
+    message("Using backtest comparison to populate moneyline report because no current-week snapshot was available.")
+  } else {
+    moneyline_report_inputs$backtest <- cmp_blend
+    moneyline_report_inputs$backtest_preview <- report_tbl
+    message("Stored backtest comparison alongside current-week snapshot for diagnostics.")
   }
 }
 
