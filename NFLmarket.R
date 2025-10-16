@@ -765,11 +765,8 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       Date = game_date,
       Matchup = matchup,
       `Blend Favorite` = blend_favorite,
-      `Market Home Moneyline` = market_home_ml,
-      `Market Away Moneyline` = market_away_ml,
-      `Blend Home Moneyline (vig)` = blend_home_ml_vig,
-      `Blend Away Moneyline (vig)` = blend_away_ml_vig,
-      `Blend Favorite Moneyline (vig)` = blend_moneyline_vig,
+      `Market Moneyline` = market_moneyline,
+      `Blend Moneyline (vig)` = blend_moneyline_vig,
       `Blend Median Home Score` = blend_home_median,
       `Blend Median Away Score` = blend_away_median,
       `Blend Median Total` = blend_total_median,
@@ -814,10 +811,7 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         ),
         columnDefs = list(
           list(className = "dt-center", targets = which(names(display_tbl) %in% c(
-            "Season", "Week", "Blend Favorite", "Blend Beat Market?", "Market Winning?",
-            "Market Home Moneyline", "Market Away Moneyline",
-            "Blend Home Moneyline (vig)", "Blend Away Moneyline (vig)",
-            "Blend Favorite Moneyline (vig)"
+            "Season", "Week", "Blend Favorite", "Blend Beat Market?", "Market Winning?"
           )) - 1)
         ),
         language = list(searchPlaceholder = "Search matchups...")
@@ -835,11 +829,7 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         ), digits = 1
       ) %>%
       DT::formatRound(
-        columns = c(
-          "Market Home Moneyline", "Market Away Moneyline",
-          "Blend Home Moneyline (vig)", "Blend Away Moneyline (vig)",
-          "Blend Favorite Moneyline (vig)"
-        ), digits = 0
+        columns = c("Market Moneyline", "Blend Moneyline (vig)"), digits = 0
       ) %>%
       DT::formatRound(
         columns = c("Blend Median Home Score", "Blend Median Away Score", "Blend Median Total"), digits = 1
@@ -972,7 +962,7 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       "pageLength:20,",
       "dom:'Bfrtip',",
       "buttons:['copy','csv'],",
-      "order:[[0,'asc'],[1,'asc'],[14,'desc']],",
+      "order:[[0,'asc'],[1,'asc'],[11,'desc']],",
       "language:{searchPlaceholder:'Search matchups...'}",
       "});",
       "});</script>",
