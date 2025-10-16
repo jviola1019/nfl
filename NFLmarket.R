@@ -344,7 +344,8 @@ build_res_blend <- function(res,
     standardize_join_keys() %>%
     dplyr::filter(dplyr::if_all(dplyr::all_of(join_keys), ~ !is.na(.))) %>%
     dplyr::group_by(dplyr::across(dplyr::all_of(join_keys))) %>%
-    dplyr::summarise(p_blend = mean(p_blend, na.rm = TRUE), .groups = "drop")
+    dplyr::summarise(p_blend = mean(p_blend, na.rm = TRUE), .groups = "drop") %>%
+    dplyr::rename(.blend_prob = p_blend)
 
   if (!nrow(blend_join)) {
     if (verbose) message("build_res_blend(): blend history has no complete join keys; skipping blend attachment.")
@@ -399,18 +400,30 @@ build_res_blend <- function(res,
     return(NULL)
   }
 
-  if (!"p_blend" %in% names(per_game_with_blend)) {
+  blend_col <- "\.blend_prob"
+  if (!blend_col %in% names(per_game_with_blend)) {
+    alt_cols <- intersect(c("p_blend", "p_blend.y", "p_blend.x"), names(per_game_with_blend))
+    if (length(alt_cols)) {
+      per_game_with_blend[[blend_col]] <- per_game_with_blend[[alt_cols[1L]]]
+    }
+  }
+
+  if (!blend_col %in% names(per_game_with_blend)) {
     if (verbose) message("build_res_blend(): joined table missing p_blend column; skipping blend attachment.")
     return(NULL)
   }
 
   per_game_with_blend[[prob_col]] <- dplyr::if_else(
-    is.finite(per_game_with_blend$p_blend),
-    per_game_with_blend$p_blend,
+    is.finite(per_game_with_blend[[blend_col]]),
+    per_game_with_blend[[blend_col]],
     per_game_with_blend[[prob_col]]
   )
 
-  per_game_with_blend <- dplyr::select(per_game_with_blend, -p_blend)
+  if ("p_blend" %in% base_cols) {
+    per_game_with_blend$p_blend <- per_game_with_blend[[blend_col]]
+  }
+
+  per_game_with_blend <- dplyr::select(per_game_with_blend, -dplyr::any_of(c(blend_col, "p_blend.x", "p_blend.y")))
 
   missing_cols <- setdiff(base_cols, names(per_game_with_blend))
   if (length(missing_cols)) {
