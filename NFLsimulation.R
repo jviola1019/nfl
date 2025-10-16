@@ -5095,29 +5095,34 @@ if (exists("cmp_blend") && !is.null(cmp_blend)) {
   head(cmp_blend$by_season)
 }
 
+
+moneyline_report_inputs <- NULL
+
 if (exists("cmp_blend") && !is.null(cmp_blend)) {
-  join_keys_hist <- if (exists("PREDICTION_JOIN_KEYS", inherits = TRUE)) PREDICTION_JOIN_KEYS else c("game_id", "season", "week")
+  join_keys_html <- if (exists("PREDICTION_JOIN_KEYS", inherits = TRUE)) PREDICTION_JOIN_KEYS else c("game_id", "season", "week")
   report_tbl <- build_moneyline_comparison_table(
     market_comparison_result = cmp_blend,
     enriched_schedule = sched,
-    join_keys = join_keys_hist,
+    join_keys = join_keys_html,
     vig = 0.10,
     verbose = TRUE
   )
 
-  if (!nrow(report_tbl)) {
-    message("Market comparison HTML skipped because report table was empty.")
-  } else if (is.null(moneyline_report_inputs)) {
-    moneyline_report_inputs <- list(
-      comparison = cmp_blend,
-      join_keys = join_keys_hist,
-      preview = report_tbl
+  moneyline_report_inputs <- list(
+    comparison = cmp_blend,
+    join_keys = join_keys_html
+  )
+
+  if (nrow(report_tbl)) {
+    report_title <- sprintf("Blend vs Market Moneylines — Week %s, %s", WEEK_TO_SIM, SEASON)
+    report_path <- export_moneyline_comparison_html(
+      comparison_tbl = report_tbl,
+      title = report_title,
+      verbose = TRUE,
+      auto_open = TRUE
     )
-    message("Using backtest comparison to populate moneyline report because no current-week snapshot was available.")
   } else {
-    moneyline_report_inputs$backtest <- cmp_blend
-    moneyline_report_inputs$backtest_preview <- report_tbl
-    message("Stored backtest comparison alongside current-week snapshot for diagnostics.")
+    message("Market comparison HTML skipped because report table was empty.")
   }
 }
 
