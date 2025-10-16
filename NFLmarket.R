@@ -910,7 +910,11 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         `Blend EV Units` = format(round(`Blend EV Units`, 3), nsmall = 3),
         `Market EV Units` = format(round(`Market EV Units`, 3), nsmall = 3),
         dplyr::across(
-          c(`Market Moneyline`, `Blend Moneyline (vig)`),
+          c(
+            `Market Home Moneyline`, `Market Away Moneyline`,
+            `Blend Home Moneyline (vig)`, `Blend Away Moneyline (vig)`,
+            `Blend Favorite Moneyline (vig)`
+          ),
           ~ ifelse(is.na(.x), "", format(round(.x, 0), trim = TRUE))
         )
       )
