@@ -4878,6 +4878,8 @@ if (exists("cmp_blend") && !is.null(cmp_blend)) {
 }
 
 
+moneyline_report_inputs <- NULL
+
 if (exists("cmp_blend") && !is.null(cmp_blend)) {
   join_keys_html <- if (exists("PREDICTION_JOIN_KEYS", inherits = TRUE)) PREDICTION_JOIN_KEYS else c("game_id", "season", "week")
   report_tbl <- build_moneyline_comparison_table(
@@ -4886,6 +4888,11 @@ if (exists("cmp_blend") && !is.null(cmp_blend)) {
     join_keys = join_keys_html,
     vig = 0.10,
     verbose = TRUE
+  )
+
+  moneyline_report_inputs <- list(
+    comparison = cmp_blend,
+    join_keys = join_keys_html
   )
 
   if (nrow(report_tbl)) {
