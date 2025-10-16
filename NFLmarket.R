@@ -698,6 +698,16 @@ build_moneyline_comparison_table <- function(market_comparison_result,
         market_ev_units > 0 ~ TRUE,
         TRUE ~ FALSE
       ),
+      blend_recommendation = dplyr::case_when(
+        is.na(blend_ev_units) ~ "No play",
+        blend_ev_units > 0 ~ paste("Bet", blend_favorite, "moneyline"),
+        TRUE ~ "Pass"
+      ),
+      blend_confidence = dplyr::case_when(
+        is.na(blend_ev_units) ~ NA_real_,
+        blend_ev_units < 0 ~ 0,
+        TRUE ~ blend_ev_units
+      ),
       actual_winner = dplyr::case_when(
         is.na(actual_home_win) ~ NA_character_,
         actual_home_win == 1L  ~ home_team,
@@ -765,19 +775,25 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       Date = game_date,
       Matchup = matchup,
       `Blend Favorite` = blend_favorite,
+      `Blend Recommendation` = blend_recommendation,
+      `Blend Stake (Units)` = blend_confidence,
       `Market Moneyline` = market_moneyline,
-      `Blend Moneyline (vig)` = blend_moneyline_vig,
+      `Market Home Moneyline` = market_home_ml,
+      `Market Away Moneyline` = market_away_ml,
+      `Blend Home Moneyline (vig)` = blend_home_ml_vig,
+      `Blend Away Moneyline (vig)` = blend_away_ml_vig,
+      `Blend Favorite Moneyline (vig)` = blend_moneyline_vig,
       `Blend Median Home Score` = blend_home_median,
       `Blend Median Away Score` = blend_away_median,
       `Blend Median Total` = blend_total_median,
       `Blend Edge` = blend_edge_prob,
       `Blend EV Units` = blend_ev_units,
+      `Market EV Units` = market_ev_units,
       `Blend Beat Market?` = dplyr::case_when(
         is.na(blend_beats_market) ~ "N/A",
         blend_beats_market ~ "Yes",
         TRUE ~ "No"
       ),
-      `Market EV Units` = market_ev_units,
       `Market Winning?` = dplyr::case_when(
         is.na(market_winning) ~ "N/A",
         market_winning ~ "Yes",
@@ -829,7 +845,15 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         ), digits = 1
       ) %>%
       DT::formatRound(
-        columns = c("Market Moneyline", "Blend Moneyline (vig)"), digits = 0
+        columns = c(
+          "Market Moneyline",
+          "Market Home Moneyline",
+          "Market Away Moneyline",
+          "Blend Home Moneyline (vig)",
+          "Blend Away Moneyline (vig)",
+          "Blend Favorite Moneyline (vig)"
+        ),
+        digits = 0
       ) %>%
       DT::formatRound(
         columns = c("Blend Median Home Score", "Blend Median Away Score", "Blend Median Total"), digits = 1
@@ -909,9 +933,14 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         `Blend Median Total` = format(round(`Blend Median Total`, 1), nsmall = 1),
         `Blend EV Units` = format(round(`Blend EV Units`, 3), nsmall = 3),
         `Market EV Units` = format(round(`Market EV Units`, 3), nsmall = 3),
+        `Blend Stake (Units)` = dplyr::if_else(
+          is.na(`Blend Stake (Units)`),
+          "",
+          format(round(`Blend Stake (Units)`, 3), nsmall = 3)
+        ),
         dplyr::across(
           c(
-            `Market Home Moneyline`, `Market Away Moneyline`,
+            `Market Moneyline`, `Market Home Moneyline`, `Market Away Moneyline`,
             `Blend Home Moneyline (vig)`, `Blend Away Moneyline (vig)`,
             `Blend Favorite Moneyline (vig)`
           ),

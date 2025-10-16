@@ -342,6 +342,9 @@ if (!exists("build_moneyline_comparison_table", inherits = FALSE)) {
     date_col <- select_first_column(schedule_collapsed, c("game_date", "gameDate", "date"))
     home_ml_col <- select_first_column(schedule_collapsed, c("espn_final_home_ml", "home_ml", "ml_home", "home_moneyline"))
     away_ml_col <- select_first_column(schedule_collapsed, c("espn_final_away_ml", "away_ml", "ml_away", "away_moneyline"))
+    home_median_col <- select_first_column(schedule_collapsed, c("blend_home_median", "home_median_blend", "home_median"))
+    away_median_col <- select_first_column(schedule_collapsed, c("blend_away_median", "away_median_blend", "away_median"))
+    total_median_col <- select_first_column(schedule_collapsed, c("blend_total_median", "total_median_blend", "total_median"))
 
     schedule_context <- schedule_collapsed %>%
       dplyr::mutate(
@@ -349,7 +352,10 @@ if (!exists("build_moneyline_comparison_table", inherits = FALSE)) {
         away_team = as.character(pull_or_default(schedule_collapsed, away_team_col, NA_character_)),
         game_date = suppressWarnings(as.Date(pull_or_default(schedule_collapsed, date_col, NA_character_))),
         market_home_ml = coerce_numeric_safely(pull_or_default(schedule_collapsed, home_ml_col, NA_real_)),
-        market_away_ml = coerce_numeric_safely(pull_or_default(schedule_collapsed, away_ml_col, NA_real_))
+        market_away_ml = coerce_numeric_safely(pull_or_default(schedule_collapsed, away_ml_col, NA_real_)),
+        blend_home_median = coerce_numeric_safely(pull_or_default(schedule_collapsed, home_median_col, NA_real_)),
+        blend_away_median = coerce_numeric_safely(pull_or_default(schedule_collapsed, away_median_col, NA_real_)),
+        blend_total_median = coerce_numeric_safely(pull_or_default(schedule_collapsed, total_median_col, NA_real_))
       ) %>%
       dplyr::transmute(
         dplyr::across(dplyr::all_of(join_cols)),
@@ -357,7 +363,10 @@ if (!exists("build_moneyline_comparison_table", inherits = FALSE)) {
         away_team,
         game_date,
         market_home_ml,
-        market_away_ml
+        market_away_ml,
+        blend_home_median,
+        blend_away_median,
+        blend_total_median
       )
 
     combined <- scores %>%
@@ -438,6 +447,26 @@ if (!exists("build_moneyline_comparison_table", inherits = FALSE)) {
           is.na(blend_ev_units) ~ NA,
           TRUE ~ blend_ev_units > 0
         ),
+        market_ev_units = dplyr::if_else(
+          is.na(blend_ev_units),
+          NA_real_,
+          -blend_ev_units
+        ),
+        market_winning = dplyr::case_when(
+          is.na(market_ev_units) ~ NA,
+          market_ev_units > 0 ~ TRUE,
+          TRUE ~ FALSE
+        ),
+        blend_recommendation = dplyr::case_when(
+          is.na(blend_ev_units) ~ "No play",
+          blend_ev_units > 0 ~ paste("Bet", blend_favorite, "moneyline"),
+          TRUE ~ "Pass"
+        ),
+        blend_confidence = dplyr::case_when(
+          is.na(blend_ev_units) ~ NA_real_,
+          blend_ev_units < 0 ~ 0,
+          TRUE ~ blend_ev_units
+        ),
         actual_winner = dplyr::case_when(
           is.na(actual_home_win) ~ NA_character_,
           actual_home_win == 1L  ~ home_team,
@@ -503,13 +532,28 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
         Date = game_date,
         Matchup = matchup,
         `Blend Favorite` = blend_favorite,
+        `Blend Recommendation` = blend_recommendation,
+        `Blend Stake (Units)` = blend_confidence,
         `Market Moneyline` = market_moneyline,
-        `Blend Moneyline (vig)` = blend_moneyline_vig,
+        `Market Home Moneyline` = market_home_ml,
+        `Market Away Moneyline` = market_away_ml,
+        `Blend Home Moneyline (vig)` = blend_home_ml_vig,
+        `Blend Away Moneyline (vig)` = blend_away_ml_vig,
+        `Blend Favorite Moneyline (vig)` = blend_moneyline_vig,
+        `Blend Median Home Score` = blend_home_median,
+        `Blend Median Away Score` = blend_away_median,
+        `Blend Median Total` = blend_total_median,
         `Blend Edge` = blend_edge_prob,
         `Blend EV Units` = blend_ev_units,
+        `Market EV Units` = market_ev_units,
         `Blend Beat Market?` = dplyr::case_when(
           is.na(blend_beats_market) ~ "N/A",
           blend_beats_market ~ "Yes",
+          TRUE ~ "No"
+        ),
+        `Market Winning?` = dplyr::case_when(
+          is.na(market_winning) ~ "N/A",
+          market_winning ~ "Yes",
           TRUE ~ "No"
         ),
         `Market Home Prob` = market_home_prob,
@@ -533,20 +577,41 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
           decimals = 1
         ) %>%
         gt::fmt_number(
-          columns = c("Market Moneyline", "Blend Moneyline (vig)"),
+          columns = c(
+            "Market Moneyline",
+            "Market Home Moneyline",
+            "Market Away Moneyline",
+            "Blend Home Moneyline (vig)",
+            "Blend Away Moneyline (vig)",
+            "Blend Favorite Moneyline (vig)"
+          ),
           decimals = 0,
           drop_trailing_zeros = TRUE,
           use_seps = FALSE
         ) %>%
-        gt::fmt_number(columns = "Blend EV Units", decimals = 3) %>%
+        gt::fmt_number(
+          columns = c("Blend Median Home Score", "Blend Median Away Score", "Blend Median Total"),
+          decimals = 1,
+          drop_trailing_zeros = TRUE
+        ) %>%
+        gt::fmt_number(
+          columns = c("Blend EV Units", "Market EV Units", "Blend Stake (Units)"),
+          decimals = 3,
+          drop_trailing_zeros = FALSE
+        ) %>%
         gt::cols_align(
           align = "center",
-          columns = c("Season", "Week", "Blend Beat Market?", "Blend Favorite")
+          columns = c(
+            "Season", "Week", "Blend Favorite", "Blend Recommendation",
+            "Blend Beat Market?", "Market Winning?"
+          )
         ) %>%
         gt::cols_label(
           `Blend Edge` = "Blend Edge (pp)",
           `Blend EV Units` = "Blend EV (units)",
-          `Blend Moneyline (vig)` = "Blend ML (vig)"
+          `Market EV Units` = "Market EV (units)",
+          `Blend Stake (Units)` = "Blend Stake", 
+          `Blend Favorite Moneyline (vig)` = "Blend ML (vig)"
         ) %>%
         gt::tab_header(title = title) %>%
         gt::tab_options(
@@ -603,9 +668,22 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
           `Blend Home Prob` = scales::percent(`Blend Home Prob`, accuracy = 0.1),
           `Market Away Prob` = scales::percent(`Market Away Prob`, accuracy = 0.1),
           `Blend Away Prob` = scales::percent(`Blend Away Prob`, accuracy = 0.1),
+          `Blend Median Home Score` = format(round(`Blend Median Home Score`, 1), nsmall = 1),
+          `Blend Median Away Score` = format(round(`Blend Median Away Score`, 1), nsmall = 1),
+          `Blend Median Total` = format(round(`Blend Median Total`, 1), nsmall = 1),
           `Blend EV Units` = format(round(`Blend EV Units`, 3), nsmall = 3),
+          `Market EV Units` = format(round(`Market EV Units`, 3), nsmall = 3),
+          `Blend Stake (Units)` = dplyr::if_else(
+            is.na(`Blend Stake (Units)`),
+            "",
+            format(round(`Blend Stake (Units)`, 3), nsmall = 3)
+          ),
           dplyr::across(
-            c(`Market Moneyline`, `Blend Moneyline (vig)`),
+            c(
+              `Market Moneyline`, `Market Home Moneyline`, `Market Away Moneyline`,
+              `Blend Home Moneyline (vig)`, `Blend Away Moneyline (vig)`,
+              `Blend Favorite Moneyline (vig)`
+            ),
             ~ ifelse(is.na(.x), "", format(round(.x, 0), trim = TRUE))
           )
         )
