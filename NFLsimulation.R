@@ -298,6 +298,88 @@ if (!exists("extract_game_level_scores", inherits = FALSE)) {
   }
 }
 
+if (!exists("build_snapshot_moneyline_result", inherits = FALSE)) {
+  build_snapshot_moneyline_result <- function(final_df,
+                                             season,
+                                             week,
+                                             model_prob_candidates = c(
+                                               "home_p_2w_blend",
+                                               "home_win_prob_blend",
+                                               "home_p_2w_cal"
+                                             ),
+                                             market_prob_candidates = c(
+                                               "home_p_2w_mkt",
+                                               "market_home_prob",
+                                               "market_prob"
+                                             ),
+                                             verbose = TRUE) {
+    if (is.null(final_df) || !nrow(final_df)) {
+      if (verbose) message("build_snapshot_moneyline_result(): final slate is empty; skipping snapshot.")
+      return(tibble::tibble())
+    }
+
+    required_keys <- c("game_id", "season", "week")
+    missing_keys <- setdiff(required_keys, names(final_df))
+    if (length(missing_keys)) {
+      if (verbose) {
+        message(sprintf(
+          "build_snapshot_moneyline_result(): final slate missing required columns: %s",
+          paste(missing_keys, collapse = ", ")
+        ))
+      }
+      return(tibble::tibble())
+    }
+
+    snapshot <- final_df %>%
+      dplyr::filter(.data$season == season, .data$week == week) %>%
+      dplyr::ungroup()
+
+    if (!nrow(snapshot)) {
+      if (verbose) {
+        message(sprintf(
+          "build_snapshot_moneyline_result(): no rows for season %s week %s.",
+          season,
+          week
+        ))
+      }
+      return(tibble::tibble())
+    }
+
+    model_prob_col <- select_first_column(snapshot, model_prob_candidates)
+    market_prob_col <- select_first_column(snapshot, market_prob_candidates)
+
+    if (is.na(model_prob_col)) {
+      if (verbose) {
+        message("build_snapshot_moneyline_result(): unable to locate a model probability column on the final slate.")
+      }
+      return(tibble::tibble())
+    }
+
+    if (is.na(market_prob_col)) {
+      if (verbose) {
+        message("build_snapshot_moneyline_result(): unable to locate a market probability column on the final slate.")
+      }
+      return(tibble::tibble())
+    }
+
+    model_prob <- clamp_probability(snapshot[[model_prob_col]])
+    market_prob <- clamp_probability(snapshot[[market_prob_col]])
+
+    tibble::tibble(
+      game_id = snapshot$game_id,
+      season = snapshot$season,
+      week = snapshot$week,
+      p_model = model_prob,
+      p_mkt = market_prob,
+      y2 = as.integer(rep(NA_integer_, nrow(snapshot))),
+      b_model = rep(NA_real_, nrow(snapshot)),
+      b_mkt = rep(NA_real_, nrow(snapshot)),
+      ll_model = rep(NA_real_, nrow(snapshot)),
+      ll_mkt = rep(NA_real_, nrow(snapshot))
+    )
+  }
+}
+
 if (!exists("build_moneyline_comparison_table", inherits = FALSE)) {
   build_moneyline_comparison_table <- function(market_comparison_result,
                                                enriched_schedule,
@@ -4905,6 +4987,51 @@ final <- final %>%
 
 message("Blend (ridge+iso) added: home_p_2w_blend/home_win_prob_blend/away_win_prob_blend")
 # ---- END deployment ridge+isotonic block ----
+
+# Prepare snapshot for the current slate's moneyline report before kicking off
+# any backtesting so the HTML export can rely on the same sequentially derived
+# probabilities the simulation just produced.
+moneyline_report_inputs <- NULL
+
+join_keys_html <- if (exists("PREDICTION_JOIN_KEYS", inherits = TRUE)) {
+  PREDICTION_JOIN_KEYS
+} else {
+  c("game_id", "season", "week")
+}
+
+upcoming_snapshot <- build_snapshot_moneyline_result(
+  final_df = final,
+  season = SEASON,
+  week = WEEK_TO_SIM,
+  verbose = TRUE
+)
+
+if (nrow(upcoming_snapshot)) {
+  upcoming_result <- list(comp = upcoming_snapshot)
+  preview_tbl <- build_moneyline_comparison_table(
+    market_comparison_result = upcoming_result,
+    enriched_schedule = sched,
+    join_keys = join_keys_html,
+    vig = 0.10,
+    verbose = TRUE
+  )
+
+  if (nrow(preview_tbl)) {
+    moneyline_report_inputs <- list(
+      comparison = upcoming_result,
+      join_keys = join_keys_html,
+      preview = preview_tbl
+    )
+    message(sprintf(
+      "Prepared current-week moneyline snapshot for %d games.",
+      nrow(preview_tbl)
+    ))
+  } else {
+    message("Moneyline snapshot preview empty after schedule join; will fall back to backtest comparison if available.")
+  }
+} else {
+  message("Moneyline snapshot skipped because no upcoming slate probabilities were available.")
+}
 
 # === BACKTEST to create `res` for market comparison (required by compare_to_market) ===
 # Pick the window you want (last 8 completed seasons works well)
