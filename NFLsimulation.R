@@ -212,6 +212,600 @@ if (!exists("parse_time_components", inherits = FALSE)) {
   }
 }
 
+if (!exists("select_first_column", inherits = FALSE)) {
+  select_first_column <- function(df, candidates) {
+    intersect(candidates, names(df))[1]
+  }
+}
+
+if (!exists("coerce_numeric_safely", inherits = FALSE)) {
+  coerce_numeric_safely <- function(x) {
+    if (is.numeric(x)) {
+      return(x)
+    }
+    suppressWarnings(as.numeric(x))
+  }
+}
+
+if (!exists("clamp_probability", inherits = FALSE)) {
+  clamp_probability <- function(p, eps = 1e-06) {
+    p <- coerce_numeric_safely(p)
+    p <- dplyr::if_else(is.na(p), NA_real_, p)
+    pmin(pmax(p, eps), 1 - eps)
+  }
+}
+
+if (!exists("probability_to_american", inherits = FALSE)) {
+  probability_to_american <- function(prob) {
+    prob <- clamp_probability(prob)
+    dplyr::if_else(
+      prob >= 0.5,
+      -round(100 * prob / (1 - prob)),
+      round(100 * (1 - prob) / prob)
+    )
+  }
+}
+
+if (!exists("apply_moneyline_vig", inherits = FALSE)) {
+  apply_moneyline_vig <- function(odds, vig = 0.10) {
+    odds <- coerce_numeric_safely(odds)
+    vig <- coerce_numeric_safely(vig)
+    vig[is.na(vig)] <- 0
+    dplyr::case_when(
+      !is.finite(odds) ~ NA_real_,
+      odds < 0        ~ -as.numeric(round(abs(odds) * (1 + vig))),
+      TRUE            ~ as.numeric(round(odds / (1 + vig)))
+    )
+  }
+}
+
+if (!exists("expected_value_units", inherits = FALSE)) {
+  expected_value_units <- function(prob, odds) {
+    prob <- clamp_probability(prob)
+    odds <- coerce_numeric_safely(odds)
+    dec <- dplyr::if_else(
+      odds < 0,
+      1 + 100 / abs(odds),
+      1 + odds / 100
+    )
+    prob * (dec - 1) - (1 - prob)
+  }
+}
+
+if (!exists("extract_game_level_scores", inherits = FALSE)) {
+  extract_game_level_scores <- function(market_comparison_result) {
+    if (is.null(market_comparison_result) ||
+        !is.list(market_comparison_result) ||
+        !"comp" %in% names(market_comparison_result)) {
+      return(tibble::tibble())
+    }
+
+    market_comparison_result$comp %>%
+      dplyr::transmute(
+        game_id,
+        season,
+        week,
+        blend_home_prob = p_model,
+        market_home_prob = p_mkt,
+        model_prob = p_model,
+        market_prob = p_mkt,
+        actual_home_win = y2,
+        brier_model = b_model,
+        brier_market = b_mkt,
+        logloss_model = ll_model,
+        logloss_market = ll_mkt
+      )
+  }
+}
+
+if (!exists("build_moneyline_comparison_table", inherits = FALSE)) {
+  build_moneyline_comparison_table <- function(market_comparison_result,
+                                               enriched_schedule,
+                                               join_keys = PREDICTION_JOIN_KEYS,
+                                               vig = 0.10,
+                                               verbose = TRUE) {
+    scores <- extract_game_level_scores(market_comparison_result)
+    if (!nrow(scores)) {
+      if (verbose) message("build_moneyline_comparison_table(): no comparison scores available; returning empty tibble.")
+      return(tibble::tibble())
+    }
+
+    if (is.null(enriched_schedule) || !nrow(enriched_schedule)) {
+      if (verbose) message("build_moneyline_comparison_table(): schedule input is empty; returning scores without context.")
+      return(scores)
+    }
+
+    schedule_std <- standardize_join_keys(enriched_schedule)
+    join_cols <- intersect(join_keys, intersect(names(schedule_std), names(scores)))
+
+    if (!length(join_cols)) {
+      if (verbose) message("build_moneyline_comparison_table(): no shared join keys between schedule and scores; returning scores.")
+      return(scores)
+    }
+
+    schedule_collapsed <- collapse_by_keys_relaxed(
+      schedule_std,
+      keys = join_cols,
+      label = "HTML schedule context"
+    )
+
+    pull_or_default <- function(df, col_name, default = NA) {
+      if (is.na(col_name) || !col_name %in% names(df)) {
+        rep(default, nrow(df))
+      } else {
+        df[[col_name]]
+      }
+    }
+
+    home_team_col <- select_first_column(schedule_collapsed, c("home_team", "team_home", "home"))
+    away_team_col <- select_first_column(schedule_collapsed, c("away_team", "team_away", "away"))
+    date_col <- select_first_column(schedule_collapsed, c("game_date", "gameDate", "date"))
+    home_ml_col <- select_first_column(schedule_collapsed, c("espn_final_home_ml", "home_ml", "ml_home", "home_moneyline"))
+    away_ml_col <- select_first_column(schedule_collapsed, c("espn_final_away_ml", "away_ml", "ml_away", "away_moneyline"))
+
+    schedule_context <- schedule_collapsed %>%
+      dplyr::mutate(
+        home_team = as.character(pull_or_default(schedule_collapsed, home_team_col, NA_character_)),
+        away_team = as.character(pull_or_default(schedule_collapsed, away_team_col, NA_character_)),
+        game_date = suppressWarnings(as.Date(pull_or_default(schedule_collapsed, date_col, NA_character_))),
+        market_home_ml = coerce_numeric_safely(pull_or_default(schedule_collapsed, home_ml_col, NA_real_)),
+        market_away_ml = coerce_numeric_safely(pull_or_default(schedule_collapsed, away_ml_col, NA_real_))
+      ) %>%
+      dplyr::transmute(
+        dplyr::across(dplyr::all_of(join_cols)),
+        home_team,
+        away_team,
+        game_date,
+        market_home_ml,
+        market_away_ml
+      )
+
+    combined <- scores %>%
+      dplyr::mutate(
+        blend_home_prob = dplyr::coalesce(blend_home_prob, model_prob),
+        market_home_prob = dplyr::coalesce(market_home_prob, market_prob)
+      ) %>%
+      dplyr::inner_join(schedule_context, by = join_cols) %>%
+      dplyr::mutate(
+        matchup = dplyr::if_else(
+          is.na(home_team) | is.na(away_team),
+          NA_character_,
+          paste(away_team, "@", home_team)
+        ),
+        blend_home_prob = clamp_probability(blend_home_prob),
+        blend_away_prob = clamp_probability(1 - blend_home_prob),
+        market_home_prob = clamp_probability(market_home_prob),
+        market_away_prob = clamp_probability(1 - market_home_prob),
+        market_home_ml = dplyr::if_else(
+          is.na(market_home_ml),
+          probability_to_american(market_home_prob),
+          market_home_ml
+        ),
+        market_away_ml = dplyr::if_else(
+          is.na(market_away_ml),
+          probability_to_american(market_away_prob),
+          market_away_ml
+        ),
+        blend_home_ml = probability_to_american(blend_home_prob),
+        blend_home_ml_vig = apply_moneyline_vig(blend_home_ml, vig = vig),
+        blend_away_ml = probability_to_american(blend_away_prob),
+        blend_away_ml_vig = apply_moneyline_vig(blend_away_ml, vig = vig),
+        blend_edge_prob_home = blend_home_prob - market_home_prob,
+        blend_edge_prob_away = blend_away_prob - market_away_prob,
+        blend_ev_units_home = expected_value_units(blend_home_prob, market_home_ml),
+        blend_ev_units_away = expected_value_units(blend_away_prob, market_away_ml),
+        blend_favorite_side = dplyr::if_else(blend_home_prob >= blend_away_prob, "home", "away"),
+        blend_favorite = dplyr::if_else(blend_favorite_side == "home", home_team, away_team),
+        market_moneyline = dplyr::if_else(
+          blend_favorite_side == "home",
+          market_home_ml,
+          market_away_ml
+        ),
+        market_moneyline = dplyr::if_else(
+          is.na(market_moneyline),
+          probability_to_american(
+            dplyr::if_else(blend_favorite_side == "home", market_home_prob, market_away_prob)
+          ),
+          market_moneyline
+        ),
+        blend_moneyline = dplyr::if_else(
+          blend_favorite_side == "home",
+          blend_home_ml,
+          blend_away_ml
+        ),
+        blend_moneyline_vig = dplyr::if_else(
+          blend_favorite_side == "home",
+          blend_home_ml_vig,
+          blend_away_ml_vig
+        ),
+        blend_prob_fav = dplyr::if_else(
+          blend_favorite_side == "home",
+          blend_home_prob,
+          blend_away_prob
+        ),
+        market_prob_fav = dplyr::if_else(
+          blend_favorite_side == "home",
+          market_home_prob,
+          market_away_prob
+        ),
+        blend_edge_prob = blend_prob_fav - market_prob_fav,
+        blend_ev_units = dplyr::if_else(
+          blend_favorite_side == "home",
+          blend_ev_units_home,
+          blend_ev_units_away
+        ),
+        blend_beats_market = dplyr::case_when(
+          is.na(blend_ev_units) ~ NA,
+          TRUE ~ blend_ev_units > 0
+        ),
+        actual_winner = dplyr::case_when(
+          is.na(actual_home_win) ~ NA_character_,
+          actual_home_win == 1L  ~ home_team,
+          actual_home_win == 0L  ~ away_team,
+          TRUE ~ NA_character_
+        ),
+        model_prob = blend_home_prob,
+        market_prob = market_home_prob,
+        model_home_ml = blend_home_ml,
+        model_home_ml_vig = blend_home_ml_vig,
+        model_away_ml = blend_away_ml,
+        model_away_ml_vig = blend_away_ml_vig,
+        model_edge_prob = blend_edge_prob_home,
+        model_ev_units = blend_ev_units_home,
+        market_beats_model = brier_market < brier_model
+      ) %>%
+      dplyr::arrange(season, week, game_date, matchup)
+
+    combined
+  }
+}
+
+if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
+  export_moneyline_comparison_html <- function(comparison_tbl,
+                                               file = NULL,
+                                               title = "Blend vs Market Moneylines",
+                                               verbose = TRUE,
+                                               auto_open = TRUE) {
+    if (missing(file) || is.null(file) || !length(file) || all(is.na(file)) || !nzchar(file[[1L]])) {
+      file <- file.path(getwd(), "NFLvsmarket_report.html")
+      if (verbose) {
+        message(sprintf(
+          "export_moneyline_comparison_html(): using default output path %s",
+          file.path(normalizePath(dirname(file), winslash = "/", mustWork = FALSE), basename(file))
+        ))
+      }
+    } else {
+      file <- file[[1L]]
+    }
+
+    if (!nzchar(file)) {
+      stop("export_moneyline_comparison_html(): 'file' must resolve to a non-empty path.")
+    }
+
+    if (!nrow(comparison_tbl)) {
+      if (verbose) message("export_moneyline_comparison_html(): comparison table empty; skipping export.")
+      return(invisible(file))
+    }
+
+    dir_path <- dirname(file)
+    if (nzchar(dir_path) && dir_path != "." && !dir.exists(dir_path)) {
+      dir.create(dir_path, recursive = TRUE, showWarnings = FALSE)
+    }
+
+    if (file.exists(file)) {
+      unlink(file, force = TRUE)
+    }
+
+    display_tbl <- comparison_tbl %>%
+      dplyr::transmute(
+        Season = season,
+        Week = week,
+        Date = game_date,
+        Matchup = matchup,
+        `Blend Favorite` = blend_favorite,
+        `Market Moneyline` = market_moneyline,
+        `Blend Moneyline (vig)` = blend_moneyline_vig,
+        `Blend Edge` = blend_edge_prob,
+        `Blend EV Units` = blend_ev_units,
+        `Blend Beat Market?` = dplyr::case_when(
+          is.na(blend_beats_market) ~ "N/A",
+          blend_beats_market ~ "Yes",
+          TRUE ~ "No"
+        ),
+        `Market Home Prob` = market_home_prob,
+        `Blend Home Prob` = blend_home_prob,
+        `Market Away Prob` = market_away_prob,
+        `Blend Away Prob` = blend_away_prob,
+        Winner = actual_winner
+      )
+
+    saved <- FALSE
+
+    if (requireNamespace("gt", quietly = TRUE)) {
+      gt_tbl <- display_tbl %>%
+        gt::gt() %>%
+        gt::fmt_percent(
+          columns = c(
+            "Blend Edge",
+            "Market Home Prob", "Blend Home Prob",
+            "Market Away Prob", "Blend Away Prob"
+          ),
+          decimals = 1
+        ) %>%
+        gt::fmt_number(
+          columns = c("Market Moneyline", "Blend Moneyline (vig)"),
+          decimals = 0,
+          drop_trailing_zeros = TRUE,
+          use_seps = FALSE
+        ) %>%
+        gt::fmt_number(columns = "Blend EV Units", decimals = 3) %>%
+        gt::cols_align(
+          align = "center",
+          columns = c("Season", "Week", "Blend Beat Market?", "Blend Favorite")
+        ) %>%
+        gt::cols_label(
+          `Blend Edge` = "Blend Edge (pp)",
+          `Blend EV Units` = "Blend EV (units)",
+          `Blend Moneyline (vig)` = "Blend ML (vig)"
+        ) %>%
+        gt::tab_header(title = title) %>%
+        gt::tab_options(
+          table.font.names = c("Source Sans Pro", "Helvetica Neue", "Arial", "sans-serif"),
+          table.background.color = "#0b1120",
+          table.font.color = "#e2e8f0",
+          heading.background.color = "#064e3b",
+          heading.title.color = "#ecfdf5",
+          heading.subtitle.color = "#ecfdf5",
+          column_labels.background.color = "#166534",
+          column_labels.font.weight = "bold",
+          column_labels.text_transform = "uppercase",
+          row.striping.background_color = "#111827"
+        ) %>%
+        gt::opt_row_striping() %>%
+        gt::data_color(
+          columns = "Blend Beat Market?",
+          colors = scales::col_factor(
+            palette = c("No" = "#374151", "Yes" = "#15803d", "N/A" = "#4b5563"),
+            domain = c("No", "Yes", "N/A")
+          )
+        ) %>%
+        gt::tab_style(
+          style = list(
+            gt::cell_fill(color = "#14532d"),
+            gt::cell_text(color = "#ecfdf5", weight = "bold")
+          ),
+          locations = gt::cells_column_labels(columns = gt::everything())
+        )
+
+      try({
+        gt::gtsave(gt_tbl, file = file)
+        saved <- TRUE
+      }, silent = TRUE)
+    }
+
+    if (!saved) {
+      css_block <- "body {font-family: 'Source Sans Pro', Arial, sans-serif; background-color: #0b1120; color: #e2e8f0;}\n"
+      css_block <- paste0(
+        css_block,
+        "table {width: 100%; border-collapse: collapse; background-color: #111827; color: #e2e8f0;}\n",
+        "th {background-color: #14532d; color: #ecfdf5; text-transform: uppercase; letter-spacing: 0.08em;}\n",
+        "td, th {padding: 10px 12px; border-bottom: 1px solid #1f2937; text-align: center;}\n",
+        "tr:nth-child(even) {background-color: #1f2933;}\n",
+        "tr.blend-win {background-color: #14532d;}\n",
+        "tr.blend-win td {color: #ecfdf5;}\n",
+        "caption {caption-side: top; font-size: 1.25rem; font-weight: 600; margin-bottom: 0.75rem; color: #ecfdf5;}\n"
+      )
+
+      formatted_tbl <- display_tbl %>%
+        dplyr::mutate(
+          `Blend Edge` = scales::percent(`Blend Edge`, accuracy = 0.1),
+          `Market Home Prob` = scales::percent(`Market Home Prob`, accuracy = 0.1),
+          `Blend Home Prob` = scales::percent(`Blend Home Prob`, accuracy = 0.1),
+          `Market Away Prob` = scales::percent(`Market Away Prob`, accuracy = 0.1),
+          `Blend Away Prob` = scales::percent(`Blend Away Prob`, accuracy = 0.1),
+          `Blend EV Units` = format(round(`Blend EV Units`, 3), nsmall = 3),
+          dplyr::across(
+            c(`Market Moneyline`, `Blend Moneyline (vig)`),
+            ~ ifelse(is.na(.x), "", format(round(.x, 0), trim = TRUE))
+          )
+        )
+
+      if (requireNamespace("htmltools", quietly = TRUE)) {
+        rows <- purrr::map(
+          seq_len(nrow(formatted_tbl)),
+          ~ {
+            row_vals <- formatted_tbl[.x, , drop = FALSE]
+            row_list <- as.list(row_vals)
+            row_class <- ifelse(row_list[["Blend Beat Market?"]] == "Yes", "blend-win", "")
+            htmltools::tags$tr(
+              class = row_class,
+              purrr::map(row_list, ~ htmltools::tags$td(.x))
+            )
+          }
+        )
+
+        table_html <- htmltools::tags$table(
+          htmltools::tags$caption(title),
+          htmltools::tags$thead(htmltools::tags$tr(purrr::map(names(formatted_tbl), htmltools::tags$th))),
+          htmltools::tags$tbody(rows)
+        )
+
+        doc <- htmltools::tags$html(
+          htmltools::tags$head(htmltools::tags$style(css_block)),
+          htmltools::tags$body(table_html)
+        )
+
+        htmltools::save_html(doc, file = file)
+        saved <- TRUE
+      } else {
+        header <- paste(names(formatted_tbl), collapse = "</th><th>")
+        body <- purrr::map_chr(
+          seq_len(nrow(formatted_tbl)),
+          function(idx) {
+            row_vals <- formatted_tbl[idx, , drop = FALSE]
+            row_list <- as.list(row_vals)
+            row_class <- ifelse(row_list[["Blend Beat Market?"]] == "Yes", " class=\"blend-win\"", "")
+            cells <- paste(unlist(row_list, use.names = FALSE), collapse = "</td><td>")
+            sprintf("<tr%s><td>%s</td></tr>", row_class, cells)
+          }
+        )
+        html <- paste0(
+          "<html><head><style>",
+          css_block,
+          "</style></head><body><table><caption>",
+          title,
+          "</caption><thead><tr><th>",
+          header,
+          "</th></tr></thead><tbody>",
+          paste(body, collapse = ""),
+          "</tbody></table></body></html>"
+        )
+        writeLines(html, con = file)
+        saved <- TRUE
+      }
+    }
+
+    normalized_path <- normalizePath(file, winslash = "/", mustWork = FALSE)
+
+    if (saved && verbose) {
+      message(sprintf("export_moneyline_comparison_html(): wrote HTML report to %s", normalized_path))
+    }
+
+    if (saved && auto_open) {
+      opened <- FALSE
+      if (exists("open_moneyline_report", inherits = TRUE)) {
+        opened <- isTRUE(tryCatch(
+          open_moneyline_report(normalized_path, prefer_viewer = TRUE, verbose = verbose),
+          error = function(e) FALSE
+        ))
+      }
+
+      if (!opened) {
+        tryCatch(utils::browseURL(normalized_path), error = function(e) NULL)
+      }
+    }
+
+    invisible(normalized_path)
+  }
+}
+
+if (!exists("build_res_blend", inherits = FALSE)) {
+  build_res_blend <- function(res,
+                              blend_oos,
+                              join_keys = PREDICTION_JOIN_KEYS,
+                              prob_candidates = c("p2_cal", "home_p_2w_cal", "p2_home_cal", "home_p2w_cal"),
+                              verbose = TRUE) {
+    if (is.null(res) || !is.list(res) || !"per_game" %in% names(res)) {
+      if (verbose) message("build_res_blend(): res lacks a per_game component; skipping blend attachment.")
+      return(NULL)
+    }
+    if (is.null(blend_oos) || !nrow(blend_oos)) {
+      if (verbose) message("build_res_blend(): no blend history available; skipping blend attachment.")
+      return(NULL)
+    }
+
+    per_game <- standardize_join_keys(res$per_game)
+    prob_col <- prob_candidates[prob_candidates %in% names(per_game)][1]
+    if (is.na(prob_col)) {
+      if (verbose) message("build_res_blend(): no calibrated probability column found on res$per_game; skipping blend attachment.")
+      return(NULL)
+    }
+
+    base_per_game <- collapse_by_keys_relaxed(per_game, join_keys, label = "Backtest per-game table")
+    base_cols <- names(base_per_game)
+
+    blend_join <- blend_oos %>%
+      standardize_join_keys() %>%
+      dplyr::filter(dplyr::if_all(dplyr::all_of(join_keys), ~ !is.na(.))) %>%
+      dplyr::group_by(dplyr::across(dplyr::all_of(join_keys))) %>%
+      dplyr::summarise(p_blend = mean(p_blend, na.rm = TRUE), .groups = "drop")
+
+    if (!nrow(blend_join)) {
+      if (verbose) message("build_res_blend(): blend history has no complete join keys; skipping blend attachment.")
+      return(NULL)
+    }
+
+    cast_column <- function(col, template, col_name) {
+      if (!requireNamespace("vctrs", quietly = TRUE)) {
+        return(col)
+      }
+      tryCatch(
+        vctrs::vec_cast(col, template),
+        vctrs_error_incompatible_type = function(e) {
+          warning(sprintf(
+            "build_res_blend(): lossy cast prevented for column %s; keeping original type.",
+            col_name
+          ))
+          col
+        },
+        error = function(e) {
+          warning(sprintf(
+            "build_res_blend(): unable to align column %s: %s",
+            col_name,
+            conditionMessage(e)
+          ))
+          col
+        }
+      )
+    }
+
+    for (col_name in join_keys) {
+      if (!col_name %in% names(blend_join) || !col_name %in% names(base_per_game)) next
+      blend_join[[col_name]] <- cast_column(blend_join[[col_name]], base_per_game[[col_name]], col_name)
+    }
+
+    join_args <- list(x = base_per_game, y = blend_join, by = join_keys)
+    if ("relationship" %in% names(formals(dplyr::left_join))) {
+      join_args$relationship <- "many-to-one"
+    }
+
+    per_game_with_blend <- tryCatch(
+      {
+        rlang::exec(dplyr::left_join, !!!join_args)
+      },
+      error = function(e) {
+        warning(sprintf("build_res_blend(): left_join failed; keeping original probabilities. Reason: %s", conditionMessage(e)))
+        NULL
+      }
+    )
+
+    if (is.null(per_game_with_blend)) {
+      return(NULL)
+    }
+
+    if (!"p_blend" %in% names(per_game_with_blend)) {
+      if (verbose) message("build_res_blend(): joined table missing p_blend column; skipping blend attachment.")
+      return(NULL)
+    }
+
+    per_game_with_blend[[prob_col]] <- dplyr::if_else(
+      is.finite(per_game_with_blend$p_blend),
+      per_game_with_blend$p_blend,
+      per_game_with_blend[[prob_col]]
+    )
+
+    per_game_with_blend <- dplyr::select(per_game_with_blend, -p_blend)
+
+    missing_cols <- setdiff(base_cols, names(per_game_with_blend))
+    if (length(missing_cols)) {
+      for (col_name in missing_cols) {
+        per_game_with_blend[[col_name]] <- base_per_game[[col_name]][0]
+      }
+    }
+
+    per_game_with_blend <- dplyr::select(per_game_with_blend, dplyr::all_of(base_cols))
+
+    res_out <- res
+    res_out$per_game <- per_game_with_blend
+
+    if (verbose) {
+      message(sprintf("build_res_blend(): attached blended probabilities using column '%s'.", prob_col))
+    }
+
+    res_out
+  }
+}
+
 suppressPackageStartupMessages({
   source("NFLbrier_logloss.R")
   library(tidyverse)
@@ -4284,16 +4878,29 @@ if (exists("cmp_blend") && !is.null(cmp_blend)) {
 }
 
 
-# Preserve comparison output for the HTML report once all data prep is complete
-moneyline_report_inputs <- NULL
 if (exists("cmp_blend") && !is.null(cmp_blend)) {
-  moneyline_report_inputs <- list(
-    comparison = cmp_blend,
-    join_keys = if (exists("PREDICTION_JOIN_KEYS", inherits = TRUE)) PREDICTION_JOIN_KEYS else c("game_id", "season", "week")
+  join_keys_html <- if (exists("PREDICTION_JOIN_KEYS", inherits = TRUE)) PREDICTION_JOIN_KEYS else c("game_id", "season", "week")
+  report_tbl <- build_moneyline_comparison_table(
+    market_comparison_result = cmp_blend,
+    enriched_schedule = sched,
+    join_keys = join_keys_html,
+    vig = 0.10,
+    verbose = TRUE
   )
-} else {
-  message("Moneyline report inputs unavailable; blended market comparison not generated.")
+
+  if (nrow(report_tbl)) {
+    report_title <- sprintf("Blend vs Market Moneylines — Week %s, %s", WEEK_TO_SIM, SEASON)
+    report_path <- export_moneyline_comparison_html(
+      comparison_tbl = report_tbl,
+      title = report_title,
+      verbose = TRUE,
+      auto_open = TRUE
+    )
+  } else {
+    message("Market comparison HTML skipped because report table was empty.")
+  }
 }
+
 
 
 # ────────────────── INTERACTIVE SLATE TABLE (reactable) ──────────────────
@@ -4440,11 +5047,7 @@ saveRDS(games_ready, file.path(log_dir, paste0("games_ready_", run_id, ".rds")))
 
 
 
-has_moneyline_inputs <- exists("moneyline_report_inputs", inherits = FALSE) &&
-  !is.null(moneyline_report_inputs)
-has_moneyline_report <- exists("moneyline_report", inherits = TRUE)
-
-if (has_moneyline_inputs && has_moneyline_report) {
+if (!is.null(moneyline_report_inputs) && exists("moneyline_report", inherits = TRUE)) {
   report_schedule <- tryCatch({
     base_sched <- sched
     if (exists("final")) {
@@ -4490,9 +5093,7 @@ if (has_moneyline_inputs && has_moneyline_report) {
       message(sprintf("Moneyline report written to %s", report_path))
     }
   }
-} else if (!has_moneyline_report) {
+} else if (!exists("moneyline_report", inherits = TRUE)) {
   message("moneyline_report() is unavailable; HTML export skipped.")
-} else if (!has_moneyline_inputs) {
-  message("Moneyline report skipped: comparison inputs were not generated earlier in the run.")
 }
 
