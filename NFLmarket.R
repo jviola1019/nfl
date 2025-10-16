@@ -583,6 +583,9 @@ build_moneyline_comparison_table <- function(market_comparison_result,
   date_col <- select_first_column(schedule_collapsed, c("game_date", "gameDate", "date"))
   home_ml_col <- select_first_column(schedule_collapsed, c("espn_final_home_ml", "home_ml", "ml_home", "home_moneyline"))
   away_ml_col <- select_first_column(schedule_collapsed, c("espn_final_away_ml", "away_ml", "ml_away", "away_moneyline"))
+  home_median_col <- select_first_column(schedule_collapsed, c("blend_home_median", "home_median_blend", "home_median"))
+  away_median_col <- select_first_column(schedule_collapsed, c("blend_away_median", "away_median_blend", "away_median"))
+  total_median_col <- select_first_column(schedule_collapsed, c("blend_total_median", "total_median_blend", "total_median"))
 
   schedule_context <- schedule_collapsed %>%
     dplyr::mutate(
@@ -590,7 +593,10 @@ build_moneyline_comparison_table <- function(market_comparison_result,
       away_team = as.character(pull_or_default(schedule_collapsed, away_team_col, NA_character_)),
       game_date = suppressWarnings(as.Date(pull_or_default(schedule_collapsed, date_col, NA_character_))),
       market_home_ml = coerce_numeric_safely(pull_or_default(schedule_collapsed, home_ml_col, NA_real_)),
-      market_away_ml = coerce_numeric_safely(pull_or_default(schedule_collapsed, away_ml_col, NA_real_))
+      market_away_ml = coerce_numeric_safely(pull_or_default(schedule_collapsed, away_ml_col, NA_real_)),
+      blend_home_median = coerce_numeric_safely(pull_or_default(schedule_collapsed, home_median_col, NA_real_)),
+      blend_away_median = coerce_numeric_safely(pull_or_default(schedule_collapsed, away_median_col, NA_real_)),
+      blend_total_median = coerce_numeric_safely(pull_or_default(schedule_collapsed, total_median_col, NA_real_))
     ) %>%
     dplyr::transmute(
       dplyr::across(dplyr::all_of(join_cols)),
@@ -598,7 +604,10 @@ build_moneyline_comparison_table <- function(market_comparison_result,
       away_team,
       game_date,
       market_home_ml,
-      market_away_ml
+      market_away_ml,
+      blend_home_median,
+      blend_away_median,
+      blend_total_median
     )
 
   combined <- scores %>%
@@ -679,12 +688,25 @@ build_moneyline_comparison_table <- function(market_comparison_result,
         is.na(blend_ev_units) ~ NA,
         TRUE ~ blend_ev_units > 0
       ),
+      market_ev_units = dplyr::if_else(
+        is.na(blend_ev_units),
+        NA_real_,
+        -blend_ev_units
+      ),
+      market_winning = dplyr::case_when(
+        is.na(market_ev_units) ~ NA,
+        market_ev_units > 0 ~ TRUE,
+        TRUE ~ FALSE
+      ),
       actual_winner = dplyr::case_when(
         is.na(actual_home_win) ~ NA_character_,
         actual_home_win == 1L  ~ home_team,
         actual_home_win == 0L  ~ away_team,
         TRUE ~ NA_character_
       ),
+      blend_home_median = coerce_numeric_safely(blend_home_median),
+      blend_away_median = coerce_numeric_safely(blend_away_median),
+      blend_total_median = coerce_numeric_safely(blend_total_median),
       # legacy aliases preserved for downstream code expecting model_* naming
       model_prob = blend_home_prob,
       market_prob = market_home_prob,
@@ -745,11 +767,20 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       `Blend Favorite` = blend_favorite,
       `Market Moneyline` = market_moneyline,
       `Blend Moneyline (vig)` = blend_moneyline_vig,
+      `Blend Median Home Score` = blend_home_median,
+      `Blend Median Away Score` = blend_away_median,
+      `Blend Median Total` = blend_total_median,
       `Blend Edge` = blend_edge_prob,
       `Blend EV Units` = blend_ev_units,
       `Blend Beat Market?` = dplyr::case_when(
         is.na(blend_beats_market) ~ "N/A",
         blend_beats_market ~ "Yes",
+        TRUE ~ "No"
+      ),
+      `Market EV Units` = market_ev_units,
+      `Market Winning?` = dplyr::case_when(
+        is.na(market_winning) ~ "N/A",
+        market_winning ~ "Yes",
         TRUE ~ "No"
       ),
       `Market Home Prob` = market_home_prob,
@@ -760,65 +791,92 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     )
 
   saved <- FALSE
-
-  if (requireNamespace("gt", quietly = TRUE)) {
-    gt_tbl <- display_tbl %>%
-      gt::gt() %>%
-      gt::fmt_percent(
+  if (requireNamespace("DT", quietly = TRUE) &&
+      requireNamespace("htmlwidgets", quietly = TRUE) &&
+      requireNamespace("htmltools", quietly = TRUE)) {
+    dt_tbl <- DT::datatable(
+      display_tbl,
+      rownames = FALSE,
+      class = "display nowrap compact stripe hover",
+      extensions = c("Buttons"),
+      options = list(
+        dom = "Bfrtip",
+        buttons = c("copy", "csv"),
+        pageLength = 20,
+        autoWidth = TRUE,
+        order = list(
+          list(which(names(display_tbl) == "Season") - 1, "asc"),
+          list(which(names(display_tbl) == "Week") - 1, "asc"),
+          list(which(names(display_tbl) == "Blend EV Units") - 1, "desc")
+        ),
+        columnDefs = list(
+          list(className = "dt-center", targets = which(names(display_tbl) %in% c(
+            "Season", "Week", "Blend Favorite", "Blend Beat Market?", "Market Winning?"
+          )) - 1)
+        ),
+        language = list(searchPlaceholder = "Search matchups...")
+      ),
+      caption = htmltools::tags$caption(
+        style = "caption-side: top; text-align: left; font-size: 1.5rem; font-weight: 600; color: #ecfdf5;",
+        title
+      )
+    ) %>%
+      DT::formatPercentage(
         columns = c(
           "Blend Edge",
           "Market Home Prob", "Blend Home Prob",
           "Market Away Prob", "Blend Away Prob"
+        ), digits = 1
+      ) %>%
+      DT::formatRound(
+        columns = c("Market Moneyline", "Blend Moneyline (vig)"), digits = 0
+      ) %>%
+      DT::formatRound(
+        columns = c("Blend Median Home Score", "Blend Median Away Score", "Blend Median Total"), digits = 1
+      ) %>%
+      DT::formatRound(
+        columns = c("Blend EV Units", "Market EV Units"), digits = 3
+      ) %>%
+      DT::formatStyle(
+        "Blend Beat Market?",
+        target = "row",
+        backgroundColor = DT::styleEqual(
+          c("Yes", "No", "N/A"),
+          c("#166534", "#1f2937", "#374151")
         ),
-        decimals = 1
-      ) %>%
-      gt::fmt_number(
-        columns = c("Market Moneyline", "Blend Moneyline (vig)"),
-        decimals = 0,
-        drop_trailing_zeros = TRUE,
-        use_seps = FALSE
-      ) %>%
-      gt::fmt_number(columns = "Blend EV Units", decimals = 3) %>%
-      gt::cols_align(
-        align = "center",
-        columns = c("Season", "Week", "Blend Beat Market?", "Blend Favorite")
-      ) %>%
-      gt::cols_label(
-        `Blend Edge` = "Blend Edge (pp)",
-        `Blend EV Units` = "Blend EV (units)",
-        `Blend Moneyline (vig)` = "Blend ML (vig)"
-      ) %>%
-      gt::tab_header(title = title) %>%
-      gt::tab_options(
-        table.font.names = c("Source Sans Pro", "Helvetica Neue", "Arial", "sans-serif"),
-        table.background.color = "#0b1120",
-        table.font.color = "#e2e8f0",
-        heading.background.color = "#064e3b",
-        heading.title.color = "#ecfdf5",
-        heading.subtitle.color = "#ecfdf5",
-        column_labels.background.color = "#166534",
-        column_labels.font.weight = "bold",
-        column_labels.text_transform = "uppercase",
-        row.striping.background_color = "#111827"
-      ) %>%
-      gt::opt_row_striping() %>%
-      gt::data_color(
-        columns = "Blend Beat Market?",
-        colors = scales::col_factor(
-          palette = c("No" = "#374151", "Yes" = "#15803d", "N/A" = "#4b5563"),
-          domain = c("No", "Yes", "N/A")
+        color = DT::styleEqual(
+          c("Yes", "No", "N/A"),
+          c("#ecfdf5", "#e2e8f0", "#e2e8f0")
         )
       ) %>%
-      gt::tab_style(
-        style = list(
-          gt::cell_fill(color = "#14532d"),
-          gt::cell_text(color = "#ecfdf5", weight = "bold")
+      DT::formatStyle(
+        "Market Winning?",
+        backgroundColor = DT::styleEqual(
+          c("Yes", "No", "N/A"),
+          c("#0f172a", "#14532d", "#374151")
         ),
-        locations = gt::cells_column_labels(columns = gt::everything())
+        color = DT::styleEqual(
+          c("Yes", "No", "N/A"),
+          c("#e2e8f0", "#ecfdf5", "#e2e8f0")
+        )
       )
 
+    theme_css <- htmltools::tags$style(htmltools::HTML(
+      "body {background-color:#0b1120;color:#e2e8f0;font-family:'Source Sans Pro','Helvetica Neue',Arial,sans-serif;}\n"
+      ,"table.dataTable {background-color:#111827;color:#e2e8f0;}\n"
+      ,"table.dataTable thead th {background-color:#14532d;color:#ecfdf5;text-transform:uppercase;letter-spacing:0.08em;}\n"
+      ,"table.dataTable tbody tr {background-color:#111827;}\n"
+      ,"table.dataTable tbody tr.odd {background-color:#151b2f;}\n"
+      ,"table.dataTable tbody tr:hover {background-color:#1f2937;color:#f8fafc;}\n"
+      ,"div.dt-buttons .dt-button {background-color:#15803d;color:#ecfdf5;border:none;border-radius:4px;margin-right:6px;}\n"
+      ,"div.dataTables_wrapper div.dataTables_filter input {background-color:#111827;color:#ecfdf5;border:1px solid #1f2937;border-radius:4px;padding:4px 8px;}\n"
+      ,"div.dataTables_wrapper div.dataTables_length select {background-color:#111827;color:#ecfdf5;border:1px solid #1f2937;border-radius:4px;padding:4px;}\n"
+    ))
+
+    widget <- htmlwidgets::prependContent(dt_tbl, theme_css)
+
     try({
-      gt::gtsave(gt_tbl, file = file)
+      htmlwidgets::saveWidget(widget, file = file, selfcontained = TRUE)
       saved <- TRUE
     }, silent = TRUE)
   }
@@ -833,7 +891,10 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       "tr:nth-child(even) {background-color: #1f2933;}\n",
       "tr.blend-win {background-color: #14532d;}\n",
       "tr.blend-win td {color: #ecfdf5;}\n",
-      "caption {caption-side: top; font-size: 1.25rem; font-weight: 600; margin-bottom: 0.75rem; color: #ecfdf5;}\n"
+      "tr.market-win {background-color: #0f172a;}\n",
+      "caption {caption-side: top; font-size: 1.5rem; font-weight: 600; margin-bottom: 0.75rem; color: #ecfdf5;}\n",
+      "div.controls {margin-bottom: 1rem;}\n",
+      "input.search-box {background-color:#111827;color:#ecfdf5;border:1px solid #1f2937;border-radius:4px;padding:6px 10px;}\n"
     )
 
     formatted_tbl <- display_tbl %>%
@@ -843,66 +904,69 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         `Blend Home Prob` = scales::percent(`Blend Home Prob`, accuracy = 0.1),
         `Market Away Prob` = scales::percent(`Market Away Prob`, accuracy = 0.1),
         `Blend Away Prob` = scales::percent(`Blend Away Prob`, accuracy = 0.1),
+        `Blend Median Home Score` = format(round(`Blend Median Home Score`, 1), nsmall = 1),
+        `Blend Median Away Score` = format(round(`Blend Median Away Score`, 1), nsmall = 1),
+        `Blend Median Total` = format(round(`Blend Median Total`, 1), nsmall = 1),
         `Blend EV Units` = format(round(`Blend EV Units`, 3), nsmall = 3),
+        `Market EV Units` = format(round(`Market EV Units`, 3), nsmall = 3),
         dplyr::across(
           c(`Market Moneyline`, `Blend Moneyline (vig)`),
           ~ ifelse(is.na(.x), "", format(round(.x, 0), trim = TRUE))
         )
       )
 
-    if (requireNamespace("htmltools", quietly = TRUE)) {
-      rows <- purrr::map(
-        seq_len(nrow(formatted_tbl)),
-        ~ {
-          row_vals <- formatted_tbl[.x, , drop = FALSE]
-          row_list <- as.list(row_vals)
-          row_class <- ifelse(row_list[["Blend Beat Market?"]] == "Yes", "blend-win", "")
-          htmltools::tags$tr(
-            class = row_class,
-            purrr::map(row_list, ~ htmltools::tags$td(.x))
-          )
-        }
-      )
+    header <- paste(names(formatted_tbl), collapse = "</th><th>")
+    body <- purrr::map_chr(
+      seq_len(nrow(formatted_tbl)),
+      function(idx) {
+        row_vals <- formatted_tbl[idx, , drop = FALSE]
+        row_list <- as.list(row_vals)
+        row_class <-
+          if (row_list[["Blend Beat Market?"]] == "Yes") {
+            " class=\"blend-win\""
+          } else if (row_list[["Market Winning?"]] == "Yes") {
+            " class=\"market-win\""
+          } else {
+            ""
+          }
+        cells <- paste(unlist(row_list, use.names = FALSE), collapse = "</td><td>")
+        sprintf("<tr%s><td>%s</td></tr>", row_class, cells)
+      }
+    )
 
-      table_html <- htmltools::tags$table(
-        htmltools::tags$caption(title),
-        htmltools::tags$thead(htmltools::tags$tr(purrr::map(names(formatted_tbl), htmltools::tags$th))),
-        htmltools::tags$tbody(rows)
-      )
+    html <- paste0(
+      "<html><head><meta charset=\"utf-8\"><title>",
+      title,
+      "</title><link rel=\"stylesheet\" href=\"https://cdn.datatables.net/1.13.8/css/jquery.dataTables.min.css\">",
+      "<link rel=\"stylesheet\" href=\"https://cdn.datatables.net/buttons/2.4.2/css/buttons.dataTables.min.css\">",
+      "<style>",
+      css_block,
+      "</style></head><body>",
+      "<table id=\"moneyline-report\"><caption>",
+      title,
+      "</caption><thead><tr><th>",
+      header,
+      "</th></tr></thead><tbody>",
+      paste(body, collapse = ""),
+      "</tbody></table>",
+      "<script src=\"https://code.jquery.com/jquery-3.7.1.min.js\"></script>",
+      "<script src=\"https://cdn.datatables.net/1.13.8/js/jquery.dataTables.min.js\"></script>",
+      "<script src=\"https://cdn.datatables.net/buttons/2.4.2/js/dataTables.buttons.min.js\"></script>",
+      "<script src=\"https://cdn.datatables.net/buttons/2.4.2/js/buttons.html5.min.js\"></script>",
+      "<script>$(document).ready(function(){",
+      "$('#moneyline-report').DataTable({",
+      "pageLength:20,",
+      "dom:'Bfrtip',",
+      "buttons:['copy','csv'],",
+      "order:[[0,'asc'],[1,'asc'],[11,'desc']],",
+      "language:{searchPlaceholder:'Search matchups...'}",
+      "});",
+      "});</script>",
+      "</body></html>"
+    )
 
-      doc <- htmltools::tags$html(
-        htmltools::tags$head(htmltools::tags$style(css_block)),
-        htmltools::tags$body(table_html)
-      )
-
-      htmltools::save_html(doc, file = file)
-      saved <- TRUE
-    } else {
-      header <- paste(names(formatted_tbl), collapse = "</th><th>")
-      body <- purrr::map_chr(
-        seq_len(nrow(formatted_tbl)),
-        function(idx) {
-          row_vals <- formatted_tbl[idx, , drop = FALSE]
-          row_list <- as.list(row_vals)
-          row_class <- ifelse(row_list[["Blend Beat Market?"]] == "Yes", " class=\"blend-win\"", "")
-          cells <- paste(unlist(row_list, use.names = FALSE), collapse = "</td><td>")
-          sprintf("<tr%s><td>%s</td></tr>", row_class, cells)
-        }
-      )
-      html <- paste0(
-        "<html><head><style>",
-        css_block,
-        "</style></head><body><table><caption>",
-        title,
-        "</caption><thead><tr><th>",
-        header,
-        "</th></tr></thead><tbody>",
-        paste(body, collapse = ""),
-        "</tbody></table></body></html>"
-      )
-      writeLines(html, con = file)
-      saved <- TRUE
-    }
+    writeLines(html, con = file)
+    saved <- TRUE
   }
 
   normalized_path <- normalizePath(file, winslash = "/", mustWork = FALSE)

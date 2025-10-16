@@ -5047,3 +5047,53 @@ saveRDS(games_ready, file.path(log_dir, paste0("games_ready_", run_id, ".rds")))
 
 
 
+if (!is.null(moneyline_report_inputs) && exists("moneyline_report", inherits = TRUE)) {
+  report_schedule <- tryCatch({
+    base_sched <- sched
+    if (exists("final")) {
+      medians_tbl <- final %>%
+        dplyr::select(
+          game_id,
+          season,
+          week,
+          blend_home_median = home_median_blend,
+          blend_away_median = away_median_blend,
+          blend_total_median = total_median_blend
+        )
+      base_sched <- base_sched %>%
+        dplyr::left_join(medians_tbl, by = c("game_id", "season", "week"))
+    }
+
+    base_sched %>%
+      dplyr::filter(season == SEASON, week == WEEK_TO_SIM)
+  }, error = function(e) {
+    message(sprintf("Unable to prepare schedule context for moneyline report: %s", conditionMessage(e)))
+    NULL
+  })
+
+  if (!is.null(report_schedule)) {
+    report_title <- sprintf("Blend vs Market Moneylines — Week %s, %s", WEEK_TO_SIM, SEASON)
+    report_path <- tryCatch(
+      moneyline_report(
+        market_comparison_result = moneyline_report_inputs$comparison,
+        schedule = report_schedule,
+        join_keys = moneyline_report_inputs$join_keys,
+        vig = 0.10,
+        title = report_title,
+        verbose = TRUE,
+        auto_open = TRUE
+      ),
+      error = function(e) {
+        message(sprintf("Moneyline report generation failed: %s", conditionMessage(e)))
+        NULL
+      }
+    )
+
+    if (!is.null(report_path)) {
+      message(sprintf("Moneyline report written to %s", report_path))
+    }
+  }
+} else if (!exists("moneyline_report", inherits = TRUE)) {
+  message("moneyline_report() is unavailable; HTML export skipped.")
+}
+
