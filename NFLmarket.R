@@ -968,6 +968,49 @@ open_moneyline_report <- function(file, prefer_viewer = TRUE, verbose = TRUE) {
   invisible(opened)
 }
 
+moneyline_report <- function(market_comparison_result,
+                             schedule,
+                             file = NULL,
+                             title = NULL,
+                             join_keys = PREDICTION_JOIN_KEYS,
+                             vig = 0.10,
+                             verbose = TRUE,
+                             auto_open = TRUE) {
+  join_keys <- unique(join_keys)
+  table <- build_moneyline_comparison_table(
+    market_comparison_result = market_comparison_result,
+    enriched_schedule = schedule,
+    join_keys = join_keys,
+    vig = vig,
+    verbose = verbose
+  )
+
+  if (!nrow(table)) {
+    if (verbose) {
+      message("moneyline_report(): comparison table is empty; skipping export.")
+    }
+    return(invisible(NULL))
+  }
+
+  if (is.null(title) || !nzchar(title)) {
+    seasons <- unique(table$season)
+    weeks <- unique(table$week)
+    if (length(seasons) == 1L && length(weeks) == 1L) {
+      title <- sprintf("Blend vs Market Moneylines — Week %s, %s", weeks, seasons)
+    } else {
+      title <- "Blend vs Market Moneyline Comparison"
+    }
+  }
+
+  export_moneyline_comparison_html(
+    comparison_tbl = table,
+    file = file,
+    title = title,
+    verbose = verbose,
+    auto_open = auto_open
+  )
+}
+
 if (interactive()) {
   message(
     "NFLmarket.R loaded. Use load_latest_market_inputs(), enrich_with_pre_kickoff_espn_lines(), and evaluate_market_vs_blend() as needed."

@@ -5,7 +5,7 @@
 
 load_market_helpers <- local({
   sourced <- FALSE
-  function() {
+  function(strict = TRUE) {
     if (isTRUE(sourced)) {
       return(invisible(TRUE))
     }
@@ -60,54 +60,24 @@ load_market_helpers <- local({
     }
 
     if (!success) {
-      warning(
-        sprintf(
-          "Unable to automatically source NFLmarket.R from %s. Moneyline comparison helpers may be unavailable.",
-          paste(candidates, collapse = ", ")
-        )
+      msg <- sprintf(
+        "Unable to automatically source NFLmarket.R from %s.",
+        paste(candidates, collapse = ", ")
       )
       if (!is.null(last_error)) {
-        message("Last error while sourcing NFLmarket.R: ", conditionMessage(last_error))
+        msg <- sprintf("%s Last error: %s", msg, conditionMessage(last_error))
       }
+      if (isTRUE(strict)) {
+        stop(msg, call. = FALSE)
+      }
+      warning(msg, call. = FALSE)
     }
 
     invisible(success)
   }
 })
 
-load_market_helpers()
-
-if (!exists("JOIN_KEY_ALIASES", inherits = FALSE)) {
-  JOIN_KEY_ALIASES <- list(
-    game_id = c("game_id", "gameid", "gameId", "gid"),
-    season  = c("season", "season_std", "Season", "season_year", "seasonYear", "year"),
-    week    = c("week", "week_std", "Week", "game_week", "gameWeek", "gameday_week", "wk")
-  )
-}
-
-if (!exists("PREDICTION_JOIN_KEYS", inherits = FALSE)) {
-  PREDICTION_JOIN_KEYS <- names(JOIN_KEY_ALIASES)
-}
-
-if (!exists("first_non_missing_typed", inherits = FALSE)) {
-  first_non_missing_typed <- function(x) {
-    if (!length(x)) {
-      return(x)
-    }
-
-    is_valid <- if (is.numeric(x)) {
-      which(is.finite(x))
-    } else {
-      which(!is.na(x))
-    }
-
-    if (!length(is_valid)) {
-      return(x[NA_integer_])
-    }
-
-    x[[is_valid[1L]]]
-  }
-}
+load_market_helpers(strict = TRUE)
 
 if (!exists("collapse_by_keys_strict", inherits = FALSE)) {
   collapse_by_keys_strict <- function(df, keys, label = "data frame") {
@@ -174,99 +144,6 @@ if (!exists("collapse_by_keys_strict", inherits = FALSE)) {
         label,
         nrow(dup_check)
       ))
-    }
-
-    out
-  }
-}
-
-if (!exists("collapse_by_keys_relaxed", inherits = FALSE)) {
-  collapse_by_keys_relaxed <- function(df, keys, label = "data frame") {
-    if (is.null(df) || !nrow(df) || !length(keys)) {
-      return(df)
-    }
-
-    missing_keys <- setdiff(keys, names(df))
-    if (length(missing_keys)) {
-      warning(sprintf(
-        "%s is missing required key columns: %s; skipping duplicate collapse.",
-        label,
-        paste(missing_keys, collapse = ", ")
-      ))
-      return(df)
-    }
-
-    complete_mask <- stats::complete.cases(df[keys])
-    df_complete <- df[complete_mask, , drop = FALSE]
-    df_incomplete <- df[!complete_mask, , drop = FALSE]
-
-    if (!nrow(df_complete)) {
-      return(df)
-    }
-
-    dup <- df_complete %>%
-      dplyr::count(dplyr::across(dplyr::all_of(keys))) %>%
-      dplyr::filter(.data$n > 1L)
-
-    if (!nrow(dup)) {
-      return(df)
-    }
-
-    message(sprintf(
-      "%s: collapsing %d duplicate rows keyed by %s (relaxed).",
-      label,
-      nrow(dup),
-      paste(keys, collapse = ", ")
-    ))
-
-    non_key_cols <- setdiff(names(df_complete), keys)
-
-    collapsed_complete <- df_complete %>%
-      dplyr::group_by(dplyr::across(dplyr::all_of(keys))) %>%
-      dplyr::summarise(
-        dplyr::across(
-          dplyr::all_of(non_key_cols),
-          ~ first_non_missing_typed(.x),
-          .names = "{.col}"
-        ),
-        .groups = "drop"
-      )
-
-    out <- dplyr::bind_rows(collapsed_complete, df_incomplete) %>%
-      dplyr::select(dplyr::all_of(names(df)))
-
-    dup_check <- out %>%
-      dplyr::filter(dplyr::if_all(dplyr::all_of(keys), ~ !is.na(.))) %>%
-      dplyr::count(dplyr::across(dplyr::all_of(keys))) %>%
-      dplyr::filter(.data$n > 1L)
-
-    if (nrow(dup_check)) {
-      warning(sprintf(
-        "%s: duplicates remain for %d key combinations after relaxed collapse.",
-        label,
-        nrow(dup_check)
-      ))
-    }
-
-    out
-  }
-}
-
-if (!exists("standardize_join_keys", inherits = FALSE)) {
-  standardize_join_keys <- function(df, key_alias = JOIN_KEY_ALIASES) {
-    if (is.null(df) || !inherits(df, "data.frame")) {
-      return(df)
-    }
-
-    out <- df
-    for (canonical in names(key_alias)) {
-      if (canonical %in% names(out)) next
-      alt_names <- unique(c(key_alias[[canonical]], canonical))
-      alt_names <- alt_names[alt_names != canonical]
-      match <- alt_names[alt_names %in% names(out)]
-      if (length(match)) {
-        out <- dplyr::rename(out, !!canonical := !!rlang::sym(match[1]))
-      }
     }
 
     out
