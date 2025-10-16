@@ -702,21 +702,38 @@ build_moneyline_comparison_table <- function(market_comparison_result,
 }
 
 export_moneyline_comparison_html <- function(comparison_tbl,
-                                             file,
+                                             file = NULL,
                                              title = "Blend vs Market Moneylines",
-                                             verbose = TRUE) {
-  if (missing(file) || !length(file) || is.na(file)) {
-    stop("export_moneyline_comparison_html(): 'file' must be a valid output path.")
+                                             verbose = TRUE,
+                                             auto_open = TRUE) {
+  if (missing(file) || is.null(file) || !length(file) || all(is.na(file)) || !nzchar(file[[1L]])) {
+    file <- file.path(getwd(), "NFLvsmarket_report.html")
+    if (verbose) {
+      message(sprintf(
+        "export_moneyline_comparison_html(): using default output path %s",
+        file.path(normalizePath(dirname(file), winslash = "/", mustWork = FALSE), basename(file))
+      ))
+    }
+  } else {
+    file <- file[[1L]]
+  }
+
+  if (!nzchar(file)) {
+    stop("export_moneyline_comparison_html(): 'file' must resolve to a non-empty path.")
   }
 
   if (!nrow(comparison_tbl)) {
     if (verbose) message("export_moneyline_comparison_html(): comparison table empty; skipping export.")
-    return(invisible(NULL))
+    return(invisible(file))
   }
 
   dir_path <- dirname(file)
   if (nzchar(dir_path) && dir_path != "." && !dir.exists(dir_path)) {
     dir.create(dir_path, recursive = TRUE, showWarnings = FALSE)
+  }
+
+  if (file.exists(file)) {
+    unlink(file, force = TRUE)
   }
 
   display_tbl <- comparison_tbl %>%
@@ -888,14 +905,27 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     }
   }
 
+  normalized_path <- normalizePath(file, winslash = "/", mustWork = FALSE)
+
   if (saved && verbose) {
-    message(sprintf(
-      "export_moneyline_comparison_html(): wrote HTML report to %s",
-      normalizePath(file, winslash = "/", mustWork = FALSE)
-    ))
+    message(sprintf("export_moneyline_comparison_html(): wrote HTML report to %s", normalized_path))
   }
 
-  invisible(NULL)
+  if (saved && auto_open) {
+    opened <- FALSE
+    if (exists("open_moneyline_report", inherits = TRUE)) {
+      opened <- isTRUE(tryCatch(
+        open_moneyline_report(normalized_path, prefer_viewer = TRUE, verbose = verbose),
+        error = function(e) FALSE
+      ))
+    }
+
+    if (!opened) {
+      tryCatch(utils::browseURL(normalized_path), error = function(e) NULL)
+    }
+  }
+
+  invisible(normalized_path)
 }
 
 open_moneyline_report <- function(file, prefer_viewer = TRUE, verbose = TRUE) {
