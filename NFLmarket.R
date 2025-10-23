@@ -282,6 +282,11 @@ enrich_with_pre_kickoff_espn_lines <- function(sched,
     espn_final_home_spread = c(
       "espn_final_home_spread", "espn_home_spread_final", "home_spread_final",
       "spread_final", "home_spread_close", "spread_close", "espn_home_spread"
+    ),
+    espn_final_total = c(
+      "espn_final_total", "espn_total_final", "total_final", "total_close",
+      "market_total", "total_line", "total", "over_under", "over_under_close",
+      "espn_total"
     )
   )
 
@@ -297,6 +302,10 @@ enrich_with_pre_kickoff_espn_lines <- function(sched,
   sched_std <- copy_column_if_missing(sched_std, "home_ml", "espn_final_home_ml")
   sched_std <- copy_column_if_missing(sched_std, "away_ml", "espn_final_away_ml")
   sched_std <- copy_column_if_missing(sched_std, "spread_line", "espn_final_home_spread")
+  sched_std <- copy_column_if_missing(sched_std, "home_spread", "espn_final_home_spread")
+  sched_std <- copy_column_if_missing(sched_std, "market_spread", "spread_line")
+  sched_std <- copy_column_if_missing(sched_std, "total_line", "espn_final_total")
+  sched_std <- copy_column_if_missing(sched_std, "market_total", "total_line")
 
   if ("espn_final_home_ml" %in% names(sched_std) &&
       "espn_final_away_ml" %in% names(sched_std)) {
@@ -599,29 +608,39 @@ build_moneyline_comparison_table <- function(market_comparison_result,
   home_median_col <- select_first_column(schedule_collapsed, c("blend_home_median", "home_median_blend", "home_median"))
   away_median_col <- select_first_column(schedule_collapsed, c("blend_away_median", "away_median_blend", "away_median"))
   total_median_col <- select_first_column(schedule_collapsed, c("blend_total_median", "total_median_blend", "total_median"))
+  spread_col <- select_first_column(schedule_collapsed, c(
+    "espn_final_home_spread", "home_spread", "market_spread", "spread_line", "spread"
+  ))
+  total_col <- select_first_column(schedule_collapsed, c(
+    "espn_final_total", "market_total", "total_line", "total", "over_under"
+  ))
 
   schedule_context <- schedule_collapsed %>%
     dplyr::mutate(
       home_team = as.character(pull_or_default(schedule_collapsed, home_team_col, NA_character_)),
       away_team = as.character(pull_or_default(schedule_collapsed, away_team_col, NA_character_)),
-      game_date = suppressWarnings(as.Date(pull_or_default(schedule_collapsed, date_col, NA_character_))),
-      market_home_ml = coerce_numeric_safely(pull_or_default(schedule_collapsed, home_ml_col, NA_real_)),
-      market_away_ml = coerce_numeric_safely(pull_or_default(schedule_collapsed, away_ml_col, NA_real_)),
-      blend_home_median = coerce_numeric_safely(pull_or_default(schedule_collapsed, home_median_col, NA_real_)),
-      blend_away_median = coerce_numeric_safely(pull_or_default(schedule_collapsed, away_median_col, NA_real_)),
-      blend_total_median = coerce_numeric_safely(pull_or_default(schedule_collapsed, total_median_col, NA_real_))
-    ) %>%
-    dplyr::transmute(
-      dplyr::across(dplyr::all_of(join_cols)),
-      home_team,
-      away_team,
-      game_date,
-      market_home_ml,
-      market_away_ml,
-      blend_home_median,
-      blend_away_median,
-      blend_total_median
-    )
+        game_date = suppressWarnings(as.Date(pull_or_default(schedule_collapsed, date_col, NA_character_))),
+        market_home_ml = coerce_numeric_safely(pull_or_default(schedule_collapsed, home_ml_col, NA_real_)),
+        market_away_ml = coerce_numeric_safely(pull_or_default(schedule_collapsed, away_ml_col, NA_real_)),
+        blend_home_median = coerce_numeric_safely(pull_or_default(schedule_collapsed, home_median_col, NA_real_)),
+        blend_away_median = coerce_numeric_safely(pull_or_default(schedule_collapsed, away_median_col, NA_real_)),
+        blend_total_median = coerce_numeric_safely(pull_or_default(schedule_collapsed, total_median_col, NA_real_)),
+        market_home_spread = coerce_numeric_safely(pull_or_default(schedule_collapsed, spread_col, NA_real_)),
+        market_total_line = coerce_numeric_safely(pull_or_default(schedule_collapsed, total_col, NA_real_))
+      ) %>%
+      dplyr::transmute(
+        dplyr::across(dplyr::all_of(join_cols)),
+        home_team,
+        away_team,
+        game_date,
+        market_home_ml,
+        market_away_ml,
+        blend_home_median,
+        blend_away_median,
+        blend_total_median,
+        market_home_spread,
+        market_total_line
+      )
 
   combined <- scores %>%
     dplyr::mutate(
@@ -639,6 +658,19 @@ build_moneyline_comparison_table <- function(market_comparison_result,
       blend_away_prob = clamp_probability(1 - blend_home_prob),
       market_home_prob = clamp_probability(market_home_prob),
       market_away_prob = clamp_probability(1 - market_home_prob),
+      market_home_spread = coerce_numeric_safely(market_home_spread),
+      market_total_line = coerce_numeric_safely(market_total_line),
+      blend_median_margin = dplyr::if_else(
+        is.na(blend_home_median) | is.na(blend_away_median),
+        NA_real_,
+        blend_home_median - blend_away_median
+      ),
+      market_implied_margin = dplyr::if_else(
+        is.na(market_home_spread),
+        NA_real_,
+        -market_home_spread
+      ),
+      market_total = market_total_line,
       market_home_ml = dplyr::if_else(
         is.na(market_home_ml),
         probability_to_american(market_home_prob),
@@ -847,6 +879,10 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       `Blend Median Home Score` = blend_home_median,
       `Blend Median Away Score` = blend_away_median,
       `Blend Median Total` = blend_total_median,
+      `Blend Median Margin` = blend_median_margin,
+      `Market Home Spread` = market_home_spread,
+      `Market Implied Margin` = market_implied_margin,
+      `Market Total` = market_total,
       `Blend Edge` = blend_edge_prob,
       `Blend EV Units` = blend_ev_units,
       `Market EV Units` = market_ev_units,
@@ -880,11 +916,14 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         ),
         decimals = 1
       ) %>%
-      gt::fmt_number(
-        columns = c("Blend Median Home Score", "Blend Median Away Score", "Blend Median Total"),
-        decimals = 1,
-        drop_trailing_zeros = TRUE
-      ) %>%
+        gt::fmt_number(
+          columns = c(
+            "Blend Median Home Score", "Blend Median Away Score", "Blend Median Total",
+            "Blend Median Margin", "Market Home Spread", "Market Implied Margin", "Market Total"
+          ),
+          decimals = 1,
+          drop_trailing_zeros = TRUE
+        ) %>%
       gt::fmt_number(
         columns = c("Blend EV Units", "Market EV Units", "Blend Stake (Units)"),
         decimals = 3,
@@ -901,25 +940,35 @@ export_moneyline_comparison_html <- function(comparison_tbl,
           "Blend Beat Market?", "Market Winning?"
         )
       ) %>%
-      gt::cols_label(
-        `Blend Edge` = "Blend Edge (pp)",
-        `Blend EV Units` = "Blend EV (units)",
-        `Market EV Units` = "Market EV (units)",
-        `Blend Stake (Units)` = "Blend Stake",
-        `Blend Favorite Moneyline (vig)` = "Blend ML (vig)"
-      ) %>%
+        gt::cols_label(
+          `Blend Edge` = "Blend Edge (pp)",
+          `Blend EV Units` = "Blend EV (units)",
+          `Market EV Units` = "Market EV (units)",
+          `Blend Stake (Units)` = "Blend Stake",
+          `Blend Favorite Moneyline (vig)` = "Blend ML (vig)",
+          `Blend Median Margin` = "Blend Margin",
+          `Market Home Spread` = "Market Home Spread",
+          `Market Implied Margin` = "Market Margin",
+          `Market Total` = "Market Total"
+        ) %>%
       gt::tab_header(title = title) %>%
       gt::tab_options(
         table.font.names = c("Source Sans Pro", "Helvetica Neue", "Arial", "sans-serif"),
         table.background.color = "#020617",
         table.font.color = "#e2e8f0",
         heading.background.color = "#0f172a",
-        heading.title.font.color = "#f8fafc",
-        heading.subtitle.font.color = "#cbd5f5",
         column_labels.background.color = "#1e293b",
         column_labels.font.weight = "bold",
         column_labels.text_transform = "uppercase",
         row.striping.background_color = "#111827"
+      ) %>%
+      gt::tab_style(
+        style = gt::cell_text(color = "#f8fafc"),
+        locations = gt::cells_title(groups = "title")
+      ) %>%
+      gt::tab_style(
+        style = gt::cell_text(color = "#cbd5f5"),
+        locations = gt::cells_title(groups = "subtitle")
       ) %>%
       gt::opt_row_striping() %>%
       gt::data_color(
@@ -966,6 +1015,10 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         `Blend Median Home Score` = format(round(`Blend Median Home Score`, 1), nsmall = 1),
         `Blend Median Away Score` = format(round(`Blend Median Away Score`, 1), nsmall = 1),
         `Blend Median Total` = format(round(`Blend Median Total`, 1), nsmall = 1),
+        `Blend Median Margin` = format(round(`Blend Median Margin`, 1), nsmall = 1),
+        `Market Home Spread` = format(round(`Market Home Spread`, 1), nsmall = 1),
+        `Market Implied Margin` = format(round(`Market Implied Margin`, 1), nsmall = 1),
+        `Market Total` = format(round(`Market Total`, 1), nsmall = 1),
         `Blend EV Units` = format(round(`Blend EV Units`, 3), nsmall = 3),
         `Market EV Units` = format(round(`Market EV Units`, 3), nsmall = 3),
         `Blend Stake (Units)` = dplyr::if_else(
