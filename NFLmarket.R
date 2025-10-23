@@ -400,7 +400,7 @@ build_res_blend <- function(res,
     return(NULL)
   }
 
-  blend_col <- "\.blend_prob"
+  blend_col <- ".blend_prob"
   if (!blend_col %in% names(per_game_with_blend)) {
     alt_cols <- intersect(c("p_blend", "p_blend.y", "p_blend.x"), names(per_game_with_blend))
     if (length(alt_cols)) {
