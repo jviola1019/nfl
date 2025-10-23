@@ -617,6 +617,7 @@ if (!exists("build_moneyline_comparison_table", inherits = FALSE)) {
         market_home_prob = dplyr::coalesce(market_home_prob, market_prob)
       ) %>%
       dplyr::inner_join(schedule_context, by = join_cols) %>%
+      ensure_schedule_defaults() %>%
       dplyr::mutate(
         market_home_ml = market_home_ml_sched,
         market_away_ml = market_away_ml_sched,

@@ -785,12 +785,66 @@ build_moneyline_comparison_table <- function(market_comparison_result,
         market_total_line
       )
 
+  schedule_defaults <- list(
+    home_team_sched = NA_character_,
+    away_team_sched = NA_character_,
+    game_date_sched = as.Date(NA_character_),
+    market_home_ml_sched = NA_real_,
+    market_away_ml_sched = NA_real_,
+    blend_home_median_sched = NA_real_,
+    blend_away_median_sched = NA_real_,
+    blend_total_median_sched = NA_real_,
+    market_home_spread_sched = NA_real_,
+    market_total_line_sched = NA_real_,
+    winner_sched = NA_character_
+  )
+
+  ensure_schedule_defaults <- function(df) {
+    for (col in names(schedule_defaults)) {
+      if (!col %in% names(df)) {
+        df[[col]] <- schedule_defaults[[col]]
+      }
+    }
+    df
+  }
+
   combined <- scores %>%
     dplyr::mutate(
       blend_home_prob = dplyr::coalesce(blend_home_prob, model_prob),
       market_home_prob = dplyr::coalesce(market_home_prob, market_prob)
     ) %>%
     dplyr::inner_join(schedule_context, by = join_cols) %>%
+    ensure_schedule_defaults() %>%
+    dplyr::mutate(
+      market_home_ml = market_home_ml_sched,
+      market_away_ml = market_away_ml_sched,
+      market_home_spread = market_home_spread_sched,
+      market_total_line = market_total_line_sched,
+      home_team = dplyr::coalesce(home_team, home_team_sched),
+      away_team = dplyr::coalesce(away_team, away_team_sched),
+      game_date = dplyr::coalesce(game_date, game_date_sched),
+      blend_home_median = dplyr::coalesce(blend_home_median, blend_home_median_sched),
+      blend_away_median = dplyr::coalesce(blend_away_median, blend_away_median_sched),
+      blend_total_median = dplyr::coalesce(
+        blend_total_median,
+        blend_total_median_sched,
+        dplyr::if_else(
+          is.finite(blend_home_median) & is.finite(blend_away_median),
+          blend_home_median + blend_away_median,
+          NA_real_
+        )
+      ),
+      blend_median_margin = dplyr::coalesce(
+        blend_median_margin,
+        dplyr::if_else(
+          is.finite(blend_home_median) & is.finite(blend_away_median),
+          blend_home_median - blend_away_median,
+          NA_real_
+        )
+      ),
+      actual_winner = dplyr::coalesce(actual_winner, winner_sched)
+    ) %>%
+    dplyr::select(-dplyr::ends_with("_sched")) %>%
     dplyr::mutate(
       market_home_ml = market_home_ml_sched,
       market_away_ml = market_away_ml_sched,
