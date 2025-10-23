@@ -574,52 +574,41 @@ if (!exists("build_moneyline_comparison_table", inherits = FALSE)) {
     date_col <- select_first_column(schedule_collapsed, c("game_date", "gameDate", "date", "match_date"))
     home_ml_col <- select_first_column(schedule_collapsed, c("espn_final_home_ml", "home_ml", "ml_home", "home_moneyline"))
     away_ml_col <- select_first_column(schedule_collapsed, c("espn_final_away_ml", "away_ml", "ml_away", "away_moneyline"))
-    home_median_col <- select_first_column(schedule_collapsed, c(
-      "blend_home_median", "home_median_blend", "home_median", "home_median_pts"
-    ))
-    away_median_col <- select_first_column(schedule_collapsed, c(
-      "blend_away_median", "away_median_blend", "away_median", "away_median_pts"
-    ))
-    total_median_col <- select_first_column(schedule_collapsed, c(
-      "blend_total_median", "total_median_blend", "total_median", "total_median_pts"
-    ))
+    home_median_col <- select_first_column(schedule_collapsed, c("blend_home_median", "home_median_blend", "home_median"))
+    away_median_col <- select_first_column(schedule_collapsed, c("blend_away_median", "away_median_blend", "away_median"))
+    total_median_col <- select_first_column(schedule_collapsed, c("blend_total_median", "total_median_blend", "total_median"))
     spread_col <- select_first_column(schedule_collapsed, c(
       "espn_final_home_spread", "home_spread", "market_spread", "spread_line", "spread"
     ))
     total_col <- select_first_column(schedule_collapsed, c(
       "espn_final_total", "market_total", "total_line", "total", "over_under"
     ))
-    winner_col <- select_first_column(schedule_collapsed, c(
-      "winner", "winning_team", "actual_winner", "winner_team"
-    ))
-  
+
     schedule_context <- schedule_collapsed %>%
       dplyr::mutate(
-        home_team_sched = as.character(pull_or_default(schedule_collapsed, home_team_col, NA_character_)),
-        away_team_sched = as.character(pull_or_default(schedule_collapsed, away_team_col, NA_character_)),
-        game_date_sched = suppressWarnings(as.Date(pull_or_default(schedule_collapsed, date_col, NA_character_))),
-        market_home_ml_sched = coerce_numeric_safely(pull_or_default(schedule_collapsed, home_ml_col, NA_real_)),
-        market_away_ml_sched = coerce_numeric_safely(pull_or_default(schedule_collapsed, away_ml_col, NA_real_)),
-        blend_home_median_sched = coerce_numeric_safely(pull_or_default(schedule_collapsed, home_median_col, NA_real_)),
-        blend_away_median_sched = coerce_numeric_safely(pull_or_default(schedule_collapsed, away_median_col, NA_real_)),
-        blend_total_median_sched = coerce_numeric_safely(pull_or_default(schedule_collapsed, total_median_col, NA_real_)),
-        market_home_spread_sched = coerce_numeric_safely(pull_or_default(schedule_collapsed, spread_col, NA_real_)),
-        market_total_line_sched = coerce_numeric_safely(pull_or_default(schedule_collapsed, total_col, NA_real_)),
-        winner_sched = as.character(pull_or_default(schedule_collapsed, winner_col, NA_character_))
+        home_team = as.character(pull_or_default(schedule_collapsed, home_team_col, NA_character_)),
+        away_team = as.character(pull_or_default(schedule_collapsed, away_team_col, NA_character_)),
+        game_date = suppressWarnings(as.Date(pull_or_default(schedule_collapsed, date_col, NA_character_))),
+        market_home_ml = coerce_numeric_safely(pull_or_default(schedule_collapsed, home_ml_col, NA_real_)),
+        market_away_ml = coerce_numeric_safely(pull_or_default(schedule_collapsed, away_ml_col, NA_real_)),
+        blend_home_median = coerce_numeric_safely(pull_or_default(schedule_collapsed, home_median_col, NA_real_)),
+        blend_away_median = coerce_numeric_safely(pull_or_default(schedule_collapsed, away_median_col, NA_real_)),
+        blend_total_median = coerce_numeric_safely(pull_or_default(schedule_collapsed, total_median_col, NA_real_)),
+        market_home_spread = coerce_numeric_safely(pull_or_default(schedule_collapsed, spread_col, NA_real_)),
+        market_total_line = coerce_numeric_safely(pull_or_default(schedule_collapsed, total_col, NA_real_))
       ) %>%
       dplyr::transmute(
         dplyr::across(dplyr::all_of(join_cols)),
-        home_team_sched,
-        away_team_sched,
-        game_date_sched,
-        market_home_ml_sched,
-        market_away_ml_sched,
-        blend_home_median_sched,
-        blend_away_median_sched,
-        blend_total_median_sched,
-        market_home_spread_sched,
-        market_total_line_sched,
-        winner_sched
+        home_team,
+        away_team,
+        game_date,
+        market_home_ml,
+        market_away_ml,
+        blend_home_median,
+        blend_away_median,
+        blend_total_median,
+        market_home_spread,
+        market_total_line
       )
   
     combined <- scores %>%
@@ -665,22 +654,27 @@ if (!exists("build_moneyline_comparison_table", inherits = FALSE)) {
           NA_character_,
           paste(away_team, "@", home_team)
         ),
-        blend_home_prob = clamp_probability(blend_home_prob),
-        blend_away_prob = clamp_probability(1 - blend_home_prob),
-        market_home_prob = clamp_probability(market_home_prob),
-        market_away_prob = clamp_probability(1 - market_home_prob),
-        market_home_spread = coerce_numeric_safely(market_home_spread),
-        market_total_line = coerce_numeric_safely(market_total_line),
-        market_implied_margin = dplyr::if_else(
-          is.na(market_home_spread),
-          NA_real_,
-          -market_home_spread
-        ),
-        market_total = market_total_line,
-        market_home_ml = dplyr::if_else(
-          is.na(market_home_ml),
-          probability_to_american(market_home_prob),
-          market_home_ml
+      blend_home_prob = clamp_probability(blend_home_prob),
+      blend_away_prob = clamp_probability(1 - blend_home_prob),
+      market_home_prob = clamp_probability(market_home_prob),
+      market_away_prob = clamp_probability(1 - market_home_prob),
+      market_home_spread = coerce_numeric_safely(market_home_spread),
+      market_total_line = coerce_numeric_safely(market_total_line),
+      blend_median_margin = dplyr::if_else(
+        is.na(blend_home_median) | is.na(blend_away_median),
+        NA_real_,
+        blend_home_median - blend_away_median
+      ),
+      market_implied_margin = dplyr::if_else(
+        is.na(market_home_spread),
+        NA_real_,
+        -market_home_spread
+      ),
+      market_total = market_total_line,
+      market_home_ml = dplyr::if_else(
+        is.na(market_home_ml),
+        probability_to_american(market_home_prob),
+        market_home_ml
         ),
         market_away_ml = dplyr::if_else(
           is.na(market_away_ml),
@@ -920,14 +914,14 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
           ),
           decimals = 1
         ) %>%
-          gt::fmt_number(
-            columns = c(
-              "Blend Median Home Score", "Blend Median Away Score", "Blend Median Total",
-              "Blend Median Margin", "Market Home Spread", "Market Implied Margin", "Market Total"
-            ),
-            decimals = 1,
-            drop_trailing_zeros = TRUE
-          ) %>%
+        gt::fmt_number(
+          columns = c(
+            "Blend Median Home Score", "Blend Median Away Score", "Blend Median Total",
+            "Blend Median Margin", "Market Home Spread", "Market Implied Margin", "Market Total"
+          ),
+          decimals = 1,
+          drop_trailing_zeros = TRUE
+        ) %>%
         gt::fmt_number(
           columns = c("Blend EV Units", "Market EV Units", "Blend Stake (Units)"),
           decimals = 3,
@@ -944,17 +938,17 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
             "Blend Beat Market?", "Market Winning?"
           )
         ) %>%
-          gt::cols_label(
-            `Blend Edge` = "Blend Edge (pp)",
-            `Blend EV Units` = "Blend EV (units)",
-            `Market EV Units` = "Market EV (units)",
-            `Blend Stake (Units)` = "Blend Stake",
-            `Blend Favorite Moneyline (vig)` = "Blend ML (vig)",
-            `Blend Median Margin` = "Blend Margin",
-            `Market Home Spread` = "Market Home Spread",
-            `Market Implied Margin` = "Market Margin",
-            `Market Total` = "Market Total"
-          ) %>%
+        gt::cols_label(
+          `Blend Edge` = "Blend Edge (pp)",
+          `Blend EV Units` = "Blend EV (units)",
+          `Market EV Units` = "Market EV (units)",
+          `Blend Stake (Units)` = "Blend Stake",
+          `Blend Favorite Moneyline (vig)` = "Blend ML (vig)",
+          `Blend Median Margin` = "Blend Margin",
+          `Market Home Spread` = "Market Home Spread",
+          `Market Implied Margin` = "Market Margin",
+          `Market Total` = "Market Total"
+        ) %>%
         gt::tab_header(title = title) %>%
         gt::tab_options(
           table.font.names = c("Source Sans Pro", "Helvetica Neue", "Arial", "sans-serif"),
@@ -1027,15 +1021,15 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
           `Blend Home Prob` = scales::percent(`Blend Home Prob`, accuracy = 0.1),
           `Market Away Prob` = scales::percent(`Market Away Prob`, accuracy = 0.1),
           `Blend Away Prob` = scales::percent(`Blend Away Prob`, accuracy = 0.1),
-          `Blend Median Home Score` = format(round(`Blend Median Home Score`, 1), nsmall = 1),
-          `Blend Median Away Score` = format(round(`Blend Median Away Score`, 1), nsmall = 1),
-          `Blend Median Total` = format(round(`Blend Median Total`, 1), nsmall = 1),
-          `Blend Median Margin` = format(round(`Blend Median Margin`, 1), nsmall = 1),
-          `Market Home Spread` = format(round(`Market Home Spread`, 1), nsmall = 1),
-          `Market Implied Margin` = format(round(`Market Implied Margin`, 1), nsmall = 1),
-          `Market Total` = format(round(`Market Total`, 1), nsmall = 1),
-          `Blend EV Units` = format(round(`Blend EV Units`, 3), nsmall = 3),
-          `Market EV Units` = format(round(`Market EV Units`, 3), nsmall = 3),
+        `Blend Median Home Score` = format(round(`Blend Median Home Score`, 1), nsmall = 1),
+        `Blend Median Away Score` = format(round(`Blend Median Away Score`, 1), nsmall = 1),
+        `Blend Median Total` = format(round(`Blend Median Total`, 1), nsmall = 1),
+        `Blend Median Margin` = format(round(`Blend Median Margin`, 1), nsmall = 1),
+        `Market Home Spread` = format(round(`Market Home Spread`, 1), nsmall = 1),
+        `Market Implied Margin` = format(round(`Market Implied Margin`, 1), nsmall = 1),
+        `Market Total` = format(round(`Market Total`, 1), nsmall = 1),
+        `Blend EV Units` = format(round(`Blend EV Units`, 3), nsmall = 3),
+        `Market EV Units` = format(round(`Market EV Units`, 3), nsmall = 3),
           `Blend Stake (Units)` = dplyr::if_else(
             is.na(`Blend Stake (Units)`),
             "",
