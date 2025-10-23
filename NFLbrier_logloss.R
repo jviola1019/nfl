@@ -141,6 +141,90 @@ compare_to_market <- function(res,
 
   sched_eval <- dedupe_sched(sched_eval, join_keys)
 
+  collapse_duplicates <- function(df, keys, table_label = "table") {
+    if (is.null(df) || !inherits(df, "data.frame") || !nrow(df) || !length(keys)) {
+      return(df)
+    }
+
+    df <- tibble::as_tibble(df)
+
+    dup_keys <- df %>%
+      dplyr::filter(dplyr::if_all(dplyr::all_of(keys), ~ !is.na(.))) %>%
+      dplyr::count(dplyr::across(dplyr::all_of(keys))) %>%
+      dplyr::filter(.data$n > 1L)
+
+    if (!nrow(dup_keys)) {
+      return(df)
+    }
+
+    message(sprintf(
+      "compare_to_market(): collapsing %d duplicate rows in %s using first non-missing values.",
+      nrow(dup_keys),
+      table_label
+    ))
+
+    non_key_cols <- setdiff(names(df), keys)
+    if (!length(non_key_cols)) {
+      return(df %>%
+               dplyr::distinct(dplyr::across(dplyr::all_of(keys)), .keep_all = TRUE))
+    }
+
+    key_to_string <- function(key_tbl) {
+      if (is.null(key_tbl) || !ncol(key_tbl)) {
+        return("<no keys>")
+      }
+      vals <- vapply(names(key_tbl), function(nm) {
+        val <- key_tbl[[nm]][1]
+        if (length(val) == 0 || is.na(val)) {
+          return("NA")
+        }
+        if (inherits(val, "POSIXt")) {
+          return(format(val, tz = "UTC", usetz = TRUE))
+        }
+        if (inherits(val, "Date")) {
+          return(format(val))
+        }
+        as.character(val)
+      }, character(1))
+      paste(sprintf("%s=%s", names(key_tbl), vals), collapse = ", ")
+    }
+
+    tol_numeric <- sqrt(.Machine$double.eps)
+
+    collapse_col <- function(.x) {
+      non_missing_vals <- unique(.x[!is.na(.x)])
+      if (length(non_missing_vals) > 1L) {
+        conflict <- TRUE
+        if (is.numeric(non_missing_vals) || inherits(non_missing_vals, c("Date", "POSIXt"))) {
+          rng <- range(as.numeric(non_missing_vals))
+          conflict <- (max(rng) - min(rng)) > tol_numeric
+        } else if (is.logical(non_missing_vals)) {
+          conflict <- (max(non_missing_vals) - min(non_missing_vals)) > 0
+        }
+
+        if (conflict) {
+          key_str <- key_to_string(dplyr::cur_group())
+          stop(sprintf(
+            "compare_to_market(): conflicting values encountered for column '%s' while collapsing duplicates in %s (keys: %s).",
+            dplyr::cur_column(),
+            table_label,
+            key_str
+          ))
+        }
+      }
+
+      .first_non_missing(.x)
+    }
+
+    df %>%
+      dplyr::group_by(dplyr::across(dplyr::all_of(keys))) %>%
+      dplyr::summarise(
+        dplyr::across(dplyr::all_of(non_key_cols), collapse_col, .names = "{.col}"),
+        .groups = "drop"
+      ) %>%
+      dplyr::select(dplyr::all_of(names(df)))
+  }
+
   # Prefer an existing helper that already knows how to source market probs.
   mkt_tbl <- NULL
   msg <- NULL
