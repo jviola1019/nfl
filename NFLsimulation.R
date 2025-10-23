@@ -576,7 +576,9 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
                                                file = NULL,
                                                title = "Blend vs Market Moneylines",
                                                verbose = TRUE,
-                                               auto_open = TRUE) {
+                                               auto_open = TRUE,
+                                               season = NULL,
+                                               week = NULL) {
     if (missing(file) || is.null(file) || !length(file) || all(is.na(file)) || !nzchar(file[[1L]])) {
       file <- file.path(getwd(), "NFLvsmarket_report.html")
       if (verbose) {
@@ -598,6 +600,33 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
       return(invisible(file))
     }
 
+    season_filter <- if (!length(season)) {
+      get0("SEASON", ifnotfound = NULL, inherits = TRUE)
+    } else {
+      season
+    }
+    week_filter <- if (!length(week)) {
+      get0("WEEK_TO_SIM", ifnotfound = NULL, inherits = TRUE)
+    } else {
+      week
+    }
+
+    filtered_tbl <- comparison_tbl
+    if (!is.null(season_filter) && length(season_filter) && "season" %in% names(filtered_tbl)) {
+      filtered_tbl <- dplyr::filter(filtered_tbl, .data$season %in% season_filter)
+    }
+    if (!is.null(week_filter) && length(week_filter) && "week" %in% names(filtered_tbl)) {
+      filtered_tbl <- dplyr::filter(filtered_tbl, .data$week %in% week_filter)
+    }
+
+    if (nrow(filtered_tbl)) {
+      comparison_tbl <- filtered_tbl
+    } else if (verbose) {
+      message(
+        "export_moneyline_comparison_html(): no rows matched the requested season/week filter; exporting unfiltered table."
+      )
+    }
+
     dir_path <- dirname(file)
     if (nzchar(dir_path) && dir_path != "." && !dir.exists(dir_path)) {
       dir.create(dir_path, recursive = TRUE, showWarnings = FALSE)
@@ -605,6 +634,25 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
 
     if (file.exists(file)) {
       unlink(file, force = TRUE)
+    }
+
+    moneyline_cols <- c(
+      "Market Moneyline",
+      "Market Home Moneyline",
+      "Market Away Moneyline",
+      "Blend Home Moneyline (vig)",
+      "Blend Away Moneyline (vig)",
+      "Blend Favorite Moneyline (vig)"
+    )
+
+    format_moneyline_strings <- function(x) {
+      num <- suppressWarnings(as.numeric(x))
+      out <- rep("", length(x))
+      mask <- !is.na(num) & is.finite(num)
+      if (any(mask)) {
+        out[mask] <- sprintf("%+d", as.integer(round(num[mask])))
+      }
+      out
     }
 
     display_tbl <- comparison_tbl %>%
@@ -659,19 +707,6 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
           decimals = 1
         ) %>%
         gt::fmt_number(
-          columns = c(
-            "Market Moneyline",
-            "Market Home Moneyline",
-            "Market Away Moneyline",
-            "Blend Home Moneyline (vig)",
-            "Blend Away Moneyline (vig)",
-            "Blend Favorite Moneyline (vig)"
-          ),
-          decimals = 0,
-          drop_trailing_zeros = TRUE,
-          use_seps = FALSE
-        ) %>%
-        gt::fmt_number(
           columns = c("Blend Median Home Score", "Blend Median Away Score", "Blend Median Total"),
           decimals = 1,
           drop_trailing_zeros = TRUE
@@ -680,6 +715,10 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
           columns = c("Blend EV Units", "Market EV Units", "Blend Stake (Units)"),
           decimals = 3,
           drop_trailing_zeros = FALSE
+        ) %>%
+        gt::fmt(
+          columns = moneyline_cols,
+          fns = function(x) format_moneyline_strings(x)
         ) %>%
         gt::cols_align(
           align = "center",
@@ -698,12 +737,12 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
         gt::tab_header(title = title) %>%
         gt::tab_options(
           table.font.names = c("Source Sans Pro", "Helvetica Neue", "Arial", "sans-serif"),
-          table.background.color = "#0b1120",
+          table.background.color = "#020617",
           table.font.color = "#e2e8f0",
-          heading.background.color = "#064e3b",
-          heading.title.color = "#ecfdf5",
-          heading.subtitle.color = "#ecfdf5",
-          column_labels.background.color = "#166534",
+          heading.background.color = "#0f172a",
+          heading.title.color = "#f8fafc",
+          heading.subtitle.color = "#cbd5f5",
+          column_labels.background.color = "#1e293b",
           column_labels.font.weight = "bold",
           column_labels.text_transform = "uppercase",
           row.striping.background_color = "#111827"
@@ -712,14 +751,14 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
         gt::data_color(
           columns = "Blend Beat Market?",
           colors = scales::col_factor(
-            palette = c("No" = "#374151", "Yes" = "#15803d", "N/A" = "#4b5563"),
+            palette = c("No" = "#1f2937", "Yes" = "#166534", "N/A" = "#374151"),
             domain = c("No", "Yes", "N/A")
           )
         ) %>%
         gt::tab_style(
           style = list(
-            gt::cell_fill(color = "#14532d"),
-            gt::cell_text(color = "#ecfdf5", weight = "bold")
+            gt::cell_fill(color = "#1e293b"),
+            gt::cell_text(color = "#f8fafc", weight = "bold")
           ),
           locations = gt::cells_column_labels(columns = gt::everything())
         )
@@ -731,16 +770,16 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
     }
 
     if (!saved) {
-      css_block <- "body {font-family: 'Source Sans Pro', Arial, sans-serif; background-color: #0b1120; color: #e2e8f0;}\n"
+      css_block <- "body {font-family: 'Source Sans Pro', Arial, sans-serif; background-color: #020617; color: #e2e8f0;}\n"
       css_block <- paste0(
         css_block,
-        "table {width: 100%; border-collapse: collapse; background-color: #111827; color: #e2e8f0;}\n",
-        "th {background-color: #14532d; color: #ecfdf5; text-transform: uppercase; letter-spacing: 0.08em;}\n",
+        "table {width: 100%; border-collapse: collapse; background-color: #0f172a; color: #e2e8f0;}\n",
+        "th {background-color: #1e293b; color: #f8fafc; text-transform: uppercase; letter-spacing: 0.08em;}\n",
         "td, th {padding: 10px 12px; border-bottom: 1px solid #1f2937; text-align: center;}\n",
-        "tr:nth-child(even) {background-color: #1f2933;}\n",
+        "tr:nth-child(even) {background-color: #111c2f;}\n",
         "tr.blend-win {background-color: #14532d;}\n",
         "tr.blend-win td {color: #ecfdf5;}\n",
-        "caption {caption-side: top; font-size: 1.25rem; font-weight: 600; margin-bottom: 0.75rem; color: #ecfdf5;}\n"
+        "caption {caption-side: top; font-size: 1.25rem; font-weight: 600; margin-bottom: 0.75rem; color: #f8fafc;}\n"
       )
 
       formatted_tbl <- display_tbl %>%
@@ -761,12 +800,8 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
             format(round(`Blend Stake (Units)`, 3), nsmall = 3)
           ),
           dplyr::across(
-            c(
-              `Market Moneyline`, `Market Home Moneyline`, `Market Away Moneyline`,
-              `Blend Home Moneyline (vig)`, `Blend Away Moneyline (vig)`,
-              `Blend Favorite Moneyline (vig)`
-            ),
-            ~ ifelse(is.na(.x), "", format(round(.x, 0), trim = TRUE))
+            dplyr::all_of(moneyline_cols),
+            format_moneyline_strings
           )
         )
 
@@ -5005,6 +5040,7 @@ message("Blend (ridge+iso) added: home_p_2w_blend/home_win_prob_blend/away_win_p
 # any backtesting so the HTML export can rely on the same sequentially derived
 # probabilities the simulation just produced.
 moneyline_report_inputs <- NULL
+primary_report_tbl <- NULL
 
 join_keys_html <- if (exists("PREDICTION_JOIN_KEYS", inherits = TRUE)) {
   PREDICTION_JOIN_KEYS
@@ -5035,6 +5071,7 @@ if (nrow(upcoming_snapshot)) {
       join_keys = join_keys_html,
       preview = preview_tbl
     )
+    primary_report_tbl <- preview_tbl
     message(sprintf(
       "Prepared current-week moneyline snapshot for %d games.",
       nrow(preview_tbl)
@@ -5108,22 +5145,57 @@ if (exists("cmp_blend") && !is.null(cmp_blend)) {
     verbose = TRUE
   )
 
-  moneyline_report_inputs <- list(
-    comparison = cmp_blend,
-    join_keys = join_keys_html
-  )
-
-  if (nrow(report_tbl)) {
-    report_title <- sprintf("Blend vs Market Moneylines - Week %s, %s", WEEK_TO_SIM, SEASON)
-    report_path <- export_moneyline_comparison_html(
-      comparison_tbl = report_tbl,
-      title = report_title,
-      verbose = TRUE,
-      auto_open = TRUE
+  if (is.null(moneyline_report_inputs)) {
+    moneyline_report_inputs <- list(
+      comparison = cmp_blend,
+      join_keys = join_keys_html
     )
   } else {
-    message("Market comparison HTML skipped because report table was empty.")
+    moneyline_report_inputs$backtest <- cmp_blend
+    if (is.null(moneyline_report_inputs$join_keys)) {
+      moneyline_report_inputs$join_keys <- join_keys_html
+    }
   }
+
+  if (nrow(report_tbl)) {
+    if (is.null(primary_report_tbl) || !nrow(primary_report_tbl)) {
+      primary_report_tbl <- report_tbl
+    }
+  } else {
+    message("Market comparison HTML snapshot from backtest was empty.")
+  }
+}
+
+if (!is.null(primary_report_tbl) && nrow(primary_report_tbl)) {
+  export_tbl <- primary_report_tbl
+  skip_export <- FALSE
+
+  if (exists("SEASON", inherits = TRUE) && exists("WEEK_TO_SIM", inherits = TRUE) &&
+      all(c("season", "week") %in% names(export_tbl))) {
+    filtered_export <- dplyr::filter(export_tbl, .data$season == SEASON, .data$week == WEEK_TO_SIM)
+    if (nrow(filtered_export)) {
+      export_tbl <- filtered_export
+    } else {
+      message("Moneyline comparison HTML skipped because no rows matched the current season/week filter.")
+      skip_export <- TRUE
+    }
+  }
+
+  if (!skip_export && nrow(export_tbl)) {
+    report_title <- sprintf("Blend vs Market Moneylines - Week %s, %s", WEEK_TO_SIM, SEASON)
+    report_path <- export_moneyline_comparison_html(
+      comparison_tbl = export_tbl,
+      title = report_title,
+      verbose = TRUE,
+      auto_open = TRUE,
+      season = SEASON,
+      week = WEEK_TO_SIM
+    )
+  } else if (!skip_export) {
+    message("Moneyline comparison HTML skipped because the filtered table was empty.")
+  }
+} else {
+  message("Moneyline comparison HTML skipped because no report table was available.")
 }
 
 
@@ -5298,9 +5370,13 @@ if (!is.null(moneyline_report_inputs) && exists("moneyline_report", inherits = T
 
   if (!is.null(report_schedule)) {
     report_title <- sprintf("Blend vs Market Moneylines - Week %s, %s", WEEK_TO_SIM, SEASON)
+    comparison_payload <- moneyline_report_inputs$comparison
+    if (is.null(comparison_payload) && !is.null(moneyline_report_inputs$backtest)) {
+      comparison_payload <- moneyline_report_inputs$backtest
+    }
     report_path <- tryCatch(
       moneyline_report(
-        market_comparison_result = moneyline_report_inputs$comparison,
+        market_comparison_result = comparison_payload,
         schedule = report_schedule,
         join_keys = moneyline_report_inputs$join_keys,
         vig = 0.10,
