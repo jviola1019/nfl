@@ -612,6 +612,7 @@ if (!exists("build_moneyline_comparison_table", inherits = FALSE)) {
       )
   
     combined <- scores %>%
+      ensure_score_defaults() %>%
       dplyr::mutate(
         blend_home_prob = dplyr::coalesce(blend_home_prob, model_prob),
         market_home_prob = dplyr::coalesce(market_home_prob, market_prob)

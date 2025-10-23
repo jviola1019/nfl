@@ -808,7 +808,53 @@ build_moneyline_comparison_table <- function(market_comparison_result,
     df
   }
 
+  schedule_defaults <- list(
+    home_team_sched = NA_character_,
+    away_team_sched = NA_character_,
+    game_date_sched = as.Date(NA_character_),
+    market_home_ml_sched = NA_real_,
+    market_away_ml_sched = NA_real_,
+    blend_home_median_sched = NA_real_,
+    blend_away_median_sched = NA_real_,
+    blend_total_median_sched = NA_real_,
+    market_home_spread_sched = NA_real_,
+    market_total_line_sched = NA_real_,
+    winner_sched = NA_character_
+  )
+
+  ensure_schedule_defaults <- function(df) {
+    for (col in names(schedule_defaults)) {
+      if (!col %in% names(df)) {
+        df[[col]] <- schedule_defaults[[col]]
+      }
+    }
+    df
+  }
+
+  score_defaults <- list(
+    blend_home_prob = NA_real_,
+    market_home_prob = NA_real_,
+    home_team = NA_character_,
+    away_team = NA_character_,
+    game_date = as.Date(NA_character_),
+    blend_home_median = NA_real_,
+    blend_away_median = NA_real_,
+    blend_total_median = NA_real_,
+    blend_median_margin = NA_real_,
+    actual_winner = NA_character_
+  )
+
+  ensure_score_defaults <- function(df) {
+    for (col in names(score_defaults)) {
+      if (!col %in% names(df)) {
+        df[[col]] <- score_defaults[[col]]
+      }
+    }
+    df
+  }
+
   combined <- scores %>%
+    ensure_score_defaults() %>%
     dplyr::mutate(
       blend_home_prob = dplyr::coalesce(blend_home_prob, model_prob),
       market_home_prob = dplyr::coalesce(market_home_prob, market_prob)
