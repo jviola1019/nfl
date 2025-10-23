@@ -609,6 +609,10 @@ if (!exists("build_moneyline_comparison_table", inherits = FALSE)) {
         blend_total_median,
         market_home_spread,
         market_total_line
+      ) %>%
+      dplyr::rename_with(
+        ~ paste0(.x, "_sched"),
+        -dplyr::all_of(join_cols)
       )
   
     combined <- scores %>%

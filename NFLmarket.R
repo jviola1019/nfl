@@ -758,10 +758,10 @@ build_moneyline_comparison_table <- function(market_comparison_result,
     "espn_final_total", "market_total", "total_line", "total", "over_under"
   ))
 
-  schedule_context <- schedule_collapsed %>%
-    dplyr::mutate(
-      home_team = as.character(pull_or_default(schedule_collapsed, home_team_col, NA_character_)),
-      away_team = as.character(pull_or_default(schedule_collapsed, away_team_col, NA_character_)),
+    schedule_context <- schedule_collapsed %>%
+      dplyr::mutate(
+        home_team = as.character(pull_or_default(schedule_collapsed, home_team_col, NA_character_)),
+        away_team = as.character(pull_or_default(schedule_collapsed, away_team_col, NA_character_)),
         game_date = suppressWarnings(as.Date(pull_or_default(schedule_collapsed, date_col, NA_character_))),
         market_home_ml = coerce_numeric_safely(pull_or_default(schedule_collapsed, home_ml_col, NA_real_)),
         market_away_ml = coerce_numeric_safely(pull_or_default(schedule_collapsed, away_ml_col, NA_real_)),
@@ -783,6 +783,10 @@ build_moneyline_comparison_table <- function(market_comparison_result,
         blend_total_median,
         market_home_spread,
         market_total_line
+      ) %>%
+      dplyr::rename_with(
+        ~ paste0(.x, "_sched"),
+        -dplyr::all_of(join_cols)
       )
 
   schedule_defaults <- list(
