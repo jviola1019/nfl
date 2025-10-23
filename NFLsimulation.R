@@ -1,7 +1,7 @@
-# ──────────────────────────────────────────────────────────────────────────────
-# NFL Week Simulation — SoS-weighted + QB Toggles + Outside Factors
+# ??????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
+# NFL Week Simulation ??? SoS-weighted + QB Toggles + Outside Factors
 # Requires: tidyverse, lubridate, nflreadr
-# ──────────────────────────────────────────────────────────────────────────────
+# ??????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
 
 load_market_helpers <- local({
   sourced <- FALSE
@@ -9,13 +9,13 @@ load_market_helpers <- local({
     if (isTRUE(sourced)) {
       return(invisible(TRUE))
     }
-
+    
     candidates <- character(0)
     wd_candidate <- file.path(getwd(), "NFLmarket.R")
     if (file.exists(wd_candidate)) {
       candidates <- c(candidates, wd_candidate)
     }
-
+    
     this_ofile <- tryCatch({
       candidate <- sys.frames()[[1]]$ofile
       if (!length(candidate) || is.null(candidate)) {
@@ -33,7 +33,7 @@ load_market_helpers <- local({
         candidates <- c(candidates, script_candidate)
       }
     }
-
+    
     if (requireNamespace("rstudioapi", quietly = TRUE)) {
       editor_path <- tryCatch(rstudioapi::getSourceEditorContext()$path, error = function(e) "")
       if (nzchar(editor_path)) {
@@ -43,11 +43,11 @@ load_market_helpers <- local({
         }
       }
     }
-
+    
     candidates <- unique(candidates)
     success <- FALSE
     last_error <- NULL
-
+    
     for (path in candidates) {
       tryCatch({
         source(path, chdir = TRUE)
@@ -58,7 +58,7 @@ load_market_helpers <- local({
         last_error <<- e
       })
     }
-
+    
     if (!success) {
       msg <- sprintf(
         "Unable to automatically source NFLmarket.R from %s.",
@@ -72,7 +72,7 @@ load_market_helpers <- local({
       }
       warning(msg, call. = FALSE)
     }
-
+    
     invisible(success)
   }
 })
@@ -84,7 +84,7 @@ if (!exists("collapse_by_keys_strict", inherits = FALSE)) {
     if (is.null(df) || !nrow(df) || !length(keys)) {
       return(df)
     }
-
+    
     missing_keys <- setdiff(keys, names(df))
     if (length(missing_keys)) {
       stop(sprintf(
@@ -93,32 +93,32 @@ if (!exists("collapse_by_keys_strict", inherits = FALSE)) {
         paste(missing_keys, collapse = ", ")
       ))
     }
-
+    
     complete_mask <- stats::complete.cases(df[keys])
     df_complete <- df[complete_mask, , drop = FALSE]
     df_incomplete <- df[!complete_mask, , drop = FALSE]
-
+    
     if (!nrow(df_complete)) {
       return(df)
     }
-
+    
     dup <- df_complete %>%
       dplyr::count(dplyr::across(dplyr::all_of(keys))) %>%
       dplyr::filter(.data$n > 1L)
-
+    
     if (!nrow(dup)) {
       return(df)
     }
-
+    
     message(sprintf(
       "%s: collapsing %d duplicate rows keyed by %s.",
       label,
       nrow(dup),
       paste(keys, collapse = ", ")
     ))
-
+    
     non_key_cols <- setdiff(names(df_complete), keys)
-
+    
     collapsed_complete <- df_complete %>%
       dplyr::group_by(dplyr::across(dplyr::all_of(keys))) %>%
       dplyr::summarise(
@@ -129,15 +129,15 @@ if (!exists("collapse_by_keys_strict", inherits = FALSE)) {
         ),
         .groups = "drop"
       )
-
+    
     out <- dplyr::bind_rows(collapsed_complete, df_incomplete) %>%
       dplyr::select(dplyr::all_of(names(df)))
-
+    
     dup_check <- out %>%
       dplyr::filter(dplyr::if_all(dplyr::all_of(keys), ~ !is.na(.))) %>%
       dplyr::count(dplyr::across(dplyr::all_of(keys))) %>%
       dplyr::filter(.data$n > 1L)
-
+    
     if (nrow(dup_check)) {
       stop(sprintf(
         "%s: unable to resolve duplicates for %d key combinations.",
@@ -145,7 +145,7 @@ if (!exists("collapse_by_keys_strict", inherits = FALSE)) {
         nrow(dup_check)
       ))
     }
-
+    
     out
   }
 }
@@ -155,23 +155,23 @@ if (!exists("parse_datetime_vector", inherits = FALSE)) {
     if (is.null(x)) {
       return(as.POSIXct(rep(NA_real_, 0), tz = tz))
     }
-
+    
     if (inherits(x, "POSIXt")) {
       return(lubridate::with_tz(x, tz))
     }
-
+    
     x_chr <- as.character(x)
     n <- length(x_chr)
     out <- as.POSIXct(rep(NA_real_, n), tz = tz)
     if (!n) {
       return(out)
     }
-
+    
     mask <- !is.na(x_chr) & nzchar(x_chr)
     if (!any(mask)) {
       return(out)
     }
-
+    
     orders <- c(
       "Y-m-d H:M:S z", "Y-m-d H:M:S", "Y-m-d H:M", "Y-m-d I:M:S p", "Y-m-d I:M p",
       "Ymd HMS", "Ymd HM", "Ymd IMS p"
@@ -190,7 +190,7 @@ if (!exists("parse_time_components", inherits = FALSE)) {
     if (!n) {
       return(list(hour = hour, minute = minute))
     }
-
+    
     vals <- as.character(time_chr)
     vals[!nzchar(vals)] <- NA_character_
     vals[grepl("(?i)^(tbd|tba)$", vals, perl = TRUE)] <- NA_character_
@@ -199,7 +199,7 @@ if (!exists("parse_time_components", inherits = FALSE)) {
     vals <- stringr::str_replace_all(vals, "(?i)(am|pm)$", " \1")
     vals <- stringr::str_replace_all(vals, "(?i)\b(ET|EST|EDT|CT|CST|CDT|MT|MST|MDT|PT|PST|PDT)\b", "")
     mask <- !is.na(vals) & nzchar(vals)
-
+    
     if (any(mask)) {
       combos <- paste("1970-01-01", vals[mask])
       orders <- c("Y-m-d H:M:S", "Y-m-d I:M:S p", "Y-m-d H:M", "Y-m-d I:M p")
@@ -207,7 +207,7 @@ if (!exists("parse_time_components", inherits = FALSE)) {
       hour[mask] <- suppressWarnings(lubridate::hour(parsed))
       minute[mask] <- suppressWarnings(lubridate::minute(parsed))
     }
-
+    
     list(hour = hour, minute = minute)
   }
 }
@@ -279,7 +279,7 @@ if (!exists("extract_game_level_scores", inherits = FALSE)) {
         !"comp" %in% names(market_comparison_result)) {
       return(tibble::tibble())
     }
-
+    
     market_comparison_result$comp %>%
       dplyr::transmute(
         game_id,
@@ -300,24 +300,24 @@ if (!exists("extract_game_level_scores", inherits = FALSE)) {
 
 if (!exists("build_snapshot_moneyline_result", inherits = FALSE)) {
   build_snapshot_moneyline_result <- function(final_df,
-                                             season,
-                                             week,
-                                             model_prob_candidates = c(
-                                               "home_p_2w_blend",
-                                               "home_win_prob_blend",
-                                               "home_p_2w_cal"
-                                             ),
-                                             market_prob_candidates = c(
-                                               "home_p_2w_mkt",
-                                               "market_home_prob",
-                                               "market_prob"
-                                             ),
-                                             verbose = TRUE) {
+                                              season,
+                                              week,
+                                              model_prob_candidates = c(
+                                                "home_p_2w_blend",
+                                                "home_win_prob_blend",
+                                                "home_p_2w_cal"
+                                              ),
+                                              market_prob_candidates = c(
+                                                "home_p_2w_mkt",
+                                                "market_home_prob",
+                                                "market_prob"
+                                              ),
+                                              verbose = TRUE) {
     if (is.null(final_df) || !nrow(final_df)) {
       if (verbose) message("build_snapshot_moneyline_result(): final slate is empty; skipping snapshot.")
       return(tibble::tibble())
     }
-
+    
     required_keys <- c("game_id", "season", "week")
     missing_keys <- setdiff(required_keys, names(final_df))
     if (length(missing_keys)) {
@@ -329,11 +329,11 @@ if (!exists("build_snapshot_moneyline_result", inherits = FALSE)) {
       }
       return(tibble::tibble())
     }
-
+    
     snapshot <- final_df %>%
       dplyr::filter(.data$season == season, .data$week == week) %>%
       dplyr::ungroup()
-
+    
     if (!nrow(snapshot)) {
       if (verbose) {
         message(sprintf(
@@ -344,27 +344,27 @@ if (!exists("build_snapshot_moneyline_result", inherits = FALSE)) {
       }
       return(tibble::tibble())
     }
-
+    
     model_prob_col <- select_first_column(snapshot, model_prob_candidates)
     market_prob_col <- select_first_column(snapshot, market_prob_candidates)
-
+    
     if (is.na(model_prob_col)) {
       if (verbose) {
         message("build_snapshot_moneyline_result(): unable to locate a model probability column on the final slate.")
       }
       return(tibble::tibble())
     }
-
+    
     if (is.na(market_prob_col)) {
       if (verbose) {
         message("build_snapshot_moneyline_result(): unable to locate a market probability column on the final slate.")
       }
       return(tibble::tibble())
     }
-
+    
     model_prob <- clamp_probability(snapshot[[model_prob_col]])
     market_prob <- clamp_probability(snapshot[[market_prob_col]])
-
+    
     tibble::tibble(
       game_id = snapshot$game_id,
       season = snapshot$season,
@@ -391,26 +391,26 @@ if (!exists("build_moneyline_comparison_table", inherits = FALSE)) {
       if (verbose) message("build_moneyline_comparison_table(): no comparison scores available; returning empty tibble.")
       return(tibble::tibble())
     }
-
+    
     if (is.null(enriched_schedule) || !nrow(enriched_schedule)) {
       if (verbose) message("build_moneyline_comparison_table(): schedule input is empty; returning scores without context.")
       return(scores)
     }
-
+    
     schedule_std <- standardize_join_keys(enriched_schedule)
     join_cols <- intersect(join_keys, intersect(names(schedule_std), names(scores)))
-
+    
     if (!length(join_cols)) {
       if (verbose) message("build_moneyline_comparison_table(): no shared join keys between schedule and scores; returning scores.")
       return(scores)
     }
-
+    
     schedule_collapsed <- collapse_by_keys_relaxed(
       schedule_std,
       keys = join_cols,
       label = "HTML schedule context"
     )
-
+    
     pull_or_default <- function(df, col_name, default = NA) {
       if (is.na(col_name) || !col_name %in% names(df)) {
         rep(default, nrow(df))
@@ -418,7 +418,7 @@ if (!exists("build_moneyline_comparison_table", inherits = FALSE)) {
         df[[col_name]]
       }
     }
-
+    
     home_team_col <- select_first_column(schedule_collapsed, c("home_team", "team_home", "home"))
     away_team_col <- select_first_column(schedule_collapsed, c("away_team", "team_away", "away"))
     date_col <- select_first_column(schedule_collapsed, c("game_date", "gameDate", "date"))
@@ -427,7 +427,7 @@ if (!exists("build_moneyline_comparison_table", inherits = FALSE)) {
     home_median_col <- select_first_column(schedule_collapsed, c("blend_home_median", "home_median_blend", "home_median"))
     away_median_col <- select_first_column(schedule_collapsed, c("blend_away_median", "away_median_blend", "away_median"))
     total_median_col <- select_first_column(schedule_collapsed, c("blend_total_median", "total_median_blend", "total_median"))
-
+    
     schedule_context <- schedule_collapsed %>%
       dplyr::mutate(
         home_team = as.character(pull_or_default(schedule_collapsed, home_team_col, NA_character_)),
@@ -450,7 +450,7 @@ if (!exists("build_moneyline_comparison_table", inherits = FALSE)) {
         blend_away_median,
         blend_total_median
       )
-
+    
     combined <- scores %>%
       dplyr::mutate(
         blend_home_prob = dplyr::coalesce(blend_home_prob, model_prob),
@@ -566,7 +566,7 @@ if (!exists("build_moneyline_comparison_table", inherits = FALSE)) {
         market_beats_model = brier_market < brier_model
       ) %>%
       dplyr::arrange(season, week, game_date, matchup)
-
+    
     combined
   }
 }
@@ -588,25 +588,25 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
     } else {
       file <- file[[1L]]
     }
-
+    
     if (!nzchar(file)) {
       stop("export_moneyline_comparison_html(): 'file' must resolve to a non-empty path.")
     }
-
+    
     if (!nrow(comparison_tbl)) {
       if (verbose) message("export_moneyline_comparison_html(): comparison table empty; skipping export.")
       return(invisible(file))
     }
-
+    
     dir_path <- dirname(file)
     if (nzchar(dir_path) && dir_path != "." && !dir.exists(dir_path)) {
       dir.create(dir_path, recursive = TRUE, showWarnings = FALSE)
     }
-
+    
     if (file.exists(file)) {
       unlink(file, force = TRUE)
     }
-
+    
     display_tbl <- comparison_tbl %>%
       dplyr::transmute(
         Season = season,
@@ -644,9 +644,9 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
         `Blend Away Prob` = blend_away_prob,
         Winner = actual_winner
       )
-
+    
     saved <- FALSE
-
+    
     if (requireNamespace("gt", quietly = TRUE)) {
       gt_tbl <- display_tbl %>%
         gt::gt() %>%
@@ -723,13 +723,13 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
           ),
           locations = gt::cells_column_labels(columns = gt::everything())
         )
-
+      
       try({
         gt::gtsave(gt_tbl, file = file)
         saved <- TRUE
       }, silent = TRUE)
     }
-
+    
     if (!saved) {
       css_block <- "body {font-family: 'Source Sans Pro', Arial, sans-serif; background-color: #0b1120; color: #e2e8f0;}\n"
       css_block <- paste0(
@@ -742,7 +742,7 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
         "tr.blend-win td {color: #ecfdf5;}\n",
         "caption {caption-side: top; font-size: 1.25rem; font-weight: 600; margin-bottom: 0.75rem; color: #ecfdf5;}\n"
       )
-
+      
       formatted_tbl <- display_tbl %>%
         dplyr::mutate(
           `Blend Edge` = scales::percent(`Blend Edge`, accuracy = 0.1),
@@ -769,7 +769,7 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
             ~ ifelse(is.na(.x), "", format(round(.x, 0), trim = TRUE))
           )
         )
-
+      
       if (requireNamespace("htmltools", quietly = TRUE)) {
         rows <- purrr::map(
           seq_len(nrow(formatted_tbl)),
@@ -783,18 +783,18 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
             )
           }
         )
-
+        
         table_html <- htmltools::tags$table(
           htmltools::tags$caption(title),
           htmltools::tags$thead(htmltools::tags$tr(purrr::map(names(formatted_tbl), htmltools::tags$th))),
           htmltools::tags$tbody(rows)
         )
-
+        
         doc <- htmltools::tags$html(
           htmltools::tags$head(htmltools::tags$style(css_block)),
           htmltools::tags$body(table_html)
         )
-
+        
         htmltools::save_html(doc, file = file)
         saved <- TRUE
       } else {
@@ -824,13 +824,13 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
         saved <- TRUE
       }
     }
-
+    
     normalized_path <- normalizePath(file, winslash = "/", mustWork = FALSE)
-
+    
     if (saved && verbose) {
       message(sprintf("export_moneyline_comparison_html(): wrote HTML report to %s", normalized_path))
     }
-
+    
     if (saved && auto_open) {
       opened <- FALSE
       if (exists("open_moneyline_report", inherits = TRUE)) {
@@ -839,12 +839,12 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
           error = function(e) FALSE
         ))
       }
-
+      
       if (!opened) {
         tryCatch(utils::browseURL(normalized_path), error = function(e) NULL)
       }
     }
-
+    
     invisible(normalized_path)
   }
 }
@@ -863,29 +863,29 @@ if (!exists("build_res_blend", inherits = FALSE)) {
       if (verbose) message("build_res_blend(): no blend history available; skipping blend attachment.")
       return(NULL)
     }
-
+    
     per_game <- standardize_join_keys(res$per_game)
     prob_col <- prob_candidates[prob_candidates %in% names(per_game)][1]
     if (is.na(prob_col)) {
       if (verbose) message("build_res_blend(): no calibrated probability column found on res$per_game; skipping blend attachment.")
       return(NULL)
     }
-
+    
     base_per_game <- collapse_by_keys_relaxed(per_game, join_keys, label = "Backtest per-game table")
     base_cols <- names(base_per_game)
-
+    
     blend_join <- blend_oos %>%
       standardize_join_keys() %>%
       dplyr::filter(dplyr::if_all(dplyr::all_of(join_keys), ~ !is.na(.))) %>%
       dplyr::group_by(dplyr::across(dplyr::all_of(join_keys))) %>%
       dplyr::summarise(p_blend = mean(p_blend, na.rm = TRUE), .groups = "drop") %>%
       dplyr::rename(.blend_prob = p_blend)
-
+    
     if (!nrow(blend_join)) {
       if (verbose) message("build_res_blend(): blend history has no complete join keys; skipping blend attachment.")
       return(NULL)
     }
-
+    
     cast_column <- function(col, template, col_name) {
       if (!requireNamespace("vctrs", quietly = TRUE)) {
         return(col)
@@ -909,17 +909,17 @@ if (!exists("build_res_blend", inherits = FALSE)) {
         }
       )
     }
-
+    
     for (col_name in join_keys) {
       if (!col_name %in% names(blend_join) || !col_name %in% names(base_per_game)) next
       blend_join[[col_name]] <- cast_column(blend_join[[col_name]], base_per_game[[col_name]], col_name)
     }
-
+    
     join_args <- list(x = base_per_game, y = blend_join, by = join_keys)
     if ("relationship" %in% names(formals(dplyr::left_join))) {
       join_args$relationship <- "many-to-one"
     }
-
+    
     per_game_with_blend <- tryCatch(
       {
         rlang::exec(dplyr::left_join, !!!join_args)
@@ -929,11 +929,11 @@ if (!exists("build_res_blend", inherits = FALSE)) {
         NULL
       }
     )
-
+    
     if (is.null(per_game_with_blend)) {
       return(NULL)
     }
-
+    
     blend_col <- "\.blend_prob"
     if (!blend_col %in% names(per_game_with_blend)) {
       alt_cols <- intersect(c("p_blend", "p_blend.y", "p_blend.x"), names(per_game_with_blend))
@@ -941,40 +941,40 @@ if (!exists("build_res_blend", inherits = FALSE)) {
         per_game_with_blend[[blend_col]] <- per_game_with_blend[[alt_cols[1L]]]
       }
     }
-
+    
     if (!blend_col %in% names(per_game_with_blend)) {
       if (verbose) message("build_res_blend(): joined table missing p_blend column; skipping blend attachment.")
       return(NULL)
     }
-
+    
     per_game_with_blend[[prob_col]] <- dplyr::if_else(
       is.finite(per_game_with_blend[[blend_col]]),
       per_game_with_blend[[blend_col]],
       per_game_with_blend[[prob_col]]
     )
-
+    
     if ("p_blend" %in% base_cols) {
       per_game_with_blend$p_blend <- per_game_with_blend[[blend_col]]
     }
-
+    
     per_game_with_blend <- dplyr::select(per_game_with_blend, -dplyr::any_of(c(blend_col, "p_blend.x", "p_blend.y")))
-
+    
     missing_cols <- setdiff(base_cols, names(per_game_with_blend))
     if (length(missing_cols)) {
       for (col_name in missing_cols) {
         per_game_with_blend[[col_name]] <- base_per_game[[col_name]][0]
       }
     }
-
+    
     per_game_with_blend <- dplyr::select(per_game_with_blend, dplyr::all_of(base_cols))
-
+    
     res_out <- res
     res_out$per_game <- per_game_with_blend
-
+    
     if (verbose) {
       message(sprintf("build_res_blend(): attached blended probabilities using column '%s'.", prob_col))
     }
-
+    
     res_out
   }
 }
@@ -1036,7 +1036,7 @@ if (!exists(".get_this_file", inherits = FALSE)) {
       p <- tryCatch(rstudioapi::getSourceEditorContext()$path, error = function(e) "")
       if (nzchar(p)) return(normalizePath(p))
     }
-    # fallback – safe placeholder, adjust if you want
+    # fallback ??? safe placeholder, adjust if you want
     "NFLsimulation.R"
   }
 }
@@ -1078,14 +1078,14 @@ pal_fav <- function(p) {
 
 
 pal_total <- function(total) {
-  # Blue scale for totals, 35–55 typical range
+  # Blue scale for totals, 35???55 typical range
   scales::col_numeric("Blues", domain = c(35,55))(total)
 }
 
 clamp <- function(x, lo, hi) pmin(pmax(x, lo), hi)
 
 
-# Margin → probability conversion -------------------------------------------------
+# Margin ??? probability conversion -------------------------------------------------
 # NFL margin distributions are noisy; to keep win probabilities aligned with the
 # projected scoring gap we shrink the simulation margin standard deviation toward
 # a league-wide prior before mapping to a 2-way win chance.  This keeps a
@@ -1100,17 +1100,17 @@ margin_probs_from_summary <- function(margin_mean, margin_sd, tie_prob) {
   sd_raw <- ifelse(is.finite(margin_sd) & margin_sd > 0, margin_sd, MARGIN_PROB_MIN_SD)
   sd_eff <- sqrt(sd_raw^2 + MARGIN_PROB_PRIOR_SD^2)
   sd_eff <- clamp(sd_eff, MARGIN_PROB_MIN_SD, MARGIN_PROB_MAX_SD)
-
+  
   tie_prob <- ifelse(is.finite(tie_prob), tie_prob, 0)
   tie_prob <- clamp(tie_prob, 0, 0.25)
   two_way_mass <- clamp(1 - tie_prob, 1e-9, 1)
-
+  
   home_p_2w <- stats::pnorm(mm / sd_eff)
   home_p_2w <- clamp(home_p_2w, 1e-6, 1 - 1e-6)
-
+  
   home_win <- clamp(home_p_2w * two_way_mass, 0, two_way_mass)
   away_win <- two_way_mass - home_win
-
+  
   list(
     home_win_prob = home_win,
     away_win_prob = away_win,
@@ -1124,14 +1124,14 @@ margin_probs_from_summary <- function(margin_mean, margin_sd, tie_prob) {
 
 # ------------------------ USER CONTROLS ---------------------------------------
 SEASON      <- year(Sys.Date())
-WEEK_TO_SIM <- 6               # ← single switch for the week
+WEEK_TO_SIM <- 6               # ??? single switch for the week
 N_TRIALS    <- 100000
 N_RECENT    <- 6               # last N games for "form"
 SEED        <- 471
 set.seed(SEED)
 
 # ----- Priors / blending knobs -----
-GLMM_BLEND_W <- 0.30   # weight on GLMM μ vs your PPD×pace μ (0..1)
+GLMM_BLEND_W <- 0.30   # weight on GLMM ?? vs your PPD??pace ?? (0..1)
 
 # Meta-model and calibration controls for the market/model blend
 BLEND_META_MODEL    <- getOption("nfl_sim.blend_model",    default = "glmnet")
@@ -1140,15 +1140,15 @@ CALIBRATION_METHOD  <- getOption("nfl_sim.calibration",    default = "isotonic")
 
 # SoS weighting knobs
 USE_SOS            <- TRUE     # turn on/off SoS weighting
-SOS_STRENGTH       <- 0.30     # 0=no effect; 1=full strength; try 0.4–0.8
+SOS_STRENGTH       <- 0.30     # 0=no effect; 1=full strength; try 0.4???0.8
 
 # Recency weighting for recent form (exponential decay)
 USE_RECENCY_DECAY  <- TRUE
 RECENCY_HALFLIFE   <- 4        # games; bigger = flatter weights
 
 # Outside-factor base knobs (league-wide defaults, can be overridden per game)
-REST_SHORT_PENALTY <- -0.7     # ≤6 days rest
-REST_LONG_BONUS    <- +0.5     # ≥9 days rest (non-bye)
+REST_SHORT_PENALTY <- -0.7     # ???6 days rest
+REST_LONG_BONUS    <- +0.5     # ???9 days rest (non-bye)
 BYE_BONUS          <- +1.0     # coming off a bye
 DEN_ALTITUDE_BONUS <- +0.6     # small bump for DEN home HFA flavor
 
@@ -1158,7 +1158,7 @@ OUTDOOR_WIND_PEN   <- -1.0     # apply if you set wind flag on a game
 COLD_TEMP_PEN      <- -0.6     # apply if you set cold flag on a game
 RAIN_SNOW_PEN      <- -0.8
 
-RHO_SCORE      <- NA  # if NA, we’ll estimate it from data
+RHO_SCORE      <- NA  # if NA, we???ll estimate it from data
 
 # Player availability impact scalars (points per aggregated severity unit)
 SKILL_AVAIL_POINT_PER_FLAG     <- 0.55
@@ -1170,32 +1170,32 @@ FRONT7_AVAIL_POINT_PER_FLAG    <- 0.50
 # interactive session to review the levers and the metrics they typically move.
 .tuning_parameters <- tibble::tribble(
   ~parameter, ~default, ~recommended_range, ~metrics_to_watch, ~notes,
-  "GLMM_BLEND_W", GLMM_BLEND_W, "0.25 – 0.55", "Win rate, Brier, log loss",
-    "Increase to trust the GLMM's structured priors; decrease to lean on pace + EPA base. Higher weights can steady calibration when market data are noisy but may cap upside if the priors lag current form.",
-  "SOS_STRENGTH", SOS_STRENGTH, "0.4 – 0.8", "Win rate, ret_total",
-    "Controls how aggressively schedule strength shapes opponent adjustments. Raising it helps when the model underrates teams with tough slates but can overshoot if weighted too heavily after upsets.",
-  "RECENCY_HALFLIFE", RECENCY_HALFLIFE, "2 – 5", "Win rate, Brier",
-    "Shorter halflife doubles down on the latest form; longer halflife smooths week-to-week noise. Use smaller values when injuries or scheme changes shift performance quickly.",
-  "REST_SHORT_PENALTY", REST_SHORT_PENALTY, "-1.0 – -0.4", "ret_total",
-    "More negative numbers punish teams on ≤6 days rest. Strengthen the penalty when the sim overestimates tired road teams.",
-  "REST_LONG_BONUS", REST_LONG_BONUS, "0.3 – 0.8", "Win rate",
-    "Boost for ≥9 days rest without a bye. Raising it can recover edge when the model undervalues extended prep time.",
-  "BYE_BONUS", BYE_BONUS, "0.6 – 1.4", "Win rate, ret_total",
-    "Adjust when bye-week teams fail to cover expected improvements. Higher values help capture coordinators' self-scouting gains but may inflate totals if stacked with other bonuses.",
-  "DOME_BONUS_TOTAL", DOME_BONUS_TOTAL, "0.4 – 1.2", "Totals, ret_total",
-    "Positive values lift scoring expectations indoors. Increase when indoor unders show value because the model stays too low on dome efficiency.",
-  "OUTDOOR_WIND_PEN", OUTDOOR_WIND_PEN, "-1.4 – -0.6", "Totals, Brier",
-    "More negative values cut totals in windy games. Tighten when the blend misses weather-driven unders; ease off if it overreacts to moderate breezes.",
-  "RAIN_SNOW_PEN", RAIN_SNOW_PEN, "-1.2 – -0.4", "Totals, log loss",
-    "Rain/snow adjustment applied via `game_modifiers`. Increase magnitude when sloppy games still go over the projected total.",
-  "SKILL_AVAIL_POINT_PER_FLAG", SKILL_AVAIL_POINT_PER_FLAG, "0.4 – 0.7", "Win rate, Brier",
-    "Translates aggregated WR/RB/TE injury flags into point adjustments. Raise when talent gaps fail to move projections enough; lower if the sim double-counts absences with market odds.",
-  "TRENCH_AVAIL_POINT_PER_FLAG", TRENCH_AVAIL_POINT_PER_FLAG, "0.5 – 0.8", "ret_total",
-    "Impacts OL/DL cluster injuries. Stronger penalties help when line mismatches drive ATS losses; weaker when the model overreacts to questionable tags.",
-  "SECONDARY_AVAIL_POINT_PER_FLAG", SECONDARY_AVAIL_POINT_PER_FLAG, "0.35 – 0.6", "Totals, log loss",
-    "Raise to bump overs when secondaries are depleted; reduce if the market already prices in those matchups and the model overstates shootout risk.",
-  "FRONT7_AVAIL_POINT_PER_FLAG", FRONT7_AVAIL_POINT_PER_FLAG, "0.35 – 0.65", "Totals, ret_total",
-    "Controls front-seven injury effects. Increase when run-stopping issues aren't reflected; decrease if defensive depth masks absences."
+  "GLMM_BLEND_W", GLMM_BLEND_W, "0.25 ??? 0.55", "Win rate, Brier, log loss",
+  "Increase to trust the GLMM's structured priors; decrease to lean on pace + EPA base. Higher weights can steady calibration when market data are noisy but may cap upside if the priors lag current form.",
+  "SOS_STRENGTH", SOS_STRENGTH, "0.4 ??? 0.8", "Win rate, ret_total",
+  "Controls how aggressively schedule strength shapes opponent adjustments. Raising it helps when the model underrates teams with tough slates but can overshoot if weighted too heavily after upsets.",
+  "RECENCY_HALFLIFE", RECENCY_HALFLIFE, "2 ??? 5", "Win rate, Brier",
+  "Shorter halflife doubles down on the latest form; longer halflife smooths week-to-week noise. Use smaller values when injuries or scheme changes shift performance quickly.",
+  "REST_SHORT_PENALTY", REST_SHORT_PENALTY, "-1.0 ??? -0.4", "ret_total",
+  "More negative numbers punish teams on ???6 days rest. Strengthen the penalty when the sim overestimates tired road teams.",
+  "REST_LONG_BONUS", REST_LONG_BONUS, "0.3 ??? 0.8", "Win rate",
+  "Boost for ???9 days rest without a bye. Raising it can recover edge when the model undervalues extended prep time.",
+  "BYE_BONUS", BYE_BONUS, "0.6 ??? 1.4", "Win rate, ret_total",
+  "Adjust when bye-week teams fail to cover expected improvements. Higher values help capture coordinators' self-scouting gains but may inflate totals if stacked with other bonuses.",
+  "DOME_BONUS_TOTAL", DOME_BONUS_TOTAL, "0.4 ??? 1.2", "Totals, ret_total",
+  "Positive values lift scoring expectations indoors. Increase when indoor unders show value because the model stays too low on dome efficiency.",
+  "OUTDOOR_WIND_PEN", OUTDOOR_WIND_PEN, "-1.4 ??? -0.6", "Totals, Brier",
+  "More negative values cut totals in windy games. Tighten when the blend misses weather-driven unders; ease off if it overreacts to moderate breezes.",
+  "RAIN_SNOW_PEN", RAIN_SNOW_PEN, "-1.2 ??? -0.4", "Totals, log loss",
+  "Rain/snow adjustment applied via `game_modifiers`. Increase magnitude when sloppy games still go over the projected total.",
+  "SKILL_AVAIL_POINT_PER_FLAG", SKILL_AVAIL_POINT_PER_FLAG, "0.4 ??? 0.7", "Win rate, Brier",
+  "Translates aggregated WR/RB/TE injury flags into point adjustments. Raise when talent gaps fail to move projections enough; lower if the sim double-counts absences with market odds.",
+  "TRENCH_AVAIL_POINT_PER_FLAG", TRENCH_AVAIL_POINT_PER_FLAG, "0.5 ??? 0.8", "ret_total",
+  "Impacts OL/DL cluster injuries. Stronger penalties help when line mismatches drive ATS losses; weaker when the model overreacts to questionable tags.",
+  "SECONDARY_AVAIL_POINT_PER_FLAG", SECONDARY_AVAIL_POINT_PER_FLAG, "0.35 ??? 0.6", "Totals, log loss",
+  "Raise to bump overs when secondaries are depleted; reduce if the market already prices in those matchups and the model overstates shootout risk.",
+  "FRONT7_AVAIL_POINT_PER_FLAG", FRONT7_AVAIL_POINT_PER_FLAG, "0.35 ??? 0.65", "Totals, ret_total",
+  "Controls front-seven injury effects. Increase when run-stopping issues aren't reflected; decrease if defensive depth masks absences."
 )
 
 show_tuning_help <- function(metric = NULL) {
@@ -1293,7 +1293,7 @@ gametype_col  <- pick_col(sched, c("game_type","season_type","season_type_name")
 home_col      <- pick_col(sched, c("home_team","home_team_abbr","team_home","home"), "home team")
 away_col      <- pick_col(sched, c("away_team","away_team_abbr","team_away","away"), "away team")
 
-# Normalize to standard names we’ll use everywhere
+# Normalize to standard names we???ll use everywhere
 sched <- sched %>%
   mutate(
     season_std   = .data[[season_col]],
@@ -1387,7 +1387,7 @@ sched <- sched %>%
     home_team     = .data[[home_col]],
     away_team     = .data[[away_col]]
   ) %>%
-  # 👇 make the select/any_of calls explicit
+  # ???? make the select/any_of calls explicit
   dplyr::select(dplyr::everything(), -dplyr::any_of(c("season", "week", "game_type"))) %>%
   dplyr::rename(
     season    = season_std,
@@ -1461,7 +1461,7 @@ if (!"dome" %in% names(week_slate)) {
 
 week_slate <- week_slate %>% mutate(dome = coalesce(dome, FALSE))
 
-# ────────────────── TIME ZONES / SIMPLE TRAVEL TAX ──────────────────
+# ?????????????????????????????????????????????????????? TIME ZONES / SIMPLE TRAVEL TAX ??????????????????????????????????????????????????????
 team_tz <- tribble(
   ~team, ~tz,
   "ARI","America/Phoenix",
@@ -1549,23 +1549,23 @@ if (nrow(week_slate) == 0) stop(sprintf("No games found for %s Wk %s.", SEASON, 
 
 teams_on_slate <- sort(unique(c(week_slate$home_team, week_slate$away_team)))
 
-# ───────────────────────── INJURIES (schema-agnostic + safe) ──────────────────
+# ??????????????????????????????????????????????????????????????????????????? INJURIES (schema-agnostic + safe) ??????????????????????????????????????????????????????
 # Prefer nflfastR injury scraping with nflreadr fallback when necessary.
 safe_load_injuries <- function(seasons, prefer_fast = TRUE, ...) {
   seasons <- sort(unique(seasons))
   if (!length(seasons)) {
     return(tibble::tibble())
   }
-
+  
   use_fast <- isTRUE(prefer_fast) && requireNamespace("nflfastR", quietly = TRUE)
   if (isTRUE(prefer_fast) && !use_fast) {
     message("nflfastR not installed; using nflreadr::load_injuries() instead.")
   }
-
+  
   missing <- integer(0)
   pieces <- lapply(seasons, function(season) {
     fast_result <- NULL
-
+    
     if (use_fast) {
       fast_result <- tryCatch(
         nflfastR::fast_scraper_injuries(season = season),
@@ -1586,12 +1586,12 @@ safe_load_injuries <- function(seasons, prefer_fast = TRUE, ...) {
           return(NULL)
         }
       )
-
+      
       if (is.data.frame(fast_result)) {
         return(fast_result)
       }
     }
-
+    
     tryCatch(
       nflreadr::load_injuries(seasons = season, ...),
       error = function(e) {
@@ -1608,9 +1608,9 @@ safe_load_injuries <- function(seasons, prefer_fast = TRUE, ...) {
       }
     )
   })
-
+  
   injuries <- dplyr::bind_rows(pieces)
-
+  
   if (length(missing)) {
     warning(
       sprintf(
@@ -1620,7 +1620,7 @@ safe_load_injuries <- function(seasons, prefer_fast = TRUE, ...) {
       call. = FALSE
     )
   }
-
+  
   injuries
 }
 
@@ -1638,13 +1638,13 @@ calc_injury_impacts <- function(df, group_vars = c("team")) {
   if (!is.data.frame(df) || !nrow(df)) {
     return(tibble())
   }
-
+  
   required <- c("team", "position", "status")
   if (!all(required %in% names(df))) return(tibble())
-
+  
   missing_groups <- setdiff(group_vars, names(df))
   if (length(missing_groups)) return(tibble())
-
+  
   df %>%
     dplyr::mutate(
       base_pen = dplyr::case_when(
@@ -1722,9 +1722,9 @@ if (!is.data.frame(inj_all) || nrow(inj_all) == 0) {
   col_pos    <- inj_pick(inj_all, c("position","pos"))
   col_status <- inj_pick(inj_all, c("game_status","status","practice_status",
                                     "player_status","report_status"))
-
+  
   if (is.na(col_team)) {
-    # no team column → nothing we can do; default to zeros
+    # no team column ??? nothing we can do; default to zeros
     inj_team_effects <- tibble(
       team = teams_on_slate,
       inj_off_pts = 0, inj_def_pts = 0,
@@ -1740,19 +1740,19 @@ if (!is.data.frame(inj_all) || nrow(inj_all) == 0) {
         position = toupper(as.character(coalesce(if (!is.na(col_pos))    .data[[col_pos]]    else NA_character_, ""))),
         status   = toupper(as.character(coalesce(if (!is.na(col_status)) .data[[col_status]] else NA_character_, "")))
       )
-
+    
     inj_hist_features <- calc_injury_impacts(
       inj_prepped %>% dplyr::filter(!is.na(season), !is.na(week), nzchar(team)),
       group_vars = c("season", "week", "team")
     )
-
+    
     inj_week <- inj_prepped %>%
       { if (!is.na(col_season)) dplyr::filter(., season == SEASON) else . } %>%
       { if (!is.na(col_week))   dplyr::filter(., week   == WEEK_TO_SIM) else . } %>%
       dplyr::filter(team %in% teams_on_slate)
-
+    
     inj_team_effects <- calc_injury_impacts(inj_week, group_vars = c("team"))
-
+    
     if (!nrow(inj_team_effects)) {
       inj_team_effects <- tibble(
         team = teams_on_slate,
@@ -1864,14 +1864,14 @@ team_games_away <- sched_std |>
 team_games <- bind_rows(team_games_home, team_games_away) |>
   arrange(game_date)
 
-# Estimate league ρ from data
+# Estimate league ?? from data
 if (is.na(RHO_SCORE)) {
   score_pairs <- sched_std |>
     dplyr::filter(game_type == "REG", game_completed) |>
     dplyr::transmute(h = home_score_std, a = away_score_std)
   rho_hat <- suppressWarnings(cor(score_pairs$h, score_pairs$a, use = "complete.obs"))
   
-  # Seasonal distribution of ρ → empirical bounds
+  # Seasonal distribution of ?? ??? empirical bounds
   rho_season <- sched_std |>
     dplyr::filter(game_type == "REG", game_completed) |>
     dplyr::group_by(season) |>
@@ -2052,7 +2052,7 @@ explosive_def <- pbp_hist %>%
   dplyr::summarise(expl_rate_def = mean(expl, na.rm = TRUE), .groups = "drop")
 
 
-# ───────────────────────── DATA-DRIVEN QB IMPACT ─────────────────────────
+# ??????????????????????????????????????????????????????????????????????????? DATA-DRIVEN QB IMPACT ???????????????????????????????????????????????????????????????????????????
 # Uses nflfastR PBP to estimate each team's QB importance from on/off EPA/play,
 # then multiplies by a plays-per-game scalar to convert to points.
 # Injury status for QB comes from nflreadr::load_injuries for the current week.
@@ -2099,15 +2099,15 @@ qb_importance <- qb_onoff %>%
   )
 
 # Convert EPA/play difference into points per game.
-# Rule of thumb: 1 EPA/play over ~55 team offensive plays ≈ 55 points (too big),
+# Rule of thumb: 1 EPA/play over ~55 team offensive plays ??? 55 points (too big),
 # but QB only affects the *dropback* slice. A conservative scalar works well:
-EPA_TO_POINTS_SCALAR <- 34   # ~0.15 EPA/play → ~5 points, ~0.10 → ~3.4 points
+EPA_TO_POINTS_SCALAR <- 34   # ~0.15 EPA/play ??? ~5 points, ~0.10 ??? ~3.4 points
 qb_importance <- qb_importance %>%
   mutate(
     qb_points_importance = pmin(pmax(epa_diff * EPA_TO_POINTS_SCALAR, 0), 10)  # cap at +10
   )
 
-# 2) Read this week’s injury report and extract QB status for teams on the slate
+# 2) Read this week???s injury report and extract QB status for teams on the slate
 qb_status_from_inj <- {
   col_team   <- inj_pick(inj_all, c("team","team_abbr","club_code","club"))
   col_pos    <- inj_pick(inj_all, c("position","pos"))
@@ -2152,7 +2152,7 @@ qb_status_from_inj <- {
   }
 }
 
-# 3) Map QB flag × importance → points & uncertainty adjustments
+# 3) Map QB flag ?? importance ??? points & uncertainty adjustments
 sev_mult <- c(OUT = 1.00, DOUBTFUL = 0.70, QUESTIONABLE = 0.40, LIMITED = 0.25, OK = 0.00)
 
 qb_adjustments <- tibble(team = teams_on_slate) %>%
@@ -2170,7 +2170,7 @@ qb_adjustments <- tibble(team = teams_on_slate) %>%
 
 # 4) Use these QB adjustments in place of the manual qb_status
 qb_status <- qb_adjustments
-# ─────────────────────── END DATA-DRIVEN QB IMPACT ───────────────────────
+# ????????????????????????????????????????????????????????????????????? END DATA-DRIVEN QB IMPACT ?????????????????????????????????????????????????????????????????????
 
 
 # Merge HFA and QB status
@@ -2247,7 +2247,7 @@ pbp_for_pace <- if (length(stype_col)) {
   pbp_hist
 }
 
-# ────────────────── WEATHER (Open-Meteo; hourly forecast) ──────────────────
+# ?????????????????????????????????????????????????????? WEATHER (Open-Meteo; hourly forecast) ??????????????????????????????????????????????????????
 get_hourly_weather <- function(lat, lon, date_iso, hours = c(13)) {
   # Open-Meteo uses 'windspeed_10m' (no extra underscore) and returns local times like "2025-10-01T13:00"
   req <- httr2::request("https://api.open-meteo.com/v1/forecast") |>
@@ -2398,7 +2398,7 @@ def_ppd_game <- def_drives_game |>
   dplyr::left_join(team_points_game |> dplyr::select(game_id, team, points_against), by = c("game_id","team")) |>
   dplyr::mutate(def_ppd = points_against / def_drives)
 
-# REPLACE your off_ppd_tbl / def_ppd_tbl “mean(...)” blocks with this:
+# REPLACE your off_ppd_tbl / def_ppd_tbl ???mean(...)??? blocks with this:
 gid_date <- sched_dates
 
 off_ppd_tbl <- off_ppd_game %>%
@@ -2480,7 +2480,7 @@ pace_tbl <- dplyr::full_join(off_drives, def_drives, by = "team")
 league_drives_avg <- mean(pace_tbl$off_drives_pg, na.rm = TRUE)
 if (!is.finite(league_drives_avg) || league_drives_avg <= 0) league_drives_avg <- 11.5
 
-# ----- NB-GLMM team ratings as a μ prior (pre-slate) -----
+# ----- NB-GLMM team ratings as a ?? prior (pre-slate) -----
 df_hist <- sched %>%
   filter(game_type == "REG", game_completed, as.Date(game_date) < slate_date) %>%
   transmute(home = .data[[home_team_col]], away = .data[[away_team_col]],
@@ -2509,7 +2509,7 @@ if (file.exists(.nb_path)) {
 
 
 
-# Predict μ for this slate (home and away roles)
+# Predict ?? for this slate (home and away roles)
 glmm_preds <- week_slate %>%
   transmute(home_team, away_team,
             mu_home_glmm = if (inherits(fit_nb,"try-error")) NA_real_ else
@@ -2538,9 +2538,9 @@ to_team <- bind_rows(
 league_to_pg <- mean(to_team$to_pg, na.rm = TRUE)
 to_team <- to_team %>%
   mutate(w = n / (n + 8), to_pg = coalesce(to_pg, league_to_pg),
-         to_adj_pts = -0.40 * (to_pg - league_to_pg) * w)  # −0.4 pts per TO above lg avg (shrunk)
+         to_adj_pts = -0.40 * (to_pg - league_to_pg) * w)  # ???0.4 pts per TO above lg avg (shrunk)
 
-st_game <- NULL # (optional) if you have ST EPA/DVOA, build similar small adj, ±1.0 cap
+st_game <- NULL # (optional) if you have ST EPA/DVOA, build similar small adj, ??1.0 cap
 
 
 # ------------------------ GAME SETUP (with Pace + PPD) ------------------------
@@ -2571,10 +2571,10 @@ games_ready <- week_slate |>
     # Expected drives this game = average of team offense and opponent defense
     exp_drives_home = (home_off_drives_pg + away_def_drives_pg)/2,
     exp_drives_away = (away_off_drives_pg + home_def_drives_pg)/2,
-
+    
     exp_ppd_home = ppd_blend(home_off_ppd, away_def_ppd, w_off = 0.65),
     exp_ppd_away = ppd_blend(away_off_ppd, home_def_ppd, w_off = 0.65),
-
+    
     home_skill_penalty = coalesce(home_skill_avail_pen, 0) * SKILL_AVAIL_POINT_PER_FLAG,
     home_trench_penalty = coalesce(home_trench_avail_pen, 0) * TRENCH_AVAIL_POINT_PER_FLAG,
     home_secondary_penalty = coalesce(home_secondary_avail_pen, 0) * SECONDARY_AVAIL_POINT_PER_FLAG,
@@ -2583,7 +2583,7 @@ games_ready <- week_slate |>
     away_trench_penalty = coalesce(away_trench_avail_pen, 0) * TRENCH_AVAIL_POINT_PER_FLAG,
     away_secondary_penalty = coalesce(away_secondary_avail_pen, 0) * SECONDARY_AVAIL_POINT_PER_FLAG,
     away_front7_penalty = coalesce(away_front7_avail_pen, 0) * FRONT7_AVAIL_POINT_PER_FLAG,
-
+    
     home_injury_off_total = home_inj_off_pts - home_skill_penalty - home_trench_penalty,
     away_injury_off_total = away_inj_off_pts - away_skill_penalty - away_trench_penalty,
     home_injury_def_total = home_inj_def_pts + home_secondary_penalty + home_front7_penalty,
@@ -2595,13 +2595,13 @@ games_ready <- week_slate |>
     exp_drives_away = dplyr::coalesce(exp_drives_away, league_drives_avg),
     exp_ppd_home    = dplyr::coalesce(exp_ppd_home,  league_off_ppd),
     exp_ppd_away    = dplyr::coalesce(exp_ppd_away,  league_off_ppd),
-    # Base expected points = expected drives × expected PPD (now safe)
+    # Base expected points = expected drives ?? expected PPD (now safe)
     mu_home_model   = exp_drives_home * exp_ppd_home,
     mu_away_model   = exp_drives_away * exp_ppd_away
   ) %>%
   # continue with your GLMM blend using these new *_model columns
   dplyr::mutate(
-    # GLMM blend (convex; fallback to model μ if GLMM is NA)
+    # GLMM blend (convex; fallback to model ?? if GLMM is NA)
     glmm_w = dplyr::case_when(
       week <= 2 ~ 0.70,
       week <= 4 ~ 0.55,
@@ -2621,11 +2621,11 @@ games_ready <- week_slate |>
     # QB & rest adjustments (additive to means)
     mu_home_qb_rest = mu_home_base + home_off_points_adj + home_rest_points + home_injury_off_total,
     mu_away_qb_rest = mu_away_base + away_off_points_adj + away_rest_points + away_injury_off_total,
-
+    
     # Apply HFA split & non-negativity
     mu_home = pmax(mu_home_qb_rest, 0),
     mu_away = pmax(mu_away_qb_rest, 0),
-    mu_home = pmax(mu_home + away_injury_def_total, 0),  # away defense ding → home scores more
+    mu_home = pmax(mu_home + away_injury_def_total, 0),  # away defense ding ??? home scores more
     mu_away = pmax(mu_away + home_injury_def_total, 0),
     
     
@@ -2649,7 +2649,7 @@ games_ready <- games_ready %>%
 games_ready <- games_ready %>%
   mutate(
     HFA_pts = coalesce(home_hfa, league_hfa),  # if you have team-specific, prefer that
-    HFA_pts = pmin(pmax(HFA_pts, -6), 6)       # cap ±6
+    HFA_pts = pmin(pmax(HFA_pts, -6), 6)       # cap ??6
   ) %>%
   mutate(
     mu_home = pmax(mu_home + HFA_pts, 0)
@@ -2727,7 +2727,7 @@ games_ready <- games_ready %>%
 
 # --- Total-sensitive SD guardrail (light touch) -------------------------------
 sd_total_curve <- function(total_mu){
-  # ~12 at total 38 → ~16 at total 55; clamp to [10,18]
+  # ~12 at total 38 ??? ~16 at total 55; clamp to [10,18]
   val <- 12 + 0.195 * (total_mu - 38)
   pmin(pmax(val, 9.5), 17)
 }
@@ -2742,7 +2742,7 @@ games_ready <- games_ready |>
     sd_away  = pmax(sd_away, 5.0)
   )
 
-# Game-specific score correlation (ρ): more total → more +ρ; larger mismatch → less ρ
+# Game-specific score correlation (??): more total ??? more +??; larger mismatch ??? less ??
 rho_from_game <- function(total_mu, spread_abs, rho_global = RHO_SCORE) {
   base <- 0.10 + 0.20 * plogis((total_mu - 44)/4)   # totals around 44 are neutral
   anti <- -0.15 * plogis((spread_abs - 10)/3)       # big spreads dampen correlation
@@ -2770,10 +2770,10 @@ games_ready <- games_ready %>%
   )
 
 
-# ──────────────────────────────────────────────────────────────────────────────
+# ??????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
 # Simulator-based isotonic calibration (out-of-sample by week)
 # Trains isotonic on TWO-WAY probabilities produced by a LIGHT sim at each cut.
-# ──────────────────────────────────────────────────────────────────────────────
+# ??????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
 
 # Tunables (keep same knobs you already use)
 N_CALIB_YEARS   <- 5
@@ -2889,7 +2889,7 @@ recent_form_at_sim <- function(cut_season, cut_week, teams,
 }
 
 # --- MONTE CARLO (Negative Binomial + Gaussian Copula) -----------------------
-# Convert (mu, sd) → NB size k. If v<=mu, fall back to Poisson (k = Inf)
+# Convert (mu, sd) ??? NB size k. If v<=mu, fall back to Poisson (k = Inf)
 nb_size_from_musd <- function(mu, sd) {
   v <- sd^2
   if (!is.finite(mu) || !is.finite(sd) || mu <= 0 || v <= mu) return(Inf)
@@ -2950,7 +2950,7 @@ week_inputs_and_sim_2w <- function(cut_season, cut_week, n_trials = CALIB_TRIALS
   
   # --------- Build PACE and PPD "as of" the cut date ----------
   gid_date <- sched_dates
-
+  
   
   off_drives_game_cut <- pbp_for_pace %>%
     filter(!is.na(.data[[posteam_col]]), !is.na(.data[[drive_col]])) %>%
@@ -3020,7 +3020,7 @@ week_inputs_and_sim_2w <- function(cut_season, cut_week, n_trials = CALIB_TRIALS
   
   clamp <- function(x, lo, hi) pmin(pmax(x, lo), hi)
   
-  # --------- Build game μ/σ like your main slate ---------
+  # --------- Build game ??/?? like your main slate ---------
   g <- slate |>
     # join recency/SD (rf) just to get sd_* and hfa/rest
     dplyr::left_join(rf |> dplyr::rename_with(~paste0("home_", .x), -team),
@@ -3048,7 +3048,7 @@ week_inputs_and_sim_2w <- function(cut_season, cut_week, n_trials = CALIB_TRIALS
     dplyr::mutate(
       exp_drives_home = (home_off_drives_pg + away_def_drives_pg)/2,
       exp_drives_away = (away_off_drives_pg + home_def_drives_pg)/2,
-  
+      
       exp_ppd_home = ppd_blend(home_off_ppd, away_def_ppd, w_off = 0.65),
       exp_ppd_away = ppd_blend(away_off_ppd, home_def_ppd, w_off = 0.65),
       
@@ -3088,13 +3088,13 @@ week_inputs_and_sim_2w <- function(cut_season, cut_week, n_trials = CALIB_TRIALS
       g$mu_away[i], g$sd_away[i],
       n_trials, rho = RHO_SCORE, cap = PTS_CAP_HI
     )
-
+    
     prob_info <- margin_probs_from_summary(
       mean(sims$margin),
       stats::sd(sims$margin),
       mean(sims$tie)
     )
-
+    
     tibble::tibble(
       game_id   = g$game_id[i],
       home_team = g$home_team[i],
@@ -3157,7 +3157,7 @@ if (file.exists(.calib_path)) {
     dplyr::filter(!is.na(y_home), is.finite(p_home_2w_sim))
   
   saveRDS(calib_sim_df, .calib_path)
-  }
+}
 
 if (!nrow(calib_sim_df)) {
   map_iso <- function(p) p
@@ -3174,7 +3174,7 @@ if (!nrow(calib_sim_df)) {
     summarise(
       x = mean(p_home_2w_sim),
       n = n(),
-      # smoothed rate: (wins + α) / (n + 2α)
+      # smoothed rate: (wins + ??) / (n + 2??)
       y = (sum(y_home) + ALPHA) / (n + 2*ALPHA),
       .groups = "drop"
     ) %>%
@@ -3197,7 +3197,7 @@ if (!nrow(calib_sim_df)) {
   
   
   mae <- mean(abs(binned$x - binned$y), na.rm = TRUE)
-  message(sprintf("Simulator-based isotonic fit — bins=%d | MAE(iso)=%.4f", nrow(binned), mae))
+  message(sprintf("Simulator-based isotonic fit ??? bins=%d | MAE(iso)=%.4f", nrow(binned), mae))
 }
 
 # ----- 3-way multinomial calibration (H/A/T) -----
@@ -3363,7 +3363,7 @@ games_ready <- games_ready %>%
     sd_away = pmax(sd_away + sd_away_adj, 5.0)
   ) 
 # ------------------------ OVERTIME STATS (data-driven) ------------------------
-# We’ll compute:
+# We???ll compute:
 #   - ot_rate_hist       = P(game goes to OT)
 #   - p_tie_given_ot     = P(tie | OT)
 #   - league_ot_home_prob= P(home wins | OT & non-tie)
@@ -3544,7 +3544,7 @@ if (length(results_list) != nrow(games_ready)) {
 # 1) Compute historical OT rate (already computed earlier as ot_rate_hist)
 # 2) Historical ties among OT games: ot_tie_rate (already computed via ot_stats)
 
-# Trigger OT if regulation margin == 0 (certain) or |margin| == 1 (with prob α)
+# Trigger OT if regulation margin == 0 (certain) or |margin| == 1 (with prob ??)
 trigger_ot_vec <- function(margin, alpha_1pt) {
   (margin == 0) | ((abs(margin) == 1) & (runif(length(margin)) < alpha_1pt))
 }
@@ -3613,12 +3613,12 @@ build_final_safe <- function(resolved_list, games_ready) {
     ~{
       sims <- .x
       g <- games_ready[.y,]
-
+      
       margin_mean <- mean(sims$margin)
       margin_sd_raw <- stats::sd(sims$margin)
       tie_prob      <- mean(sims$tie)
       prob_info     <- margin_probs_from_summary(margin_mean, margin_sd_raw, tie_prob)
-
+      
       tibble::tibble(
         season  = g$season,
         week    = g$week,
@@ -3672,7 +3672,7 @@ build_final_safe <- function(resolved_list, games_ready) {
       home_win_prob, away_win_prob, tie_prob
     )
   
-  # Guarantee calibrated columns exist even if isotonic hasn’t run yet
+  # Guarantee calibrated columns exist even if isotonic hasn???t run yet
   if (!("home_win_prob_cal" %in% names(out)) ||
       !("away_win_prob_cal" %in% names(out))) {
     out <- out |>
@@ -3731,7 +3731,7 @@ final <- final %>%
 print(
   final %>%
     dplyr::select(matchup, home_win_prob, away_win_prob, tie_prob,
-           home_win_prob_cal, away_win_prob_cal, tie_prob) %>%
+                  home_win_prob_cal, away_win_prob_cal, tie_prob) %>%
     slice_head(n = 8)
 )
 
@@ -3775,7 +3775,7 @@ games_ready %>%
                                is.na(home_def_ppd) | is.na(away_def_ppd), na.rm = TRUE)
   )
 
-# 2) Distributions feeding μ
+# 2) Distributions feeding ??
 games_ready %>%
   dplyr::select(exp_drives_home, exp_drives_away, exp_ppd_home, exp_ppd_away, mu_home, mu_away, total_mu) %>%
   summary()
@@ -4022,22 +4022,22 @@ align_blend_with_margin <- function(p_blend,
                                     influence_scale = 1.65,
                                     coinflip_tol = 0.15) {
   p_blend <- .clp(p_blend)
-
+  
   sd_eff <- ifelse(is.finite(margin_sd_eff) & margin_sd_eff > 0, margin_sd_eff, NA_real_)
   score_mean <- home_mean_pts - away_mean_pts
   score_median <- home_median_pts - away_median_pts
-
+  
   score_center <- 0.5 * (score_mean + score_median)
   margin_center <- 0.5 * (margin_mean + margin_median)
-
+  
   use_margin <- !is.finite(score_center) & is.finite(margin_center)
   score_center[use_margin] <- margin_center[use_margin]
-
+  
   ok <- is.finite(score_center) & is.finite(sd_eff)
   if (!any(ok)) {
     return(p_blend)
   }
-
+  
   agreement <- ifelse(
     is.finite(score_mean) & is.finite(score_median) &
       (abs(score_mean) + abs(score_median)) > 0,
@@ -4045,16 +4045,16 @@ align_blend_with_margin <- function(p_blend,
                (abs(score_mean) + abs(score_median))),
     1
   )
-
+  
   z_score <- score_center[ok] / sd_eff[ok]
   p_target <- stats::pnorm(z_score)
   p_target <- .clp(p_target)
-
+  
   influence <- abs(z_score) / influence_scale
   influence <- pmin(pmax(influence, 0), 1)
   influence <- pmax(influence, 0.25 * agreement[ok])
   influence <- pmin(influence, agreement[ok])
-
+  
   same_scores <- is.finite(score_center) & abs(score_center) <= coinflip_tol &
     is.finite(agreement) & agreement > 0.75
   if (any(same_scores & ok, na.rm = TRUE)) {
@@ -4062,10 +4062,10 @@ align_blend_with_margin <- function(p_blend,
     influence[idx] <- 1
     p_target[idx] <- 0.5
   }
-
+  
   adj_logit <- (1 - influence) * .lgt(p_blend[ok]) + influence * .lgt(p_target)
   p_adj <- stats::plogis(adj_logit)
-
+  
   out <- p_blend
   out[ok] <- .clp(p_adj)
   out
@@ -4157,16 +4157,16 @@ market_probs_from_sched <- function(sched_df) {
     if (length(nm)) nm[1] else NA_character_
   }
   american_to_prob <- function(odds) ifelse(odds < 0, (-odds)/((-odds) + 100), 100/(odds + 100))
-
+  
   base <- sched_df %>%
     dplyr::filter(!is.na(game_id)) %>%
     dplyr::transmute(game_id, season, week) %>%
     dplyr::distinct()
-
+  
   if (!nrow(base)) {
     return(tibble::tibble(game_id = character(), season = integer(), week = integer(), p_home_mkt_2w = numeric()))
   }
-
+  
   ml_home <- .pick(sched_df, c(
     "home_ml_close", "ml_home_close", "moneyline_home_close", "home_moneyline_close",
     "home_ml", "ml_home", "moneyline_home", "home_moneyline"
@@ -4179,7 +4179,7 @@ market_probs_from_sched <- function(sched_df) {
     "close_spread", "spread_close", "home_spread_close",
     "spread_line", "spread", "home_spread", "spread_favorite"
   ))
-
+  
   ml_tbl <- tibble::tibble(
     game_id = character(), season = integer(), week = integer(), p_home_mkt_2w_ml = numeric()
   )
@@ -4198,7 +4198,7 @@ market_probs_from_sched <- function(sched_df) {
       dplyr::select(game_id, season, week, p_home_mkt_2w_ml) %>%
       dplyr::distinct()
   }
-
+  
   spread_tbl <- tibble::tibble(
     game_id = character(), season = integer(), week = integer(), p_home_mkt_2w_spread = numeric()
   )
@@ -4214,7 +4214,7 @@ market_probs_from_sched <- function(sched_df) {
       dplyr::select(game_id, season, week, p_home_mkt_2w_spread) %>%
       dplyr::distinct()
   }
-
+  
   out <- base %>%
     dplyr::left_join(ml_tbl, by = c("game_id", "season", "week")) %>%
     dplyr::left_join(spread_tbl, by = c("game_id", "season", "week")) %>%
@@ -4222,18 +4222,18 @@ market_probs_from_sched <- function(sched_df) {
       p_home_mkt_2w = dplyr::coalesce(p_home_mkt_2w_ml, p_home_mkt_2w_spread)
     ) %>%
     dplyr::select(game_id, season, week, p_home_mkt_2w)
-
+  
   if (!any(is.finite(out$p_home_mkt_2w))) {
     message(
       "market_probs_from_sched(): no usable closing moneyline or spread columns found; returning NA probabilities."
     )
   }
-
+  
   out
 }
 
 # ---- assemble historical training set (OOS by season) ----
-# Use the last 8 completed seasons (change 8 → a different window if you like)
+# Use the last 8 completed seasons (change 8 ??? a different window if you like)
 seasons_all <- sort(unique(sched$season[sched$game_type %in% c("REG","Regular")]))
 seasons_hist <- seasons_all[seasons_all < max(seasons_all, na.rm = TRUE)]
 seasons_hist <- tail(seasons_hist, 8)
@@ -4339,7 +4339,7 @@ if (nrow(inj_hist_features)) {
     dplyr::rename(away_team = team) %>%
     dplyr::rename_with(~ paste0("away_", .x),
                        dplyr::all_of(setdiff(names(.), c("season", "week", "away_team"))))
-
+  
   ctx <- ctx %>%
     dplyr::left_join(inj_home, by = c("season", "week", "home_team")) %>%
     dplyr::left_join(inj_away, by = c("season", "week", "away_team"))
@@ -4354,15 +4354,15 @@ safe_team_stats <- function(stat_type, seasons) {
 
 extract_team_metric <- function(df, metric_candidates, label) {
   if (is.null(df) || !is.data.frame(df) || !nrow(df)) return(NULL)
-
+  
   season_col <- .pick_col2(df, c("season", "season_year", "year"))
   team_col   <- .pick_col2(df, c("team", "team_abbr", "club_code", "team_code"))
   metric_col <- .pick_col2(df, metric_candidates)
   stype_col  <- .pick_col2(df, c("season_type", "season_type_name", "type"))
   week_col   <- .pick_col2(df, c("week", "game_week"))
-
+  
   if (is.na(season_col) || is.na(team_col) || is.na(metric_col)) return(NULL)
-
+  
   out <- df %>%
     dplyr::mutate(
       season = suppressWarnings(as.integer(.data[[season_col]])),
@@ -4370,12 +4370,12 @@ extract_team_metric <- function(df, metric_candidates, label) {
       metric = suppressWarnings(as.numeric(.data[[metric_col]]))
     ) %>%
     dplyr::filter(!is.na(season), nzchar(team), is.finite(metric))
-
+  
   if (!is.na(stype_col)) {
     out <- out %>%
       dplyr::filter(.data[[stype_col]] %in% c("REG", "Regular", "REGULAR SEASON"))
   }
-
+  
   if (!is.na(week_col) && any(is.finite(out[[week_col]]))) {
     out <- out %>%
       dplyr::group_by(season, team) %>%
@@ -4384,25 +4384,25 @@ extract_team_metric <- function(df, metric_candidates, label) {
   } else {
     out <- out %>% dplyr::distinct(season, team, .keep_all = TRUE)
   }
-
+  
   out %>%
     dplyr::transmute(season, team, !!label := metric)
 }
 
 derive_rate_metric <- function(df, numer_candidates, denom_candidates, label, multiplier = 1) {
   if (is.null(df) || !is.data.frame(df) || !nrow(df)) return(df)
-
+  
   numer_col <- .pick_col2(df, numer_candidates)
   denom_col <- .pick_col2(df, denom_candidates)
   if (is.na(numer_col) || is.na(denom_col)) return(df)
-
+  
   numer <- suppressWarnings(as.numeric(df[[numer_col]]))
   denom <- suppressWarnings(as.numeric(df[[denom_col]]))
-
+  
   valid <- is.finite(numer) & is.finite(denom) & abs(denom) > 0
   out <- rep(NA_real_, length(numer))
   out[valid] <- (numer[valid] / denom[valid]) * multiplier
-
+  
   df[[label]] <- out
   df
 }
@@ -4453,14 +4453,14 @@ team_strength_tbl <- list(
 
 if (length(team_strength_tbl)) {
   team_strength_tbl <- purrr::reduce(team_strength_tbl, dplyr::full_join, by = c("season", "team"))
-
+  
   rename_strength_cols <- function(df, prefix) {
     cols <- setdiff(names(df), c("season", "team", "home_team", "away_team"))
     cols <- cols[!startsWith(cols, "home_") & !startsWith(cols, "away_")]
     if (!length(cols)) return(df)
     dplyr::rename_with(df, ~ paste0(prefix, .x), dplyr::all_of(cols))
   }
-
+  
   ctx_strength <- sched %>%
     dplyr::filter(game_type %in% c("REG", "Regular")) %>%
     dplyr::transmute(
@@ -4472,7 +4472,7 @@ if (length(team_strength_tbl)) {
     rename_strength_cols("home_") %>%
     dplyr::left_join(team_strength_tbl, by = c("season", "away_team" = "team")) %>%
     rename_strength_cols("away_")
-
+  
   if (all(c("home_off_epa", "away_off_epa") %in% names(ctx_strength))) {
     ctx_strength <- ctx_strength %>%
       dplyr::mutate(off_epa_edge = home_off_epa - away_off_epa)
@@ -4480,7 +4480,7 @@ if (length(team_strength_tbl)) {
     ctx_strength <- ctx_strength %>%
       dplyr::mutate(off_epa_edge = NA_real_)
   }
-
+  
   if (all(c("home_def_epa", "away_def_epa") %in% names(ctx_strength))) {
     ctx_strength <- ctx_strength %>%
       dplyr::mutate(def_epa_edge = away_def_epa - home_def_epa,
@@ -4489,7 +4489,7 @@ if (length(team_strength_tbl)) {
     ctx_strength <- ctx_strength %>%
       dplyr::mutate(def_epa_edge = NA_real_, net_epa_edge = NA_real_)
   }
-
+  
   if (all(c("home_off_sr", "away_off_sr") %in% names(ctx_strength))) {
     ctx_strength <- ctx_strength %>%
       dplyr::mutate(sr_edge = home_off_sr - away_off_sr)
@@ -4497,7 +4497,7 @@ if (length(team_strength_tbl)) {
     ctx_strength <- ctx_strength %>%
       dplyr::mutate(sr_edge = NA_real_)
   }
-
+  
   if (all(c("home_off_pass_epa", "away_def_pass_epa") %in% names(ctx_strength))) {
     ctx_strength <- ctx_strength %>%
       dplyr::mutate(pass_epa_edge = home_off_pass_epa - away_def_pass_epa)
@@ -4505,7 +4505,7 @@ if (length(team_strength_tbl)) {
     ctx_strength <- ctx_strength %>%
       dplyr::mutate(pass_epa_edge = NA_real_)
   }
-
+  
   if (all(c("home_off_rush_epa", "away_def_rush_epa") %in% names(ctx_strength))) {
     ctx_strength <- ctx_strength %>%
       dplyr::mutate(rush_epa_edge = home_off_rush_epa - away_def_rush_epa)
@@ -4513,7 +4513,7 @@ if (length(team_strength_tbl)) {
     ctx_strength <- ctx_strength %>%
       dplyr::mutate(rush_epa_edge = NA_real_)
   }
-
+  
   if (all(c("home_off_pass_sr", "away_def_pass_sr") %in% names(ctx_strength))) {
     ctx_strength <- ctx_strength %>%
       dplyr::mutate(pass_sr_edge = home_off_pass_sr - away_def_pass_sr)
@@ -4521,7 +4521,7 @@ if (length(team_strength_tbl)) {
     ctx_strength <- ctx_strength %>%
       dplyr::mutate(pass_sr_edge = NA_real_)
   }
-
+  
   if (all(c("home_off_rush_sr", "away_def_rush_sr") %in% names(ctx_strength))) {
     ctx_strength <- ctx_strength %>%
       dplyr::mutate(rush_sr_edge = home_off_rush_sr - away_def_rush_sr)
@@ -4529,7 +4529,7 @@ if (length(team_strength_tbl)) {
     ctx_strength <- ctx_strength %>%
       dplyr::mutate(rush_sr_edge = NA_real_)
   }
-
+  
   if (all(c("home_off_pressure_rate", "away_def_pressure_rate") %in% names(ctx_strength))) {
     ctx_strength <- ctx_strength %>%
       dplyr::mutate(pressure_rate_diff = away_def_pressure_rate - home_off_pressure_rate)
@@ -4537,7 +4537,7 @@ if (length(team_strength_tbl)) {
     ctx_strength <- ctx_strength %>%
       dplyr::mutate(pressure_rate_diff = NA_real_)
   }
-
+  
   if (all(c("home_off_ppd", "away_def_ppd") %in% names(ctx_strength))) {
     ctx_strength <- ctx_strength %>%
       dplyr::mutate(drive_finish_edge = home_off_ppd - away_def_ppd)
@@ -4545,7 +4545,7 @@ if (length(team_strength_tbl)) {
     ctx_strength <- ctx_strength %>%
       dplyr::mutate(drive_finish_edge = NA_real_)
   }
-
+  
   if (all(c("home_def_ppd", "away_off_ppd") %in% names(ctx_strength))) {
     ctx_strength <- ctx_strength %>%
       dplyr::mutate(drive_prevention_edge = away_off_ppd - home_def_ppd)
@@ -4553,7 +4553,7 @@ if (length(team_strength_tbl)) {
     ctx_strength <- ctx_strength %>%
       dplyr::mutate(drive_prevention_edge = NA_real_)
   }
-
+  
   if (all(c("home_off_explosive_rate", "away_def_explosive_rate") %in% names(ctx_strength))) {
     ctx_strength <- ctx_strength %>%
       dplyr::mutate(explosive_edge = home_off_explosive_rate - away_def_explosive_rate)
@@ -4561,7 +4561,7 @@ if (length(team_strength_tbl)) {
     ctx_strength <- ctx_strength %>%
       dplyr::mutate(explosive_edge = NA_real_)
   }
-
+  
   if (all(c("home_def_explosive_rate", "away_off_explosive_rate") %in% names(ctx_strength))) {
     ctx_strength <- ctx_strength %>%
       dplyr::mutate(explosive_prevention_edge = away_off_explosive_rate - home_def_explosive_rate)
@@ -4569,7 +4569,7 @@ if (length(team_strength_tbl)) {
     ctx_strength <- ctx_strength %>%
       dplyr::mutate(explosive_prevention_edge = NA_real_)
   }
-
+  
   if (all(c("home_off_turnover_rate", "away_def_takeaway_rate") %in% names(ctx_strength))) {
     ctx_strength <- ctx_strength %>%
       dplyr::mutate(turnover_pressure_edge = away_def_takeaway_rate - home_off_turnover_rate)
@@ -4577,7 +4577,7 @@ if (length(team_strength_tbl)) {
     ctx_strength <- ctx_strength %>%
       dplyr::mutate(turnover_pressure_edge = NA_real_)
   }
-
+  
   if (all(c("home_def_takeaway_rate", "away_off_turnover_rate") %in% names(ctx_strength))) {
     ctx_strength <- ctx_strength %>%
       dplyr::mutate(ball_security_edge = home_def_takeaway_rate - away_off_turnover_rate)
@@ -4585,7 +4585,7 @@ if (length(team_strength_tbl)) {
     ctx_strength <- ctx_strength %>%
       dplyr::mutate(ball_security_edge = NA_real_)
   }
-
+  
   ctx <- ctx %>%
     dplyr::left_join(ctx_strength, by = c("game_id", "season", "week"))
 }
@@ -4611,20 +4611,20 @@ suppressWarnings(suppressMessages(require(glmnet)))
 blend_design <- function(df) {
   zm <- .lgt(df$p_model); zk <- .lgt(df$p_mkt)
   diff <- zm - zk
-
+  
   # optional: open lines
   sp_open  <- .pick_open(df, c("spread_open","open_spread","home_spread_open"))
   sp_close <- .pick_open(df, c("close_spread","spread_close","home_spread_close","spread_line","spread"))
   mlh_open <- .pick_open(df, c("home_ml_open","ml_home_open","home_moneyline_open"))
   mlh_close<- .pick_open(df, c("home_ml_close","ml_home_close","home_moneyline_close","home_ml"))
-
+  
   d_sp <- if (!is.na(sp_open) && !is.na(sp_close)) suppressWarnings(as.numeric(df[[sp_close]]) - as.numeric(df[[sp_open]])) else NA_real_
   d_ml <- if (!is.na(mlh_open) && !is.na(mlh_close)) {
     ph_o <- american_to_prob(suppressWarnings(as.numeric(df[[mlh_open]])))
     ph_c <- american_to_prob(suppressWarnings(as.numeric(df[[mlh_close]])))
     (ph_c - ph_o)
   } else NA_real_
-
+  
   design <- cbind(
     lgt_model = zm,
     lgt_mkt   = zk,
@@ -4634,14 +4634,14 @@ blend_design <- function(df) {
     d_spread  = ifelse(is.finite(d_sp), d_sp, 0),
     d_mlprob  = ifelse(is.finite(d_ml), d_ml, 0)
   )
-
+  
   # optional contextual features if present on the data frame
   add_feat <- function(mat, col, values) {
     mat <- cbind(mat, as.numeric(values))
     colnames(mat)[ncol(mat)] <- col
     mat
   }
-
+  
   optional_cols <- intersect(c(
     "short_week_home", "short_week_away", "bye_home", "bye_away",
     "is_outdoors", "high_wind", "wind_mph",
@@ -4664,24 +4664,24 @@ blend_design <- function(df) {
     "pass_epa_edge", "rush_epa_edge", "pass_sr_edge", "rush_sr_edge", "pressure_rate_diff",
     "off_epa_edge", "def_epa_edge", "sr_edge", "net_epa_edge"
   ), names(df))
-
+  
   for (col in optional_cols) {
     vals <- suppressWarnings(as.numeric(df[[col]]))
     vals[!is.finite(vals)] <- 0
     design <- add_feat(design, col, vals)
   }
-
+  
   design
 }
 
-# weeks “ago” from (S,W) for recency weights (approx 18 weeks/season)
+# weeks ???ago??? from (S,W) for recency weights (approx 18 weeks/season)
 weeks_ago <- function(season, week, S, W) (S - season) * 18 + (W - week)
 
 make_calibrator <- function(method, p, y, weights = NULL) {
   method <- tolower(ifelse(is.null(method) || !nzchar(method), "isotonic", method))
   p <- .clp(p)
   y <- as.numeric(y)
-
+  
   if (method == "beta") {
     df <- tibble::tibble(
       y = y,
@@ -4698,7 +4698,7 @@ make_calibrator <- function(method, p, y, weights = NULL) {
     }
     method <- "isotonic"  # fallback if beta calibration failed
   }
-
+  
   if (method == "logistic") {
     df <- tibble::tibble(y = y, z = stats::qlogis(p))
     fit <- try(stats::glm(y ~ poly(z, 2, raw = TRUE), family = binomial(), data = df, weights = weights), silent = TRUE)
@@ -4710,7 +4710,7 @@ make_calibrator <- function(method, p, y, weights = NULL) {
     }
     method <- "isotonic"
   }
-
+  
   # default isotonic regression calibrator
   tb <- tibble::tibble(p = .clp(p), y = y) %>%
     dplyr::mutate(bin = pmin(pmax(floor(p * 100), 0), 100)) %>%
@@ -4726,7 +4726,7 @@ make_calibrator <- function(method, p, y, weights = NULL) {
   }
 }
 
-# weeks “ago” from (S,W) for recency weights (approx 18 weeks/season)
+# weeks ???ago??? from (S,W) for recency weights (approx 18 weeks/season)
 weeks_ago <- function(season, week, S, W) (S - season) * 18 + (W - week)
 
 cw <- sched %>% dplyr::filter(game_type %in% c("REG","Regular")) %>%
@@ -4736,7 +4736,7 @@ blend_oos <- purrr::map_dfr(seq_len(nrow(cw)), function(i){
   S <- cw$season[i]; W <- cw$week[i]
   test  <- comp0 %>% dplyr::filter(season == S, week == W)
   train <- comp0 %>% dplyr::filter((season < S) | (season == S & week < W))
-
+  
   if (!nrow(test)) return(tibble::tibble())
   if (nrow(train) < 500) {
     test$p_blend <- test$p_mkt
@@ -4746,20 +4746,20 @@ blend_oos <- purrr::map_dfr(seq_len(nrow(cw)), function(i){
   Xtr <- blend_design(train)
   ytr <- as.numeric(train$y2)
   wtr <- 0.98 ^ pmax(0, weeks_ago(train$season, train$week, S, W))  # recency
-
+  
   Xte <- blend_design(test)
-
+  
   model_name <- tolower(ifelse(is.null(BLEND_META_MODEL) || !nzchar(BLEND_META_MODEL), "glmnet", BLEND_META_MODEL))
   alpha_val <- suppressWarnings(as.numeric(BLEND_ALPHA))
   if (!is.finite(alpha_val)) alpha_val <- 0.25
   alpha_val <- pmin(pmax(alpha_val, 0), 1)
-
+  
   fit_glmnet <- function() {
     glmnet::cv.glmnet(Xtr, ytr, family = "binomial", alpha = alpha_val, weights = wtr, nfolds = 10)
   }
-
+  
   p_raw_tr <- p_raw_te <- NULL
-
+  
   if (model_name == "glm") {
     df_tr <- as.data.frame(Xtr)
     df_tr$y <- ytr
@@ -4771,13 +4771,13 @@ blend_oos <- purrr::map_dfr(seq_len(nrow(cw)), function(i){
       model_name <- "glmnet"  # fallback
     }
   }
-
+  
   if (model_name != "glm") {
     cv <- fit_glmnet()
     p_raw_tr <- as.numeric(predict(cv, newx = Xtr, s = "lambda.min", type = "response"))
     p_raw_te <- as.numeric(predict(cv, newx = Xte, s = "lambda.min", type = "response"))
   }
-
+  
   calibrator <- make_calibrator(CALIBRATION_METHOD, p_raw_tr, ytr, weights = wtr)
   test$p_blend <- calibrator(p_raw_te)
   test
@@ -4789,20 +4789,20 @@ boot_week_ci <- function(df, B = 2000, seed = SEED) {
   if (!nrow(df)) {
     return(rep(NA_real_, 2L))
   }
-
+  
   set.seed(seed)
-
+  
   groups <- split(seq_len(nrow(df)), interaction(df$season, df$week, drop = TRUE, lex.order = TRUE))
   n <- length(groups)
   dif <- numeric(B)
-
+  
   for (b in seq_len(B)) {
     idx <- sample.int(n, n, replace = TRUE)
     rows <- unlist(groups[idx], use.names = FALSE)
     dd <- df[rows, , drop = FALSE]
     dif[b] <- mean((dd$p_blend - dd$y2)^2) - mean((dd$p_mkt - dd$y2)^2)
   }
-
+  
   stats::quantile(dif, c(0.025, 0.975))
 }
 ci_brier_diff <- boot_week_ci(blend_oos)
@@ -5028,7 +5028,7 @@ if (nrow(upcoming_snapshot)) {
     vig = 0.10,
     verbose = TRUE
   )
-
+  
   if (nrow(preview_tbl)) {
     moneyline_report_inputs <- list(
       comparison = upcoming_result,
@@ -5069,7 +5069,7 @@ res <- if (exists("calib_sim_df")) {
 if (exists("res") && exists("blend_oos") && nrow(blend_oos)) {
   join_keys <- if (exists("PREDICTION_JOIN_KEYS", inherits = TRUE)) PREDICTION_JOIN_KEYS else c("game_id", "season", "week")
   prob_col_candidates <- c("p2_cal", "home_p_2w_cal", "p2_home_cal", "home_p2w_cal")
-
+  
   res_blend <- build_res_blend(
     res = res,
     blend_oos = blend_oos,
@@ -5077,7 +5077,7 @@ if (exists("res") && exists("blend_oos") && nrow(blend_oos)) {
     prob_candidates = prob_col_candidates,
     verbose = TRUE
   )
-
+  
   if (!is.null(res_blend)) {
     cat("\n=== Blended vs market (paired, week-block bootstrap) ===\n")
     cmp_blend <- compare_to_market(res_blend, sched)
@@ -5107,14 +5107,14 @@ if (exists("cmp_blend") && !is.null(cmp_blend)) {
     vig = 0.10,
     verbose = TRUE
   )
-
+  
   moneyline_report_inputs <- list(
     comparison = cmp_blend,
     join_keys = join_keys_html
   )
-
+  
   if (nrow(report_tbl)) {
-    report_title <- sprintf("Blend vs Market Moneylines — Week %s, %s", WEEK_TO_SIM, SEASON)
+    report_title <- sprintf("Blend vs Market Moneylines ??? Week %s, %s", WEEK_TO_SIM, SEASON)
     report_path <- export_moneyline_comparison_html(
       comparison_tbl = report_tbl,
       title = report_title,
@@ -5128,7 +5128,7 @@ if (exists("cmp_blend") && !is.null(cmp_blend)) {
 
 
 
-# ────────────────── INTERACTIVE SLATE TABLE (reactable) ──────────────────
+# ?????????????????????????????????????????????????????? INTERACTIVE SLATE TABLE (reactable) ??????????????????????????????????????????????????????
 pretty_df <- final |>
   tidyr::separate(matchup, into = c("away_team","home_team"), sep = " @ ", remove = FALSE) |>
   dplyr::left_join(
@@ -5138,44 +5138,44 @@ pretty_df <- final |>
   ) |>
   dplyr::mutate(
     dow      = lubridate::wday(date, label = TRUE, abbr = TRUE),
-
+    
     # Model-only favorite and probabilities (calibrated 3-way)
     fav_team_model = dplyr::if_else(home_win_prob_cal >= away_win_prob_cal, home_team, away_team),
     fav_prob_model = pmax(home_win_prob_cal, away_win_prob_cal),
     win_tier_model = dplyr::case_when(
       fav_prob_model < 0.55 ~ "Coin flip (<55%)",
-      fav_prob_model < 0.65 ~ "Lean (55–65%)",
-      fav_prob_model < 0.75 ~ "Strong (65–75%)",
+      fav_prob_model < 0.65 ~ "Lean (55???65%)",
+      fav_prob_model < 0.75 ~ "Strong (65???75%)",
       TRUE                  ~ "Heavy (75%+)"
     ),
-
-    # Blended (model ⊕ market) favorite/probabilities for comparison
+    
+    # Blended (model ??? market) favorite/probabilities for comparison
     fav_team_blend = dplyr::if_else(home_win_prob_blend >= away_win_prob_blend, home_team, away_team),
     fav_prob_blend = pmax(home_win_prob_blend, away_win_prob_blend),
     win_tier_blend = dplyr::case_when(
       fav_prob_blend < 0.55 ~ "Coin flip (<55%)",
-      fav_prob_blend < 0.65 ~ "Lean (55–65%)",
-      fav_prob_blend < 0.75 ~ "Strong (65–75%)",
+      fav_prob_blend < 0.65 ~ "Lean (55???65%)",
+      fav_prob_blend < 0.75 ~ "Strong (65???75%)",
       TRUE                  ~ "Heavy (75%+)"
     ),
-
+    
     # Preserve legacy names for downstream usage (now explicitly model-based)
     fav_team = fav_team_model,
     fav_prob = fav_prob_model,
     win_tier = win_tier_model,
     total_bucket = dplyr::case_when(
       total_mean >= 50 ~ "Shootout (50+)",
-      total_mean <= 41 ~ "Grinder (≤41)",
-      total_mean >= 46 ~ "High (46–49.5)",
-      TRUE             ~ "Average (41.5–45.5)"
+      total_mean <= 41 ~ "Grinder (???41)",
+      total_mean >= 46 ~ "High (46???49.5)",
+      TRUE             ~ "Average (41.5???45.5)"
     ),
     env = paste0(
       dplyr::if_else(dplyr::coalesce(dome, FALSE), "Dome", "Outdoor"),
-      dplyr::if_else(dplyr::coalesce(windy, FALSE),  " · Wind",  ""),
-      dplyr::if_else(dplyr::coalesce(cold,  FALSE),  " · Cold",  ""),
-      dplyr::if_else(dplyr::coalesce(precip,FALSE),  " · Precip","")
+      dplyr::if_else(dplyr::coalesce(windy, FALSE),  " ?? Wind",  ""),
+      dplyr::if_else(dplyr::coalesce(cold,  FALSE),  " ?? Cold",  ""),
+      dplyr::if_else(dplyr::coalesce(precip,FALSE),  " ?? Precip","")
     ),
-    Category = paste(win_tier, "·", total_bucket, "·", env)
+    Category = paste(win_tier, "??", total_bucket, "??", env)
   ) |>
   dplyr::arrange(date, dplyr::desc(fav_prob_blend))
 rt_df <- pretty_df %>%
@@ -5196,7 +5196,7 @@ rt_df <- pretty_df %>%
 print(
   final %>%
     dplyr::select(matchup, home_win_prob_cal, away_win_prob_cal, tie_prob,
-           home_p_2w_cal, away_p_2w_cal) %>%
+                  home_p_2w_cal, away_p_2w_cal) %>%
     slice_head(n = 5)
 )
 
@@ -5288,16 +5288,16 @@ if (!is.null(moneyline_report_inputs) && exists("moneyline_report", inherits = T
       base_sched <- base_sched %>%
         dplyr::left_join(medians_tbl, by = c("game_id", "season", "week"))
     }
-
+    
     base_sched %>%
       dplyr::filter(season == SEASON, week == WEEK_TO_SIM)
   }, error = function(e) {
     message(sprintf("Unable to prepare schedule context for moneyline report: %s", conditionMessage(e)))
     NULL
   })
-
+  
   if (!is.null(report_schedule)) {
-    report_title <- sprintf("Blend vs Market Moneylines — Week %s, %s", WEEK_TO_SIM, SEASON)
+    report_title <- sprintf("Blend vs Market Moneylines ??? Week %s, %s", WEEK_TO_SIM, SEASON)
     report_path <- tryCatch(
       moneyline_report(
         market_comparison_result = moneyline_report_inputs$comparison,
@@ -5313,7 +5313,7 @@ if (!is.null(moneyline_report_inputs) && exists("moneyline_report", inherits = T
         NULL
       }
     )
-
+    
     if (!is.null(report_path)) {
       message(sprintf("Moneyline report written to %s", report_path))
     }
@@ -5321,4 +5321,3 @@ if (!is.null(moneyline_report_inputs) && exists("moneyline_report", inherits = T
 } else if (!exists("moneyline_report", inherits = TRUE)) {
   message("moneyline_report() is unavailable; HTML export skipped.")
 }
-
