@@ -4568,7 +4568,16 @@ if (is.na(home_pts_col) || is.na(away_pts_col)) {
 outcomes_hist <- sched %>%
   dplyr::filter(season %in% seasons_hist, game_type %in% c("REG","Regular")) %>%
   dplyr::transmute(game_id, season, week,
-                   y2 = as.integer(.data[[home_pts_col]] > .data[[away_pts_col]]))
+                   y2 = as.integer(.data[[home_pts_col]] > .data[[away_pts_col]])) %>%
+  tibble::as_tibble() %>%
+  dplyr::filter(stats::complete.cases(dplyr::across(dplyr::all_of(c("game_id", "season", "week"))))) %>%
+  dplyr::filter(!is.na(y2))
+
+outcomes_hist <- collapse_by_keys_strict(
+  outcomes_hist,
+  c("game_id", "season", "week"),
+  label = "Historical outcomes"
+)
 
 # your calibrated model 2-way prob history for those seasons
 preds_hist <- if (exists("res") && "per_game" %in% names(res)) {
@@ -4587,9 +4596,31 @@ preds_hist <- if (exists("res") && "per_game" %in% names(res)) {
   stop("Need either `res$per_game` or `calib_sim_df` in scope for preds_hist.")
 }
 
+preds_hist <- preds_hist %>%
+  tibble::as_tibble() %>%
+  dplyr::filter(stats::complete.cases(dplyr::across(dplyr::all_of(c("game_id", "season", "week"))))) %>%
+  dplyr::filter(is.finite(p_model))
+
+preds_hist <- collapse_by_keys_strict(
+  preds_hist,
+  c("game_id", "season", "week"),
+  label = "Historical model probabilities"
+)
+
 # market probs for those same games
 mkt_hist <- market_probs_from_sched(
   sched %>% dplyr::filter(season %in% seasons_hist, game_type %in% c("REG","Regular"))
+)
+
+mkt_hist <- mkt_hist %>%
+  tibble::as_tibble() %>%
+  dplyr::filter(stats::complete.cases(dplyr::across(dplyr::all_of(c("game_id", "season", "week"))))) %>%
+  dplyr::filter(is.finite(p_home_mkt_2w))
+
+mkt_hist <- collapse_by_keys_strict(
+  mkt_hist,
+  c("game_id", "season", "week"),
+  label = "Historical market probabilities"
 )
 
 # Pick the right columns from sched
