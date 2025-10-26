@@ -79,6 +79,41 @@ dedupe_by_keys <- function(df, keys, label) {
   out
 }
 
+ensure_unique_join_rows <- function(df, keys, label) {
+  if (is.null(df) || !inherits(df, "data.frame") || !nrow(df) || !length(keys)) {
+    return(df)
+  }
+
+  missing_keys <- setdiff(keys, names(df))
+  if (length(missing_keys)) {
+    warning(sprintf(
+      "%s: cannot enforce join uniqueness; missing keys: %s",
+      label,
+      paste(missing_keys, collapse = ", ")
+    ))
+    return(df)
+  }
+
+  dup <- df %>%
+    dplyr::filter(dplyr::if_all(dplyr::all_of(keys), ~ !is.na(.))) %>%
+    dplyr::count(dplyr::across(dplyr::all_of(keys))) %>%
+    dplyr::filter(.data$n > 1L)
+
+  if (!nrow(dup)) {
+    return(df)
+  }
+
+  warning(sprintf(
+    "%s: detected %d duplicate join key combinations; retaining the first occurrence after sorting.",
+    label,
+    nrow(dup)
+  ))
+
+  df %>%
+    dplyr::arrange(dplyr::across(dplyr::all_of(keys))) %>%
+    dplyr::distinct(dplyr::across(dplyr::all_of(keys)), .keep_all = TRUE)
+}
+
 if (!exists("standardize_join_keys", inherits = FALSE)) {
   standardize_join_keys <- function(df, key_alias = JOIN_KEY_ALIASES) {
     if (is.null(df) || !inherits(df, "data.frame")) {
@@ -475,6 +510,7 @@ compare_to_market <- function(res,
     dplyr::filter(is.finite(p_model))
   preds_comp <- collapse_duplicates(preds_comp, dedupe_join_keys, "Model probability table")
   preds_comp <- dedupe_by_keys(preds_comp, dedupe_join_keys, "Model probability table")
+  preds_comp <- ensure_unique_join_rows(preds_comp, dedupe_join_keys, "Model probability table")
 
   mkt_tbl <- mkt_tbl %>%
     dplyr::transmute(game_id, season, week, p_home_mkt_2w = .clamp01(p_home_mkt_2w))
@@ -483,6 +519,7 @@ compare_to_market <- function(res,
     dplyr::filter(is.finite(p_home_mkt_2w))
   mkt_tbl <- collapse_duplicates(mkt_tbl, dedupe_join_keys, "Market probability table")
   mkt_tbl <- dedupe_by_keys(mkt_tbl, dedupe_join_keys, "Market probability table")
+  mkt_tbl <- ensure_unique_join_rows(mkt_tbl, dedupe_join_keys, "Market probability table")
 
   outcomes <- outcomes %>%
     dplyr::transmute(game_id, season, week, y2)
@@ -501,6 +538,7 @@ compare_to_market <- function(res,
 
   outcomes <- collapse_duplicates(outcomes, dedupe_join_keys, "Outcome table")
   outcomes <- dedupe_by_keys(outcomes, dedupe_join_keys, "Outcome table")
+  outcomes <- ensure_unique_join_rows(outcomes, dedupe_join_keys, "Outcome table")
 
   mkt_tbl <- standardize_join_keys(mkt_tbl)
   outcomes <- standardize_join_keys(outcomes)
@@ -587,6 +625,7 @@ compare_to_market <- function(res,
     ) %>%
     dplyr::arrange(season, week)
   wk_stats <- dedupe_by_keys(wk_stats, c("season", "week"), "Week summary table")
+  wk_stats <- ensure_unique_join_rows(wk_stats, c("season", "week"), "Week summary table")
   
   overall <- tibble::tibble(
     model_Brier2 = mean(comp$b_model, na.rm = TRUE),
