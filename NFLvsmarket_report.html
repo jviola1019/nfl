@@ -1,14 +1,91 @@
 <!DOCTYPE html>
+
 <html lang="en">
 <head>
 <meta charset="utf-8"/>
-<style>body{background-color:white;}</style>
+<meta content="width=device-width, initial-scale=1" name="viewport"/>
+<title>Blend vs Market Moneylines</title>
+<style>
+:root {
+  color-scheme: light;
+  --page-bg: linear-gradient(135deg, #e0f2fe 0%, #f8fafc 50%, #e2e8f0 100%);
+  --card-bg: rgba(255, 255, 255, 0.92);
+  --card-border: rgba(148, 163, 184, 0.6);
+  --text-primary: #0f172a;
+  --text-muted: #475569;
+  --accent: #2563eb;
+  --accent-soft: rgba(37, 99, 235, 0.08);
+  --shadow: 0 20px 40px rgba(15, 23, 42, 0.15);
+}
 
+* {
+  box-sizing: border-box;
+}
 
+body {
+  margin: 0;
+  font-family: "Inter", "Source Sans Pro", "Helvetica Neue", Arial, sans-serif;
+  background: var(--page-bg);
+  color: var(--text-primary);
+}
+
+.page-shell {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: clamp(2rem, 5vw, 4rem) clamp(1rem, 3vw, 2.5rem);
+}
+
+.page-header {
+  text-align: center;
+  margin-bottom: clamp(2rem, 5vw, 3rem);
+}
+
+.page-header h1 {
+  font-size: clamp(2rem, 5vw, 2.8rem);
+  letter-spacing: -0.02em;
+  margin: 0 0 0.75rem;
+}
+
+.page-header p {
+  margin: 0;
+  max-width: 720px;
+  margin-left: auto;
+  margin-right: auto;
+  font-size: 1rem;
+  color: var(--text-muted);
+}
+
+.table-card {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 18px;
+  box-shadow: var(--shadow);
+  padding: clamp(1rem, 3vw, 2rem);
+  backdrop-filter: blur(8px);
+}
+
+.table-card h2 {
+  margin: 0 0 1.25rem;
+  font-size: 1.4rem;
+  font-weight: 600;
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+</style>
 </head>
 <body>
-<div id="suxeqpujoe" style="padding-left:0px;padding-right:0px;padding-top:10px;padding-bottom:10px;overflow-x:auto;overflow-y:auto;width:auto;height:auto;">
-  <style>#suxeqpujoe table {
+<main class="page-shell">
+<header class="page-header">
+<h1>Blend vs Market Moneylines</h1>
+<p>Weekly simulation insights alongside market pricing with cleaner typography and responsive layout.</p>
+</header>
+<section class="table-card">
+<h2>Week-at-a-glance edges</h2>
+<div class="table-scroll">
+<div id="suxeqpujoe">
+<style>#suxeqpujoe table {
   font-family: 'Source Sans Pro', 'Helvetica Neue', Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -455,500 +532,569 @@
 #suxeqpujoe div.Reactable > div.rt-table > div.rt-thead > div.rt-tr.rt-tr-group-header > div.rt-th-group:after {
   height: 0px !important;
 }
+#suxeqpujoe .gt_table {
+  background-color: #ffffff;
+  color: var(--text-primary, #0f172a);
+  border-radius: 14px;
+  overflow: hidden;
+  border: none;
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.05);
+}
+
+#suxeqpujoe .gt_heading {
+  background: linear-gradient(135deg, #1d4ed8, #2563eb);
+  color: #f8fafc;
+  border: none;
+}
+
+#suxeqpujoe .gt_heading .gt_title {
+  font-weight: 600;
+}
+
+#suxeqpujoe .gt_heading .gt_subtitle {
+  color: rgba(248, 250, 252, 0.88);
+}
+
+#suxeqpujoe .gt_col_headings {
+  background-color: #e2e8f0;
+  border-top: none;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.4);
+}
+
+#suxeqpujoe .gt_col_heading {
+  color: #0f172a;
+  background-color: transparent;
+  font-weight: 600;
+  border: none;
+}
+
+#suxeqpujoe .gt_row {
+  color: #0f172a;
+  background-color: transparent;
+  border-top: 1px solid rgba(148, 163, 184, 0.3);
+}
+
+#suxeqpujoe .gt_row.gt_striped {
+  background-color: var(--accent-soft, rgba(37, 99, 235, 0.08));
+}
+
+#suxeqpujoe .gt_stub,
+#suxeqpujoe .gt_stub_row_group {
+  background-color: rgba(226, 232, 240, 0.75);
+  color: #0f172a;
+  font-weight: 600;
+  border-right: 1px solid rgba(148, 163, 184, 0.4);
+}
+
+#suxeqpujoe .gt_table_body {
+  border-top: none;
+  border-bottom: none;
+}
+
+#suxeqpujoe .gt_summary_row,
+#suxeqpujoe .gt_grand_summary_row {
+  background-color: rgba(226, 232, 240, 0.6);
+  color: #0f172a;
+}
+
+#suxeqpujoe .gt_footnotes,
+#suxeqpujoe .gt_sourcenotes {
+  background: transparent;
+  color: #475569;
+  border: none;
+}
+
+#suxeqpujoe .gt_footnote,
+#suxeqpujoe .gt_sourcenote {
+  color: inherit;
+}
+
+#suxeqpujoe .gt_table tr:hover td {
+  background-color: rgba(37, 99, 235, 0.06);
+}
+
+#suxeqpujoe table {
+  width: 100%;
+}
 </style>
-  <table class="gt_table" data-quarto-disable-processing="false" data-quarto-bootstrap="false">
-  <thead>
-    <tr class="gt_heading">
-      <td colspan="30" class="gt_heading gt_title gt_font_normal gt_bottom_border" style="color: #F8FAFC;">Blend vs Market Moneylines - Week 6, 2025</td>
-    </tr>
-    
-    <tr class="gt_col_headings">
-      <th class="gt_col_heading gt_columns_bottom_border gt_center" rowspan="1" colspan="1" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;" scope="col" id="Season">Season</th>
-      <th class="gt_col_heading gt_columns_bottom_border gt_center" rowspan="1" colspan="1" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;" scope="col" id="Week">Week</th>
-      <th class="gt_col_heading gt_columns_bottom_border gt_right" rowspan="1" colspan="1" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;" scope="col" id="Date">Date</th>
-      <th class="gt_col_heading gt_columns_bottom_border gt_left" rowspan="1" colspan="1" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;" scope="col" id="Matchup">Matchup</th>
-      <th class="gt_col_heading gt_columns_bottom_border gt_center" rowspan="1" colspan="1" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;" scope="col" id="Blend-Favorite">Blend Favorite</th>
-      <th class="gt_col_heading gt_columns_bottom_border gt_center" rowspan="1" colspan="1" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;" scope="col" id="Blend-Recommendation">Blend Recommendation</th>
-      <th class="gt_col_heading gt_columns_bottom_border gt_right" rowspan="1" colspan="1" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;" scope="col" id="Blend-Stake-(Units)">Blend Stake</th>
-      <th class="gt_col_heading gt_columns_bottom_border gt_right" rowspan="1" colspan="1" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;" scope="col" id="Market-Moneyline">Market Moneyline</th>
-      <th class="gt_col_heading gt_columns_bottom_border gt_right" rowspan="1" colspan="1" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;" scope="col" id="Market-Home-Moneyline">Market Home Moneyline</th>
-      <th class="gt_col_heading gt_columns_bottom_border gt_right" rowspan="1" colspan="1" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;" scope="col" id="Market-Away-Moneyline">Market Away Moneyline</th>
-      <th class="gt_col_heading gt_columns_bottom_border gt_right" rowspan="1" colspan="1" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;" scope="col" id="Blend-Home-Moneyline-(vig)">Blend Home Moneyline (vig)</th>
-      <th class="gt_col_heading gt_columns_bottom_border gt_right" rowspan="1" colspan="1" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;" scope="col" id="Blend-Away-Moneyline-(vig)">Blend Away Moneyline (vig)</th>
-      <th class="gt_col_heading gt_columns_bottom_border gt_right" rowspan="1" colspan="1" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;" scope="col" id="Blend-Favorite-Moneyline-(vig)">Blend ML (vig)</th>
-      <th class="gt_col_heading gt_columns_bottom_border gt_right" rowspan="1" colspan="1" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;" scope="col" id="Blend-Median-Home-Score">Blend Median Home Score</th>
-      <th class="gt_col_heading gt_columns_bottom_border gt_right" rowspan="1" colspan="1" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;" scope="col" id="Blend-Median-Away-Score">Blend Median Away Score</th>
-      <th class="gt_col_heading gt_columns_bottom_border gt_right" rowspan="1" colspan="1" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;" scope="col" id="Blend-Median-Total">Blend Median Total</th>
-      <th class="gt_col_heading gt_columns_bottom_border gt_right" rowspan="1" colspan="1" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;" scope="col" id="Blend-Median-Margin">Blend Margin</th>
-      <th class="gt_col_heading gt_columns_bottom_border gt_right" rowspan="1" colspan="1" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;" scope="col" id="Market-Home-Spread">Market Home Spread</th>
-      <th class="gt_col_heading gt_columns_bottom_border gt_right" rowspan="1" colspan="1" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;" scope="col" id="Market-Implied-Margin">Market Margin</th>
-      <th class="gt_col_heading gt_columns_bottom_border gt_right" rowspan="1" colspan="1" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;" scope="col" id="Market-Total">Market Total</th>
-      <th class="gt_col_heading gt_columns_bottom_border gt_right" rowspan="1" colspan="1" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;" scope="col" id="Blend-Edge">Blend Edge (pp)</th>
-      <th class="gt_col_heading gt_columns_bottom_border gt_right" rowspan="1" colspan="1" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;" scope="col" id="Blend-EV-Units">Blend EV (units)</th>
-      <th class="gt_col_heading gt_columns_bottom_border gt_right" rowspan="1" colspan="1" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;" scope="col" id="Market-EV-Units">Market EV (units)</th>
-      <th class="gt_col_heading gt_columns_bottom_border gt_center" rowspan="1" colspan="1" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;" scope="col" id="Blend-Beat-Market?">Blend Beat Market?</th>
-      <th class="gt_col_heading gt_columns_bottom_border gt_center" rowspan="1" colspan="1" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;" scope="col" id="Market-Winning?">Market Winning?</th>
-      <th class="gt_col_heading gt_columns_bottom_border gt_right" rowspan="1" colspan="1" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;" scope="col" id="Market-Home-Prob">Market Home Prob</th>
-      <th class="gt_col_heading gt_columns_bottom_border gt_right" rowspan="1" colspan="1" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;" scope="col" id="Blend-Home-Prob">Blend Home Prob</th>
-      <th class="gt_col_heading gt_columns_bottom_border gt_right" rowspan="1" colspan="1" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;" scope="col" id="Market-Away-Prob">Market Away Prob</th>
-      <th class="gt_col_heading gt_columns_bottom_border gt_right" rowspan="1" colspan="1" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;" scope="col" id="Blend-Away-Prob">Blend Away Prob</th>
-      <th class="gt_col_heading gt_columns_bottom_border gt_left" rowspan="1" colspan="1" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;" scope="col" id="Winner">Winner</th>
-    </tr>
-  </thead>
-  <tbody class="gt_table_body">
-    <tr><td headers="Season" class="gt_row gt_center">2025</td>
-<td headers="Week" class="gt_row gt_center">6</td>
-<td headers="Date" class="gt_row gt_right">2025-10-09</td>
-<td headers="Matchup" class="gt_row gt_left">PHI @ NYG</td>
-<td headers="Blend Favorite" class="gt_row gt_center">PHI</td>
-<td headers="Blend Recommendation" class="gt_row gt_center">Pass</td>
-<td headers="Blend Stake (Units)" class="gt_row gt_right">0.000</td>
-<td headers="Market Moneyline" class="gt_row gt_right">-395</td>
-<td headers="Market Home Moneyline" class="gt_row gt_right">+310</td>
-<td headers="Market Away Moneyline" class="gt_row gt_right">-395</td>
-<td headers="Blend Home Moneyline (vig)" class="gt_row gt_right">+311</td>
-<td headers="Blend Away Moneyline (vig)" class="gt_row gt_right">-376</td>
-<td headers="Blend Favorite Moneyline (vig)" class="gt_row gt_right">-376</td>
-<td headers="Blend Median Home Score" class="gt_row gt_right">NA</td>
-<td headers="Blend Median Away Score" class="gt_row gt_right">NA</td>
-<td headers="Blend Median Total" class="gt_row gt_right">NA</td>
-<td headers="Blend Median Margin" class="gt_row gt_right">NA</td>
-<td headers="Market Home Spread" class="gt_row gt_right">−7</td>
-<td headers="Market Implied Margin" class="gt_row gt_right">7</td>
-<td headers="Market Total" class="gt_row gt_right">40.5</td>
-<td headers="Blend Edge" class="gt_row gt_right">0.8%</td>
-<td headers="Blend EV Units" class="gt_row gt_right">−0.030</td>
-<td headers="Market EV Units" class="gt_row gt_right">0.030</td>
-<td headers="Blend Beat Market?" class="gt_row gt_center" style="background-color: #166534; color: #FFFFFF;">No</td>
-<td headers="Market Winning?" class="gt_row gt_center">Yes</td>
-<td headers="Market Home Prob" class="gt_row gt_right">23.4%</td>
-<td headers="Blend Home Prob" class="gt_row gt_right">22.6%</td>
-<td headers="Market Away Prob" class="gt_row gt_right">76.6%</td>
-<td headers="Blend Away Prob" class="gt_row gt_right">77.4%</td>
-<td headers="Winner" class="gt_row gt_left">NA</td></tr>
-    <tr><td headers="Season" class="gt_row gt_center gt_striped">2025</td>
-<td headers="Week" class="gt_row gt_center gt_striped">6</td>
-<td headers="Date" class="gt_row gt_right gt_striped">2025-10-12</td>
-<td headers="Matchup" class="gt_row gt_left gt_striped">ARI @ IND</td>
-<td headers="Blend Favorite" class="gt_row gt_center gt_striped">IND</td>
-<td headers="Blend Recommendation" class="gt_row gt_center gt_striped">Pass</td>
-<td headers="Blend Stake (Units)" class="gt_row gt_right gt_striped">0.000</td>
-<td headers="Market Moneyline" class="gt_row gt_right gt_striped">-470</td>
-<td headers="Market Home Moneyline" class="gt_row gt_right gt_striped">-470</td>
-<td headers="Market Away Moneyline" class="gt_row gt_right gt_striped">+360</td>
-<td headers="Blend Home Moneyline (vig)" class="gt_row gt_right gt_striped">-486</td>
-<td headers="Blend Away Moneyline (vig)" class="gt_row gt_right gt_striped">+402</td>
-<td headers="Blend Favorite Moneyline (vig)" class="gt_row gt_right gt_striped">-486</td>
-<td headers="Blend Median Home Score" class="gt_row gt_right gt_striped">NA</td>
-<td headers="Blend Median Away Score" class="gt_row gt_right gt_striped">NA</td>
-<td headers="Blend Median Total" class="gt_row gt_right gt_striped">NA</td>
-<td headers="Blend Median Margin" class="gt_row gt_right gt_striped">NA</td>
-<td headers="Market Home Spread" class="gt_row gt_right gt_striped">8.5</td>
-<td headers="Market Implied Margin" class="gt_row gt_right gt_striped">−8.5</td>
-<td headers="Market Total" class="gt_row gt_right gt_striped">46.5</td>
-<td headers="Blend Edge" class="gt_row gt_right gt_striped">2.4%</td>
-<td headers="Blend EV Units" class="gt_row gt_right gt_striped">−0.011</td>
-<td headers="Market EV Units" class="gt_row gt_right gt_striped">0.011</td>
-<td headers="Blend Beat Market?" class="gt_row gt_center gt_striped" style="background-color: #166534; color: #FFFFFF;">No</td>
-<td headers="Market Winning?" class="gt_row gt_center gt_striped">Yes</td>
-<td headers="Market Home Prob" class="gt_row gt_right gt_striped">79.1%</td>
-<td headers="Blend Home Prob" class="gt_row gt_right gt_striped">81.6%</td>
-<td headers="Market Away Prob" class="gt_row gt_right gt_striped">20.9%</td>
-<td headers="Blend Away Prob" class="gt_row gt_right gt_striped">18.4%</td>
-<td headers="Winner" class="gt_row gt_left gt_striped">NA</td></tr>
-    <tr><td headers="Season" class="gt_row gt_center">2025</td>
-<td headers="Week" class="gt_row gt_center">6</td>
-<td headers="Date" class="gt_row gt_right">2025-10-12</td>
-<td headers="Matchup" class="gt_row gt_left">CIN @ GB</td>
-<td headers="Blend Favorite" class="gt_row gt_center">GB</td>
-<td headers="Blend Recommendation" class="gt_row gt_center">Pass</td>
-<td headers="Blend Stake (Units)" class="gt_row gt_right">0.000</td>
-<td headers="Market Moneyline" class="gt_row gt_right">-1000</td>
-<td headers="Market Home Moneyline" class="gt_row gt_right">-1000</td>
-<td headers="Market Away Moneyline" class="gt_row gt_right">+650</td>
-<td headers="Blend Home Moneyline (vig)" class="gt_row gt_right">-497</td>
-<td headers="Blend Away Moneyline (vig)" class="gt_row gt_right">+411</td>
-<td headers="Blend Favorite Moneyline (vig)" class="gt_row gt_right">-497</td>
-<td headers="Blend Median Home Score" class="gt_row gt_right">NA</td>
-<td headers="Blend Median Away Score" class="gt_row gt_right">NA</td>
-<td headers="Blend Median Total" class="gt_row gt_right">NA</td>
-<td headers="Blend Median Margin" class="gt_row gt_right">NA</td>
-<td headers="Market Home Spread" class="gt_row gt_right">14</td>
-<td headers="Market Implied Margin" class="gt_row gt_right">−14</td>
-<td headers="Market Total" class="gt_row gt_right">44.5</td>
-<td headers="Blend Edge" class="gt_row gt_right">−5.3%</td>
-<td headers="Blend EV Units" class="gt_row gt_right">−0.099</td>
-<td headers="Market EV Units" class="gt_row gt_right">0.099</td>
-<td headers="Blend Beat Market?" class="gt_row gt_center" style="background-color: #166534; color: #FFFFFF;">No</td>
-<td headers="Market Winning?" class="gt_row gt_center">Yes</td>
-<td headers="Market Home Prob" class="gt_row gt_right">87.2%</td>
-<td headers="Blend Home Prob" class="gt_row gt_right">81.9%</td>
-<td headers="Market Away Prob" class="gt_row gt_right">12.8%</td>
-<td headers="Blend Away Prob" class="gt_row gt_right">18.1%</td>
-<td headers="Winner" class="gt_row gt_left">NA</td></tr>
-    <tr><td headers="Season" class="gt_row gt_center gt_striped">2025</td>
-<td headers="Week" class="gt_row gt_center gt_striped">6</td>
-<td headers="Date" class="gt_row gt_right gt_striped">2025-10-12</td>
-<td headers="Matchup" class="gt_row gt_left gt_striped">CLE @ PIT</td>
-<td headers="Blend Favorite" class="gt_row gt_center gt_striped">PIT</td>
-<td headers="Blend Recommendation" class="gt_row gt_center gt_striped">Bet PIT moneyline</td>
-<td headers="Blend Stake (Units)" class="gt_row gt_right gt_striped">0.054</td>
-<td headers="Market Moneyline" class="gt_row gt_right gt_striped">-278</td>
-<td headers="Market Home Moneyline" class="gt_row gt_right gt_striped">-278</td>
-<td headers="Market Away Moneyline" class="gt_row gt_right gt_striped">+225</td>
-<td headers="Blend Home Moneyline (vig)" class="gt_row gt_right gt_striped">-380</td>
-<td headers="Blend Away Moneyline (vig)" class="gt_row gt_right gt_striped">+314</td>
-<td headers="Blend Favorite Moneyline (vig)" class="gt_row gt_right gt_striped">-380</td>
-<td headers="Blend Median Home Score" class="gt_row gt_right gt_striped">NA</td>
-<td headers="Blend Median Away Score" class="gt_row gt_right gt_striped">NA</td>
-<td headers="Blend Median Total" class="gt_row gt_right gt_striped">NA</td>
-<td headers="Blend Median Margin" class="gt_row gt_right gt_striped">NA</td>
-<td headers="Market Home Spread" class="gt_row gt_right gt_striped">5.5</td>
-<td headers="Market Implied Margin" class="gt_row gt_right gt_striped">−5.5</td>
-<td headers="Market Total" class="gt_row gt_right gt_striped">37.5</td>
-<td headers="Blend Edge" class="gt_row gt_right gt_striped">7.0%</td>
-<td headers="Blend EV Units" class="gt_row gt_right gt_striped">0.054</td>
-<td headers="Market EV Units" class="gt_row gt_right gt_striped">−0.054</td>
-<td headers="Blend Beat Market?" class="gt_row gt_center gt_striped" style="background-color: #374151; color: #FFFFFF;">Yes</td>
-<td headers="Market Winning?" class="gt_row gt_center gt_striped">No</td>
-<td headers="Market Home Prob" class="gt_row gt_right gt_striped">70.5%</td>
-<td headers="Blend Home Prob" class="gt_row gt_right gt_striped">77.5%</td>
-<td headers="Market Away Prob" class="gt_row gt_right gt_striped">29.5%</td>
-<td headers="Blend Away Prob" class="gt_row gt_right gt_striped">22.5%</td>
-<td headers="Winner" class="gt_row gt_left gt_striped">NA</td></tr>
-    <tr><td headers="Season" class="gt_row gt_center">2025</td>
-<td headers="Week" class="gt_row gt_center">6</td>
-<td headers="Date" class="gt_row gt_right">2025-10-12</td>
-<td headers="Matchup" class="gt_row gt_left">DAL @ CAR</td>
-<td headers="Blend Favorite" class="gt_row gt_center">DAL</td>
-<td headers="Blend Recommendation" class="gt_row gt_center">Bet DAL moneyline</td>
-<td headers="Blend Stake (Units)" class="gt_row gt_right">0.003</td>
-<td headers="Market Moneyline" class="gt_row gt_right">-175</td>
-<td headers="Market Home Moneyline" class="gt_row gt_right">+145</td>
-<td headers="Market Away Moneyline" class="gt_row gt_right">-175</td>
-<td headers="Blend Home Moneyline (vig)" class="gt_row gt_right">+161</td>
-<td headers="Blend Away Moneyline (vig)" class="gt_row gt_right">-195</td>
-<td headers="Blend Favorite Moneyline (vig)" class="gt_row gt_right">-195</td>
-<td headers="Blend Median Home Score" class="gt_row gt_right">NA</td>
-<td headers="Blend Median Away Score" class="gt_row gt_right">NA</td>
-<td headers="Blend Median Total" class="gt_row gt_right">NA</td>
-<td headers="Blend Median Margin" class="gt_row gt_right">NA</td>
-<td headers="Market Home Spread" class="gt_row gt_right">−3</td>
-<td headers="Market Implied Margin" class="gt_row gt_right">3</td>
-<td headers="Market Total" class="gt_row gt_right">47.5</td>
-<td headers="Blend Edge" class="gt_row gt_right">2.9%</td>
-<td headers="Blend EV Units" class="gt_row gt_right">0.003</td>
-<td headers="Market EV Units" class="gt_row gt_right">−0.003</td>
-<td headers="Blend Beat Market?" class="gt_row gt_center" style="background-color: #374151; color: #FFFFFF;">Yes</td>
-<td headers="Market Winning?" class="gt_row gt_center">No</td>
-<td headers="Market Home Prob" class="gt_row gt_right">39.1%</td>
-<td headers="Blend Home Prob" class="gt_row gt_right">36.2%</td>
-<td headers="Market Away Prob" class="gt_row gt_right">60.9%</td>
-<td headers="Blend Away Prob" class="gt_row gt_right">63.8%</td>
-<td headers="Winner" class="gt_row gt_left">NA</td></tr>
-    <tr><td headers="Season" class="gt_row gt_center gt_striped">2025</td>
-<td headers="Week" class="gt_row gt_center gt_striped">6</td>
-<td headers="Date" class="gt_row gt_right gt_striped">2025-10-12</td>
-<td headers="Matchup" class="gt_row gt_left gt_striped">DEN @ NYJ</td>
-<td headers="Blend Favorite" class="gt_row gt_center gt_striped">DEN</td>
-<td headers="Blend Recommendation" class="gt_row gt_center gt_striped">Pass</td>
-<td headers="Blend Stake (Units)" class="gt_row gt_right gt_striped">0.000</td>
-<td headers="Market Moneyline" class="gt_row gt_right gt_striped">-395</td>
-<td headers="Market Home Moneyline" class="gt_row gt_right gt_striped">+310</td>
-<td headers="Market Away Moneyline" class="gt_row gt_right gt_striped">-395</td>
-<td headers="Blend Home Moneyline (vig)" class="gt_row gt_right gt_striped">+305</td>
-<td headers="Blend Away Moneyline (vig)" class="gt_row gt_right gt_striped">-370</td>
-<td headers="Blend Favorite Moneyline (vig)" class="gt_row gt_right gt_striped">-370</td>
-<td headers="Blend Median Home Score" class="gt_row gt_right gt_striped">NA</td>
-<td headers="Blend Median Away Score" class="gt_row gt_right gt_striped">NA</td>
-<td headers="Blend Median Total" class="gt_row gt_right gt_striped">NA</td>
-<td headers="Blend Median Margin" class="gt_row gt_right gt_striped">NA</td>
-<td headers="Market Home Spread" class="gt_row gt_right gt_striped">−7.5</td>
-<td headers="Market Implied Margin" class="gt_row gt_right gt_striped">7.5</td>
-<td headers="Market Total" class="gt_row gt_right gt_striped">43.5</td>
-<td headers="Blend Edge" class="gt_row gt_right gt_striped">0.5%</td>
-<td headers="Blend EV Units" class="gt_row gt_right gt_striped">−0.034</td>
-<td headers="Market EV Units" class="gt_row gt_right gt_striped">0.034</td>
-<td headers="Blend Beat Market?" class="gt_row gt_center gt_striped" style="background-color: #166534; color: #FFFFFF;">No</td>
-<td headers="Market Winning?" class="gt_row gt_center gt_striped">Yes</td>
-<td headers="Market Home Prob" class="gt_row gt_right gt_striped">23.4%</td>
-<td headers="Blend Home Prob" class="gt_row gt_right gt_striped">22.9%</td>
-<td headers="Market Away Prob" class="gt_row gt_right gt_striped">76.6%</td>
-<td headers="Blend Away Prob" class="gt_row gt_right gt_striped">77.1%</td>
-<td headers="Winner" class="gt_row gt_left gt_striped">NA</td></tr>
-    <tr><td headers="Season" class="gt_row gt_center">2025</td>
-<td headers="Week" class="gt_row gt_center">6</td>
-<td headers="Date" class="gt_row gt_right">2025-10-12</td>
-<td headers="Matchup" class="gt_row gt_left">DET @ KC</td>
-<td headers="Blend Favorite" class="gt_row gt_center">KC</td>
-<td headers="Blend Recommendation" class="gt_row gt_center">Pass</td>
-<td headers="Blend Stake (Units)" class="gt_row gt_right">0.000</td>
-<td headers="Market Moneyline" class="gt_row gt_right">-142</td>
-<td headers="Market Home Moneyline" class="gt_row gt_right">-142</td>
-<td headers="Market Away Moneyline" class="gt_row gt_right">+120</td>
-<td headers="Blend Home Moneyline (vig)" class="gt_row gt_right">-131</td>
-<td headers="Blend Away Moneyline (vig)" class="gt_row gt_right">+108</td>
-<td headers="Blend Favorite Moneyline (vig)" class="gt_row gt_right">-131</td>
-<td headers="Blend Median Home Score" class="gt_row gt_right">NA</td>
-<td headers="Blend Median Away Score" class="gt_row gt_right">NA</td>
-<td headers="Blend Median Total" class="gt_row gt_right">NA</td>
-<td headers="Blend Median Margin" class="gt_row gt_right">NA</td>
-<td headers="Market Home Spread" class="gt_row gt_right">2.5</td>
-<td headers="Market Implied Margin" class="gt_row gt_right">−2.5</td>
-<td headers="Market Total" class="gt_row gt_right">51.5</td>
-<td headers="Blend Edge" class="gt_row gt_right">−2.1%</td>
-<td headers="Blend EV Units" class="gt_row gt_right">−0.076</td>
-<td headers="Market EV Units" class="gt_row gt_right">0.076</td>
-<td headers="Blend Beat Market?" class="gt_row gt_center" style="background-color: #166534; color: #FFFFFF;">No</td>
-<td headers="Market Winning?" class="gt_row gt_center">Yes</td>
-<td headers="Market Home Prob" class="gt_row gt_right">56.3%</td>
-<td headers="Blend Home Prob" class="gt_row gt_right">54.2%</td>
-<td headers="Market Away Prob" class="gt_row gt_right">43.7%</td>
-<td headers="Blend Away Prob" class="gt_row gt_right">45.8%</td>
-<td headers="Winner" class="gt_row gt_left">NA</td></tr>
-    <tr><td headers="Season" class="gt_row gt_center gt_striped">2025</td>
-<td headers="Week" class="gt_row gt_center gt_striped">6</td>
-<td headers="Date" class="gt_row gt_right gt_striped">2025-10-12</td>
-<td headers="Matchup" class="gt_row gt_left gt_striped">LA @ BAL</td>
-<td headers="Blend Favorite" class="gt_row gt_center gt_striped">LA</td>
-<td headers="Blend Recommendation" class="gt_row gt_center gt_striped">Pass</td>
-<td headers="Blend Stake (Units)" class="gt_row gt_right gt_striped">0.000</td>
-<td headers="Market Moneyline" class="gt_row gt_right gt_striped">-355</td>
-<td headers="Market Home Moneyline" class="gt_row gt_right gt_striped">+280</td>
-<td headers="Market Away Moneyline" class="gt_row gt_right gt_striped">-355</td>
-<td headers="Blend Home Moneyline (vig)" class="gt_row gt_right gt_striped">+179</td>
-<td headers="Blend Away Moneyline (vig)" class="gt_row gt_right gt_striped">-217</td>
-<td headers="Blend Favorite Moneyline (vig)" class="gt_row gt_right gt_striped">-217</td>
-<td headers="Blend Median Home Score" class="gt_row gt_right gt_striped">NA</td>
-<td headers="Blend Median Away Score" class="gt_row gt_right gt_striped">NA</td>
-<td headers="Blend Median Total" class="gt_row gt_right gt_striped">NA</td>
-<td headers="Blend Median Margin" class="gt_row gt_right gt_striped">NA</td>
-<td headers="Market Home Spread" class="gt_row gt_right gt_striped">−7</td>
-<td headers="Market Implied Margin" class="gt_row gt_right gt_striped">7</td>
-<td headers="Market Total" class="gt_row gt_right gt_striped">43.5</td>
-<td headers="Blend Edge" class="gt_row gt_right gt_striped">−8.4%</td>
-<td headers="Blend EV Units" class="gt_row gt_right gt_striped">−0.149</td>
-<td headers="Market EV Units" class="gt_row gt_right gt_striped">0.149</td>
-<td headers="Blend Beat Market?" class="gt_row gt_center gt_striped" style="background-color: #166534; color: #FFFFFF;">No</td>
-<td headers="Market Winning?" class="gt_row gt_center gt_striped">Yes</td>
-<td headers="Market Home Prob" class="gt_row gt_right gt_striped">25.2%</td>
-<td headers="Blend Home Prob" class="gt_row gt_right gt_striped">33.6%</td>
-<td headers="Market Away Prob" class="gt_row gt_right gt_striped">74.8%</td>
-<td headers="Blend Away Prob" class="gt_row gt_right gt_striped">66.4%</td>
-<td headers="Winner" class="gt_row gt_left gt_striped">NA</td></tr>
-    <tr><td headers="Season" class="gt_row gt_center">2025</td>
-<td headers="Week" class="gt_row gt_center">6</td>
-<td headers="Date" class="gt_row gt_right">2025-10-12</td>
-<td headers="Matchup" class="gt_row gt_left">LAC @ MIA</td>
-<td headers="Blend Favorite" class="gt_row gt_center">LAC</td>
-<td headers="Blend Recommendation" class="gt_row gt_center">Pass</td>
-<td headers="Blend Stake (Units)" class="gt_row gt_right">0.000</td>
-<td headers="Market Moneyline" class="gt_row gt_right">-205</td>
-<td headers="Market Home Moneyline" class="gt_row gt_right">+170</td>
-<td headers="Market Away Moneyline" class="gt_row gt_right">-205</td>
-<td headers="Blend Home Moneyline (vig)" class="gt_row gt_right">+149</td>
-<td headers="Blend Away Moneyline (vig)" class="gt_row gt_right">-180</td>
-<td headers="Blend Favorite Moneyline (vig)" class="gt_row gt_right">-180</td>
-<td headers="Blend Median Home Score" class="gt_row gt_right">NA</td>
-<td headers="Blend Median Away Score" class="gt_row gt_right">NA</td>
-<td headers="Blend Median Total" class="gt_row gt_right">NA</td>
-<td headers="Blend Median Margin" class="gt_row gt_right">NA</td>
-<td headers="Market Home Spread" class="gt_row gt_right">−3.5</td>
-<td headers="Market Implied Margin" class="gt_row gt_right">3.5</td>
-<td headers="Market Total" class="gt_row gt_right">45.5</td>
-<td headers="Blend Edge" class="gt_row gt_right">−2.3%</td>
-<td headers="Blend EV Units" class="gt_row gt_right">−0.075</td>
-<td headers="Market EV Units" class="gt_row gt_right">0.075</td>
-<td headers="Blend Beat Market?" class="gt_row gt_center" style="background-color: #166534; color: #FFFFFF;">No</td>
-<td headers="Market Winning?" class="gt_row gt_center">Yes</td>
-<td headers="Market Home Prob" class="gt_row gt_right">35.5%</td>
-<td headers="Blend Home Prob" class="gt_row gt_right">37.8%</td>
-<td headers="Market Away Prob" class="gt_row gt_right">64.5%</td>
-<td headers="Blend Away Prob" class="gt_row gt_right">62.2%</td>
-<td headers="Winner" class="gt_row gt_left">NA</td></tr>
-    <tr><td headers="Season" class="gt_row gt_center gt_striped">2025</td>
-<td headers="Week" class="gt_row gt_center gt_striped">6</td>
-<td headers="Date" class="gt_row gt_right gt_striped">2025-10-12</td>
-<td headers="Matchup" class="gt_row gt_left gt_striped">NE @ NO</td>
-<td headers="Blend Favorite" class="gt_row gt_center gt_striped">NE</td>
-<td headers="Blend Recommendation" class="gt_row gt_center gt_striped">Pass</td>
-<td headers="Blend Stake (Units)" class="gt_row gt_right gt_striped">0.000</td>
-<td headers="Market Moneyline" class="gt_row gt_right gt_striped">-192</td>
-<td headers="Market Home Moneyline" class="gt_row gt_right gt_striped">+160</td>
-<td headers="Market Away Moneyline" class="gt_row gt_right gt_striped">-192</td>
-<td headers="Blend Home Moneyline (vig)" class="gt_row gt_right gt_striped">+158</td>
-<td headers="Blend Away Moneyline (vig)" class="gt_row gt_right gt_striped">-191</td>
-<td headers="Blend Favorite Moneyline (vig)" class="gt_row gt_right gt_striped">-191</td>
-<td headers="Blend Median Home Score" class="gt_row gt_right gt_striped">NA</td>
-<td headers="Blend Median Away Score" class="gt_row gt_right gt_striped">NA</td>
-<td headers="Blend Median Total" class="gt_row gt_right gt_striped">NA</td>
-<td headers="Blend Median Margin" class="gt_row gt_right gt_striped">NA</td>
-<td headers="Market Home Spread" class="gt_row gt_right gt_striped">−3.5</td>
-<td headers="Market Implied Margin" class="gt_row gt_right gt_striped">3.5</td>
-<td headers="Market Total" class="gt_row gt_right gt_striped">46.5</td>
-<td headers="Blend Edge" class="gt_row gt_right gt_striped">0.4%</td>
-<td headers="Blend EV Units" class="gt_row gt_right gt_striped">−0.035</td>
-<td headers="Market EV Units" class="gt_row gt_right gt_striped">0.035</td>
-<td headers="Blend Beat Market?" class="gt_row gt_center gt_striped" style="background-color: #166534; color: #FFFFFF;">No</td>
-<td headers="Market Winning?" class="gt_row gt_center gt_striped">Yes</td>
-<td headers="Market Home Prob" class="gt_row gt_right gt_striped">36.9%</td>
-<td headers="Blend Home Prob" class="gt_row gt_right gt_striped">36.5%</td>
-<td headers="Market Away Prob" class="gt_row gt_right gt_striped">63.1%</td>
-<td headers="Blend Away Prob" class="gt_row gt_right gt_striped">63.5%</td>
-<td headers="Winner" class="gt_row gt_left gt_striped">NA</td></tr>
-    <tr><td headers="Season" class="gt_row gt_center">2025</td>
-<td headers="Week" class="gt_row gt_center">6</td>
-<td headers="Date" class="gt_row gt_right">2025-10-12</td>
-<td headers="Matchup" class="gt_row gt_left">SEA @ JAX</td>
-<td headers="Blend Favorite" class="gt_row gt_center">SEA</td>
-<td headers="Blend Recommendation" class="gt_row gt_center">Bet SEA moneyline</td>
-<td headers="Blend Stake (Units)" class="gt_row gt_right">0.069</td>
-<td headers="Market Moneyline" class="gt_row gt_right">-115</td>
-<td headers="Market Home Moneyline" class="gt_row gt_right">-105</td>
-<td headers="Market Away Moneyline" class="gt_row gt_right">-115</td>
-<td headers="Blend Home Moneyline (vig)" class="gt_row gt_right">+122</td>
-<td headers="Blend Away Moneyline (vig)" class="gt_row gt_right">-147</td>
-<td headers="Blend Favorite Moneyline (vig)" class="gt_row gt_right">-147</td>
-<td headers="Blend Median Home Score" class="gt_row gt_right">NA</td>
-<td headers="Blend Median Away Score" class="gt_row gt_right">NA</td>
-<td headers="Blend Median Total" class="gt_row gt_right">NA</td>
-<td headers="Blend Median Margin" class="gt_row gt_right">NA</td>
-<td headers="Market Home Spread" class="gt_row gt_right">−1.5</td>
-<td headers="Market Implied Margin" class="gt_row gt_right">1.5</td>
-<td headers="Market Total" class="gt_row gt_right">47.5</td>
-<td headers="Blend Edge" class="gt_row gt_right">6.1%</td>
-<td headers="Blend EV Units" class="gt_row gt_right">0.069</td>
-<td headers="Market EV Units" class="gt_row gt_right">−0.069</td>
-<td headers="Blend Beat Market?" class="gt_row gt_center" style="background-color: #374151; color: #FFFFFF;">Yes</td>
-<td headers="Market Winning?" class="gt_row gt_center">No</td>
-<td headers="Market Home Prob" class="gt_row gt_right">48.9%</td>
-<td headers="Blend Home Prob" class="gt_row gt_right">42.8%</td>
-<td headers="Market Away Prob" class="gt_row gt_right">51.1%</td>
-<td headers="Blend Away Prob" class="gt_row gt_right">57.2%</td>
-<td headers="Winner" class="gt_row gt_left">NA</td></tr>
-    <tr><td headers="Season" class="gt_row gt_center gt_striped">2025</td>
-<td headers="Week" class="gt_row gt_center gt_striped">6</td>
-<td headers="Date" class="gt_row gt_right gt_striped">2025-10-12</td>
-<td headers="Matchup" class="gt_row gt_left gt_striped">SF @ TB</td>
-<td headers="Blend Favorite" class="gt_row gt_center gt_striped">TB</td>
-<td headers="Blend Recommendation" class="gt_row gt_center gt_striped">Bet TB moneyline</td>
-<td headers="Blend Stake (Units)" class="gt_row gt_right gt_striped">0.024</td>
-<td headers="Market Moneyline" class="gt_row gt_right gt_striped">-192</td>
-<td headers="Market Home Moneyline" class="gt_row gt_right gt_striped">-192</td>
-<td headers="Market Away Moneyline" class="gt_row gt_right gt_striped">+160</td>
-<td headers="Blend Home Moneyline (vig)" class="gt_row gt_right gt_striped">-227</td>
-<td headers="Blend Away Moneyline (vig)" class="gt_row gt_right gt_striped">+187</td>
-<td headers="Blend Favorite Moneyline (vig)" class="gt_row gt_right gt_striped">-227</td>
-<td headers="Blend Median Home Score" class="gt_row gt_right gt_striped">NA</td>
-<td headers="Blend Median Away Score" class="gt_row gt_right gt_striped">NA</td>
-<td headers="Blend Median Total" class="gt_row gt_right gt_striped">NA</td>
-<td headers="Blend Median Margin" class="gt_row gt_right gt_striped">NA</td>
-<td headers="Market Home Spread" class="gt_row gt_right gt_striped">3.5</td>
-<td headers="Market Implied Margin" class="gt_row gt_right gt_striped">−3.5</td>
-<td headers="Market Total" class="gt_row gt_right gt_striped">46.5</td>
-<td headers="Blend Edge" class="gt_row gt_right gt_striped">4.2%</td>
-<td headers="Blend EV Units" class="gt_row gt_right gt_striped">0.024</td>
-<td headers="Market EV Units" class="gt_row gt_right gt_striped">−0.024</td>
-<td headers="Blend Beat Market?" class="gt_row gt_center gt_striped" style="background-color: #374151; color: #FFFFFF;">Yes</td>
-<td headers="Market Winning?" class="gt_row gt_center gt_striped">No</td>
-<td headers="Market Home Prob" class="gt_row gt_right gt_striped">63.1%</td>
-<td headers="Blend Home Prob" class="gt_row gt_right gt_striped">67.3%</td>
-<td headers="Market Away Prob" class="gt_row gt_right gt_striped">36.9%</td>
-<td headers="Blend Away Prob" class="gt_row gt_right gt_striped">32.7%</td>
-<td headers="Winner" class="gt_row gt_left gt_striped">NA</td></tr>
-    <tr><td headers="Season" class="gt_row gt_center">2025</td>
-<td headers="Week" class="gt_row gt_center">6</td>
-<td headers="Date" class="gt_row gt_right">2025-10-12</td>
-<td headers="Matchup" class="gt_row gt_left">TEN @ LV</td>
-<td headers="Blend Favorite" class="gt_row gt_center">LV</td>
-<td headers="Blend Recommendation" class="gt_row gt_center">Pass</td>
-<td headers="Blend Stake (Units)" class="gt_row gt_right">0.000</td>
-<td headers="Market Moneyline" class="gt_row gt_right">-185</td>
-<td headers="Market Home Moneyline" class="gt_row gt_right">-185</td>
-<td headers="Market Away Moneyline" class="gt_row gt_right">+154</td>
-<td headers="Blend Home Moneyline (vig)" class="gt_row gt_right">-160</td>
-<td headers="Blend Away Moneyline (vig)" class="gt_row gt_right">+132</td>
-<td headers="Blend Favorite Moneyline (vig)" class="gt_row gt_right">-160</td>
-<td headers="Blend Median Home Score" class="gt_row gt_right">NA</td>
-<td headers="Blend Median Away Score" class="gt_row gt_right">NA</td>
-<td headers="Blend Median Total" class="gt_row gt_right">NA</td>
-<td headers="Blend Median Margin" class="gt_row gt_right">NA</td>
-<td headers="Market Home Spread" class="gt_row gt_right">3.5</td>
-<td headers="Market Implied Margin" class="gt_row gt_right">−3.5</td>
-<td headers="Market Total" class="gt_row gt_right">41.5</td>
-<td headers="Blend Edge" class="gt_row gt_right">−3.0%</td>
-<td headers="Blend EV Units" class="gt_row gt_right">−0.088</td>
-<td headers="Market EV Units" class="gt_row gt_right">0.088</td>
-<td headers="Blend Beat Market?" class="gt_row gt_center" style="background-color: #166534; color: #FFFFFF;">No</td>
-<td headers="Market Winning?" class="gt_row gt_center">Yes</td>
-<td headers="Market Home Prob" class="gt_row gt_right">62.2%</td>
-<td headers="Blend Home Prob" class="gt_row gt_right">59.2%</td>
-<td headers="Market Away Prob" class="gt_row gt_right">37.8%</td>
-<td headers="Blend Away Prob" class="gt_row gt_right">40.8%</td>
-<td headers="Winner" class="gt_row gt_left">NA</td></tr>
-    <tr><td headers="Season" class="gt_row gt_center gt_striped">2025</td>
-<td headers="Week" class="gt_row gt_center gt_striped">6</td>
-<td headers="Date" class="gt_row gt_right gt_striped">2025-10-13</td>
-<td headers="Matchup" class="gt_row gt_left gt_striped">BUF @ ATL</td>
-<td headers="Blend Favorite" class="gt_row gt_center gt_striped">BUF</td>
-<td headers="Blend Recommendation" class="gt_row gt_center gt_striped">Bet BUF moneyline</td>
-<td headers="Blend Stake (Units)" class="gt_row gt_right gt_striped">0.009</td>
-<td headers="Market Moneyline" class="gt_row gt_right gt_striped">-205</td>
-<td headers="Market Home Moneyline" class="gt_row gt_right gt_striped">+170</td>
-<td headers="Market Away Moneyline" class="gt_row gt_right gt_striped">-205</td>
-<td headers="Blend Home Moneyline (vig)" class="gt_row gt_right gt_striped">+192</td>
-<td headers="Blend Away Moneyline (vig)" class="gt_row gt_right gt_striped">-232</td>
-<td headers="Blend Favorite Moneyline (vig)" class="gt_row gt_right gt_striped">-232</td>
-<td headers="Blend Median Home Score" class="gt_row gt_right gt_striped">NA</td>
-<td headers="Blend Median Away Score" class="gt_row gt_right gt_striped">NA</td>
-<td headers="Blend Median Total" class="gt_row gt_right gt_striped">NA</td>
-<td headers="Blend Median Margin" class="gt_row gt_right gt_striped">NA</td>
-<td headers="Market Home Spread" class="gt_row gt_right gt_striped">−3.5</td>
-<td headers="Market Implied Margin" class="gt_row gt_right gt_striped">3.5</td>
-<td headers="Market Total" class="gt_row gt_right gt_striped">49.5</td>
-<td headers="Blend Edge" class="gt_row gt_right gt_striped">3.3%</td>
-<td headers="Blend EV Units" class="gt_row gt_right gt_striped">0.009</td>
-<td headers="Market EV Units" class="gt_row gt_right gt_striped">−0.009</td>
-<td headers="Blend Beat Market?" class="gt_row gt_center gt_striped" style="background-color: #374151; color: #FFFFFF;">Yes</td>
-<td headers="Market Winning?" class="gt_row gt_center gt_striped">No</td>
-<td headers="Market Home Prob" class="gt_row gt_right gt_striped">35.5%</td>
-<td headers="Blend Home Prob" class="gt_row gt_right gt_striped">32.2%</td>
-<td headers="Market Away Prob" class="gt_row gt_right gt_striped">64.5%</td>
-<td headers="Blend Away Prob" class="gt_row gt_right gt_striped">67.8%</td>
-<td headers="Winner" class="gt_row gt_left gt_striped">NA</td></tr>
-    <tr><td headers="Season" class="gt_row gt_center">2025</td>
-<td headers="Week" class="gt_row gt_center">6</td>
-<td headers="Date" class="gt_row gt_right">2025-10-13</td>
-<td headers="Matchup" class="gt_row gt_left">CHI @ WAS</td>
-<td headers="Blend Favorite" class="gt_row gt_center">WAS</td>
-<td headers="Blend Recommendation" class="gt_row gt_center">Pass</td>
-<td headers="Blend Stake (Units)" class="gt_row gt_right">0.000</td>
-<td headers="Market Moneyline" class="gt_row gt_right">-258</td>
-<td headers="Market Home Moneyline" class="gt_row gt_right">-258</td>
-<td headers="Market Away Moneyline" class="gt_row gt_right">+210</td>
-<td headers="Blend Home Moneyline (vig)" class="gt_row gt_right">-220</td>
-<td headers="Blend Away Moneyline (vig)" class="gt_row gt_right">+182</td>
-<td headers="Blend Favorite Moneyline (vig)" class="gt_row gt_right">-220</td>
-<td headers="Blend Median Home Score" class="gt_row gt_right">NA</td>
-<td headers="Blend Median Away Score" class="gt_row gt_right">NA</td>
-<td headers="Blend Median Total" class="gt_row gt_right">NA</td>
-<td headers="Blend Median Margin" class="gt_row gt_right">NA</td>
-<td headers="Market Home Spread" class="gt_row gt_right">5.5</td>
-<td headers="Market Implied Margin" class="gt_row gt_right">−5.5</td>
-<td headers="Market Total" class="gt_row gt_right">49.5</td>
-<td headers="Blend Edge" class="gt_row gt_right">−2.4%</td>
-<td headers="Blend EV Units" class="gt_row gt_right">−0.075</td>
-<td headers="Market EV Units" class="gt_row gt_right">0.075</td>
-<td headers="Blend Beat Market?" class="gt_row gt_center" style="background-color: #166534; color: #FFFFFF;">No</td>
-<td headers="Market Winning?" class="gt_row gt_center">Yes</td>
-<td headers="Market Home Prob" class="gt_row gt_right">69.1%</td>
-<td headers="Blend Home Prob" class="gt_row gt_right">66.6%</td>
-<td headers="Market Away Prob" class="gt_row gt_right">30.9%</td>
-<td headers="Blend Away Prob" class="gt_row gt_right">33.4%</td>
-<td headers="Winner" class="gt_row gt_left">NA</td></tr>
-  </tbody>
-  
+<table class="gt_table" data-quarto-bootstrap="false" data-quarto-disable-processing="false">
+<thead>
+<tr class="gt_heading">
+<td class="gt_heading gt_title gt_font_normal gt_bottom_border" colspan="30" style="color: #F8FAFC;">Blend vs Market Moneylines - Week 6, 2025</td>
+</tr>
+<tr class="gt_col_headings">
+<th class="gt_col_heading gt_columns_bottom_border gt_center" colspan="1" id="Season" rowspan="1" scope="col" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;">Season</th>
+<th class="gt_col_heading gt_columns_bottom_border gt_center" colspan="1" id="Week" rowspan="1" scope="col" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;">Week</th>
+<th class="gt_col_heading gt_columns_bottom_border gt_right" colspan="1" id="Date" rowspan="1" scope="col" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;">Date</th>
+<th class="gt_col_heading gt_columns_bottom_border gt_left" colspan="1" id="Matchup" rowspan="1" scope="col" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;">Matchup</th>
+<th class="gt_col_heading gt_columns_bottom_border gt_center" colspan="1" id="Blend-Favorite" rowspan="1" scope="col" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;">Blend Favorite</th><th class="gt_col_heading gt_columns_bottom_border gt_center" colspan="1" id="Blend-Pick" rowspan="1" scope="col" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;">Blend Pick</th>
+<th class="gt_col_heading gt_columns_bottom_border gt_center" colspan="1" id="Blend-Recommendation" rowspan="1" scope="col" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;">Blend Recommendation</th>
+<th class="gt_col_heading gt_columns_bottom_border gt_right" colspan="1" id="Blend-Stake-(Units)" rowspan="1" scope="col" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;">Blend Stake</th>
+<th class="gt_col_heading gt_columns_bottom_border gt_right" colspan="1" id="Market-Home-Moneyline" rowspan="1" scope="col" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;">Market Home Moneyline</th>
+<th class="gt_col_heading gt_columns_bottom_border gt_right" colspan="1" id="Market-Away-Moneyline" rowspan="1" scope="col" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;">Market Away Moneyline</th>
+<th class="gt_col_heading gt_columns_bottom_border gt_right" colspan="1" id="Blend-Home-Moneyline-(vig)" rowspan="1" scope="col" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;">Blend Home Moneyline (vig)</th>
+<th class="gt_col_heading gt_columns_bottom_border gt_right" colspan="1" id="Blend-Away-Moneyline-(vig)" rowspan="1" scope="col" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;">Blend Away Moneyline (vig)</th>
+<th class="gt_col_heading gt_columns_bottom_border gt_right" colspan="1" id="Blend-Pick-Moneyline-(vig)" rowspan="1" scope="col" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;">Blend Pick Moneyline (vig)</th>
+<th class="gt_col_heading gt_columns_bottom_border gt_right" colspan="1" id="Blend-Median-Home-Score" rowspan="1" scope="col" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;">Blend Median Home Score</th>
+<th class="gt_col_heading gt_columns_bottom_border gt_right" colspan="1" id="Blend-Median-Away-Score" rowspan="1" scope="col" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;">Blend Median Away Score</th>
+<th class="gt_col_heading gt_columns_bottom_border gt_right" colspan="1" id="Blend-Median-Total" rowspan="1" scope="col" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;">Blend Median Total</th>
+<th class="gt_col_heading gt_columns_bottom_border gt_right" colspan="1" id="Blend-Median-Margin" rowspan="1" scope="col" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;">Blend Margin</th>
+<th class="gt_col_heading gt_columns_bottom_border gt_right" colspan="1" id="Market-Home-Spread" rowspan="1" scope="col" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;">Market Home Spread</th>
+<th class="gt_col_heading gt_columns_bottom_border gt_right" colspan="1" id="Market-Implied-Margin" rowspan="1" scope="col" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;">Market Margin</th>
+<th class="gt_col_heading gt_columns_bottom_border gt_right" colspan="1" id="Market-Total" rowspan="1" scope="col" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;">Market Total</th>
+<th class="gt_col_heading gt_columns_bottom_border gt_right" colspan="1" id="Blend-Edge" rowspan="1" scope="col" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;">Blend Edge (pp)</th>
+<th class="gt_col_heading gt_columns_bottom_border gt_right" colspan="1" id="Blend-EV-Units" rowspan="1" scope="col" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;">Blend EV (units)</th>
+<th class="gt_col_heading gt_columns_bottom_border gt_right" colspan="1" id="Market-EV-Units" rowspan="1" scope="col" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;">Market EV (units)</th>
+<th class="gt_col_heading gt_columns_bottom_border gt_center" colspan="1" id="Blend-Beat-Market?" rowspan="1" scope="col" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;">Blend Beat Market?</th>
+<th class="gt_col_heading gt_columns_bottom_border gt_center" colspan="1" id="Market-Winning?" rowspan="1" scope="col" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;">Market Winning?</th>
+<th class="gt_col_heading gt_columns_bottom_border gt_right" colspan="1" id="Market-Home-Prob" rowspan="1" scope="col" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;">Market Home Prob</th>
+<th class="gt_col_heading gt_columns_bottom_border gt_right" colspan="1" id="Blend-Home-Prob" rowspan="1" scope="col" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;">Blend Home Prob</th>
+<th class="gt_col_heading gt_columns_bottom_border gt_right" colspan="1" id="Market-Away-Prob" rowspan="1" scope="col" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;">Market Away Prob</th>
+<th class="gt_col_heading gt_columns_bottom_border gt_right" colspan="1" id="Blend-Away-Prob" rowspan="1" scope="col" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;">Blend Away Prob</th>
+<th class="gt_col_heading gt_columns_bottom_border gt_left" colspan="1" id="Winner" rowspan="1" scope="col" style="background-color: #1E293B; color: #F8FAFC; font-weight: bold;">Winner</th>
+</tr>
+</thead>
+<tbody class="gt_table_body">
+<tr><td class="gt_row gt_center" headers="Season">2025</td>
+<td class="gt_row gt_center" headers="Week">6</td>
+<td class="gt_row gt_right" headers="Date">2025-10-09</td>
+<td class="gt_row gt_left" headers="Matchup">PHI @ NYG</td>
+<td class="gt_row gt_center" headers="Blend Favorite">PHI</td><td class="gt_row gt_center" headers="Blend Pick">—</td>
+<td class="gt_row gt_center" headers="Blend Recommendation">Pass</td>
+<td class="gt_row gt_right" headers="Blend Stake (Units)">0.000</td>
+<td class="gt_row gt_right" headers="Market Home Moneyline">+310</td>
+<td class="gt_row gt_right" headers="Market Away Moneyline">-395</td>
+<td class="gt_row gt_right" headers="Blend Home Moneyline (vig)">+311</td>
+<td class="gt_row gt_right" headers="Blend Away Moneyline (vig)">-376</td>
+<td class="gt_row gt_right" headers="Blend Pick Moneyline (vig)">-376</td>
+<td class="gt_row gt_right" headers="Blend Median Home Score">NA</td>
+<td class="gt_row gt_right" headers="Blend Median Away Score">NA</td>
+<td class="gt_row gt_right" headers="Blend Median Total">NA</td>
+<td class="gt_row gt_right" headers="Blend Median Margin">NA</td>
+<td class="gt_row gt_right" headers="Market Home Spread">−7</td>
+<td class="gt_row gt_right" headers="Market Implied Margin">7</td>
+<td class="gt_row gt_right" headers="Market Total">40.5</td>
+<td class="gt_row gt_right" headers="Blend Edge">0.8%</td>
+<td class="gt_row gt_right" headers="Blend EV Units">−0.030</td>
+<td class="gt_row gt_right" headers="Market EV Units">0.030</td>
+<td class="gt_row gt_center" headers="Blend Beat Market?" style="background-color: #166534; color: #FFFFFF;">No</td>
+<td class="gt_row gt_center" headers="Market Winning?">Yes</td>
+<td class="gt_row gt_right" headers="Market Home Prob">23.4%</td>
+<td class="gt_row gt_right" headers="Blend Home Prob">22.6%</td>
+<td class="gt_row gt_right" headers="Market Away Prob">76.6%</td>
+<td class="gt_row gt_right" headers="Blend Away Prob">77.4%</td>
+<td class="gt_row gt_left" headers="Winner">NA</td></tr>
+<tr><td class="gt_row gt_center gt_striped" headers="Season">2025</td>
+<td class="gt_row gt_center gt_striped" headers="Week">6</td>
+<td class="gt_row gt_right gt_striped" headers="Date">2025-10-12</td>
+<td class="gt_row gt_left gt_striped" headers="Matchup">ARI @ IND</td>
+<td class="gt_row gt_center gt_striped" headers="Blend Favorite">IND</td><td class="gt_row gt_center gt_striped" headers="Blend Pick">—</td>
+<td class="gt_row gt_center gt_striped" headers="Blend Recommendation">Pass</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Stake (Units)">0.000</td>
+<td class="gt_row gt_right gt_striped" headers="Market Home Moneyline">-470</td>
+<td class="gt_row gt_right gt_striped" headers="Market Away Moneyline">+360</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Home Moneyline (vig)">-486</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Away Moneyline (vig)">+402</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Pick Moneyline (vig)">-486</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Median Home Score">NA</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Median Away Score">NA</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Median Total">NA</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Median Margin">NA</td>
+<td class="gt_row gt_right gt_striped" headers="Market Home Spread">8.5</td>
+<td class="gt_row gt_right gt_striped" headers="Market Implied Margin">−8.5</td>
+<td class="gt_row gt_right gt_striped" headers="Market Total">46.5</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Edge">2.4%</td>
+<td class="gt_row gt_right gt_striped" headers="Blend EV Units">−0.011</td>
+<td class="gt_row gt_right gt_striped" headers="Market EV Units">0.011</td>
+<td class="gt_row gt_center gt_striped" headers="Blend Beat Market?" style="background-color: #166534; color: #FFFFFF;">No</td>
+<td class="gt_row gt_center gt_striped" headers="Market Winning?">Yes</td>
+<td class="gt_row gt_right gt_striped" headers="Market Home Prob">79.1%</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Home Prob">81.6%</td>
+<td class="gt_row gt_right gt_striped" headers="Market Away Prob">20.9%</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Away Prob">18.4%</td>
+<td class="gt_row gt_left gt_striped" headers="Winner">NA</td></tr>
+<tr><td class="gt_row gt_center" headers="Season">2025</td>
+<td class="gt_row gt_center" headers="Week">6</td>
+<td class="gt_row gt_right" headers="Date">2025-10-12</td>
+<td class="gt_row gt_left" headers="Matchup">CIN @ GB</td>
+<td class="gt_row gt_center" headers="Blend Favorite">GB</td><td class="gt_row gt_center" headers="Blend Pick">—</td>
+<td class="gt_row gt_center" headers="Blend Recommendation">Pass</td>
+<td class="gt_row gt_right" headers="Blend Stake (Units)">0.000</td>
+<td class="gt_row gt_right" headers="Market Home Moneyline">-1000</td>
+<td class="gt_row gt_right" headers="Market Away Moneyline">+650</td>
+<td class="gt_row gt_right" headers="Blend Home Moneyline (vig)">-497</td>
+<td class="gt_row gt_right" headers="Blend Away Moneyline (vig)">+411</td>
+<td class="gt_row gt_right" headers="Blend Pick Moneyline (vig)">-497</td>
+<td class="gt_row gt_right" headers="Blend Median Home Score">NA</td>
+<td class="gt_row gt_right" headers="Blend Median Away Score">NA</td>
+<td class="gt_row gt_right" headers="Blend Median Total">NA</td>
+<td class="gt_row gt_right" headers="Blend Median Margin">NA</td>
+<td class="gt_row gt_right" headers="Market Home Spread">14</td>
+<td class="gt_row gt_right" headers="Market Implied Margin">−14</td>
+<td class="gt_row gt_right" headers="Market Total">44.5</td>
+<td class="gt_row gt_right" headers="Blend Edge">−5.3%</td>
+<td class="gt_row gt_right" headers="Blend EV Units">−0.099</td>
+<td class="gt_row gt_right" headers="Market EV Units">0.099</td>
+<td class="gt_row gt_center" headers="Blend Beat Market?" style="background-color: #166534; color: #FFFFFF;">No</td>
+<td class="gt_row gt_center" headers="Market Winning?">Yes</td>
+<td class="gt_row gt_right" headers="Market Home Prob">87.2%</td>
+<td class="gt_row gt_right" headers="Blend Home Prob">81.9%</td>
+<td class="gt_row gt_right" headers="Market Away Prob">12.8%</td>
+<td class="gt_row gt_right" headers="Blend Away Prob">18.1%</td>
+<td class="gt_row gt_left" headers="Winner">NA</td></tr>
+<tr><td class="gt_row gt_center gt_striped" headers="Season">2025</td>
+<td class="gt_row gt_center gt_striped" headers="Week">6</td>
+<td class="gt_row gt_right gt_striped" headers="Date">2025-10-12</td>
+<td class="gt_row gt_left gt_striped" headers="Matchup">CLE @ PIT</td>
+<td class="gt_row gt_center gt_striped" headers="Blend Favorite">PIT</td><td class="gt_row gt_center gt_striped" headers="Blend Pick">PIT</td>
+<td class="gt_row gt_center gt_striped" headers="Blend Recommendation">Bet PIT moneyline</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Stake (Units)">0.054</td>
+<td class="gt_row gt_right gt_striped" headers="Market Home Moneyline">-278</td>
+<td class="gt_row gt_right gt_striped" headers="Market Away Moneyline">+225</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Home Moneyline (vig)">-380</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Away Moneyline (vig)">+314</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Pick Moneyline (vig)">-380</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Median Home Score">NA</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Median Away Score">NA</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Median Total">NA</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Median Margin">NA</td>
+<td class="gt_row gt_right gt_striped" headers="Market Home Spread">5.5</td>
+<td class="gt_row gt_right gt_striped" headers="Market Implied Margin">−5.5</td>
+<td class="gt_row gt_right gt_striped" headers="Market Total">37.5</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Edge">7.0%</td>
+<td class="gt_row gt_right gt_striped" headers="Blend EV Units">0.054</td>
+<td class="gt_row gt_right gt_striped" headers="Market EV Units">−0.054</td>
+<td class="gt_row gt_center gt_striped" headers="Blend Beat Market?" style="background-color: #374151; color: #FFFFFF;">Yes</td>
+<td class="gt_row gt_center gt_striped" headers="Market Winning?">No</td>
+<td class="gt_row gt_right gt_striped" headers="Market Home Prob">70.5%</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Home Prob">77.5%</td>
+<td class="gt_row gt_right gt_striped" headers="Market Away Prob">29.5%</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Away Prob">22.5%</td>
+<td class="gt_row gt_left gt_striped" headers="Winner">NA</td></tr>
+<tr><td class="gt_row gt_center" headers="Season">2025</td>
+<td class="gt_row gt_center" headers="Week">6</td>
+<td class="gt_row gt_right" headers="Date">2025-10-12</td>
+<td class="gt_row gt_left" headers="Matchup">DAL @ CAR</td>
+<td class="gt_row gt_center" headers="Blend Favorite">DAL</td><td class="gt_row gt_center" headers="Blend Pick">DAL</td>
+<td class="gt_row gt_center" headers="Blend Recommendation">Bet DAL moneyline</td>
+<td class="gt_row gt_right" headers="Blend Stake (Units)">0.003</td>
+<td class="gt_row gt_right" headers="Market Home Moneyline">+145</td>
+<td class="gt_row gt_right" headers="Market Away Moneyline">-175</td>
+<td class="gt_row gt_right" headers="Blend Home Moneyline (vig)">+161</td>
+<td class="gt_row gt_right" headers="Blend Away Moneyline (vig)">-195</td>
+<td class="gt_row gt_right" headers="Blend Pick Moneyline (vig)">-195</td>
+<td class="gt_row gt_right" headers="Blend Median Home Score">NA</td>
+<td class="gt_row gt_right" headers="Blend Median Away Score">NA</td>
+<td class="gt_row gt_right" headers="Blend Median Total">NA</td>
+<td class="gt_row gt_right" headers="Blend Median Margin">NA</td>
+<td class="gt_row gt_right" headers="Market Home Spread">−3</td>
+<td class="gt_row gt_right" headers="Market Implied Margin">3</td>
+<td class="gt_row gt_right" headers="Market Total">47.5</td>
+<td class="gt_row gt_right" headers="Blend Edge">2.9%</td>
+<td class="gt_row gt_right" headers="Blend EV Units">0.003</td>
+<td class="gt_row gt_right" headers="Market EV Units">−0.003</td>
+<td class="gt_row gt_center" headers="Blend Beat Market?" style="background-color: #374151; color: #FFFFFF;">Yes</td>
+<td class="gt_row gt_center" headers="Market Winning?">No</td>
+<td class="gt_row gt_right" headers="Market Home Prob">39.1%</td>
+<td class="gt_row gt_right" headers="Blend Home Prob">36.2%</td>
+<td class="gt_row gt_right" headers="Market Away Prob">60.9%</td>
+<td class="gt_row gt_right" headers="Blend Away Prob">63.8%</td>
+<td class="gt_row gt_left" headers="Winner">NA</td></tr>
+<tr><td class="gt_row gt_center gt_striped" headers="Season">2025</td>
+<td class="gt_row gt_center gt_striped" headers="Week">6</td>
+<td class="gt_row gt_right gt_striped" headers="Date">2025-10-12</td>
+<td class="gt_row gt_left gt_striped" headers="Matchup">DEN @ NYJ</td>
+<td class="gt_row gt_center gt_striped" headers="Blend Favorite">DEN</td><td class="gt_row gt_center gt_striped" headers="Blend Pick">—</td>
+<td class="gt_row gt_center gt_striped" headers="Blend Recommendation">Pass</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Stake (Units)">0.000</td>
+<td class="gt_row gt_right gt_striped" headers="Market Home Moneyline">+310</td>
+<td class="gt_row gt_right gt_striped" headers="Market Away Moneyline">-395</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Home Moneyline (vig)">+305</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Away Moneyline (vig)">-370</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Pick Moneyline (vig)">-370</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Median Home Score">NA</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Median Away Score">NA</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Median Total">NA</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Median Margin">NA</td>
+<td class="gt_row gt_right gt_striped" headers="Market Home Spread">−7.5</td>
+<td class="gt_row gt_right gt_striped" headers="Market Implied Margin">7.5</td>
+<td class="gt_row gt_right gt_striped" headers="Market Total">43.5</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Edge">0.5%</td>
+<td class="gt_row gt_right gt_striped" headers="Blend EV Units">−0.034</td>
+<td class="gt_row gt_right gt_striped" headers="Market EV Units">0.034</td>
+<td class="gt_row gt_center gt_striped" headers="Blend Beat Market?" style="background-color: #166534; color: #FFFFFF;">No</td>
+<td class="gt_row gt_center gt_striped" headers="Market Winning?">Yes</td>
+<td class="gt_row gt_right gt_striped" headers="Market Home Prob">23.4%</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Home Prob">22.9%</td>
+<td class="gt_row gt_right gt_striped" headers="Market Away Prob">76.6%</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Away Prob">77.1%</td>
+<td class="gt_row gt_left gt_striped" headers="Winner">NA</td></tr>
+<tr><td class="gt_row gt_center" headers="Season">2025</td>
+<td class="gt_row gt_center" headers="Week">6</td>
+<td class="gt_row gt_right" headers="Date">2025-10-12</td>
+<td class="gt_row gt_left" headers="Matchup">DET @ KC</td>
+<td class="gt_row gt_center" headers="Blend Favorite">KC</td><td class="gt_row gt_center" headers="Blend Pick">—</td>
+<td class="gt_row gt_center" headers="Blend Recommendation">Pass</td>
+<td class="gt_row gt_right" headers="Blend Stake (Units)">0.000</td>
+<td class="gt_row gt_right" headers="Market Home Moneyline">-142</td>
+<td class="gt_row gt_right" headers="Market Away Moneyline">+120</td>
+<td class="gt_row gt_right" headers="Blend Home Moneyline (vig)">-131</td>
+<td class="gt_row gt_right" headers="Blend Away Moneyline (vig)">+108</td>
+<td class="gt_row gt_right" headers="Blend Pick Moneyline (vig)">-131</td>
+<td class="gt_row gt_right" headers="Blend Median Home Score">NA</td>
+<td class="gt_row gt_right" headers="Blend Median Away Score">NA</td>
+<td class="gt_row gt_right" headers="Blend Median Total">NA</td>
+<td class="gt_row gt_right" headers="Blend Median Margin">NA</td>
+<td class="gt_row gt_right" headers="Market Home Spread">2.5</td>
+<td class="gt_row gt_right" headers="Market Implied Margin">−2.5</td>
+<td class="gt_row gt_right" headers="Market Total">51.5</td>
+<td class="gt_row gt_right" headers="Blend Edge">−2.1%</td>
+<td class="gt_row gt_right" headers="Blend EV Units">−0.076</td>
+<td class="gt_row gt_right" headers="Market EV Units">0.076</td>
+<td class="gt_row gt_center" headers="Blend Beat Market?" style="background-color: #166534; color: #FFFFFF;">No</td>
+<td class="gt_row gt_center" headers="Market Winning?">Yes</td>
+<td class="gt_row gt_right" headers="Market Home Prob">56.3%</td>
+<td class="gt_row gt_right" headers="Blend Home Prob">54.2%</td>
+<td class="gt_row gt_right" headers="Market Away Prob">43.7%</td>
+<td class="gt_row gt_right" headers="Blend Away Prob">45.8%</td>
+<td class="gt_row gt_left" headers="Winner">NA</td></tr>
+<tr><td class="gt_row gt_center gt_striped" headers="Season">2025</td>
+<td class="gt_row gt_center gt_striped" headers="Week">6</td>
+<td class="gt_row gt_right gt_striped" headers="Date">2025-10-12</td>
+<td class="gt_row gt_left gt_striped" headers="Matchup">LA @ BAL</td>
+<td class="gt_row gt_center gt_striped" headers="Blend Favorite">LA</td><td class="gt_row gt_center gt_striped" headers="Blend Pick">—</td>
+<td class="gt_row gt_center gt_striped" headers="Blend Recommendation">Pass</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Stake (Units)">0.000</td>
+<td class="gt_row gt_right gt_striped" headers="Market Home Moneyline">+280</td>
+<td class="gt_row gt_right gt_striped" headers="Market Away Moneyline">-355</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Home Moneyline (vig)">+179</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Away Moneyline (vig)">-217</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Pick Moneyline (vig)">-217</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Median Home Score">NA</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Median Away Score">NA</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Median Total">NA</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Median Margin">NA</td>
+<td class="gt_row gt_right gt_striped" headers="Market Home Spread">−7</td>
+<td class="gt_row gt_right gt_striped" headers="Market Implied Margin">7</td>
+<td class="gt_row gt_right gt_striped" headers="Market Total">43.5</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Edge">−8.4%</td>
+<td class="gt_row gt_right gt_striped" headers="Blend EV Units">−0.149</td>
+<td class="gt_row gt_right gt_striped" headers="Market EV Units">0.149</td>
+<td class="gt_row gt_center gt_striped" headers="Blend Beat Market?" style="background-color: #166534; color: #FFFFFF;">No</td>
+<td class="gt_row gt_center gt_striped" headers="Market Winning?">Yes</td>
+<td class="gt_row gt_right gt_striped" headers="Market Home Prob">25.2%</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Home Prob">33.6%</td>
+<td class="gt_row gt_right gt_striped" headers="Market Away Prob">74.8%</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Away Prob">66.4%</td>
+<td class="gt_row gt_left gt_striped" headers="Winner">NA</td></tr>
+<tr><td class="gt_row gt_center" headers="Season">2025</td>
+<td class="gt_row gt_center" headers="Week">6</td>
+<td class="gt_row gt_right" headers="Date">2025-10-12</td>
+<td class="gt_row gt_left" headers="Matchup">LAC @ MIA</td>
+<td class="gt_row gt_center" headers="Blend Favorite">LAC</td><td class="gt_row gt_center" headers="Blend Pick">—</td>
+<td class="gt_row gt_center" headers="Blend Recommendation">Pass</td>
+<td class="gt_row gt_right" headers="Blend Stake (Units)">0.000</td>
+<td class="gt_row gt_right" headers="Market Home Moneyline">+170</td>
+<td class="gt_row gt_right" headers="Market Away Moneyline">-205</td>
+<td class="gt_row gt_right" headers="Blend Home Moneyline (vig)">+149</td>
+<td class="gt_row gt_right" headers="Blend Away Moneyline (vig)">-180</td>
+<td class="gt_row gt_right" headers="Blend Pick Moneyline (vig)">-180</td>
+<td class="gt_row gt_right" headers="Blend Median Home Score">NA</td>
+<td class="gt_row gt_right" headers="Blend Median Away Score">NA</td>
+<td class="gt_row gt_right" headers="Blend Median Total">NA</td>
+<td class="gt_row gt_right" headers="Blend Median Margin">NA</td>
+<td class="gt_row gt_right" headers="Market Home Spread">−3.5</td>
+<td class="gt_row gt_right" headers="Market Implied Margin">3.5</td>
+<td class="gt_row gt_right" headers="Market Total">45.5</td>
+<td class="gt_row gt_right" headers="Blend Edge">−2.3%</td>
+<td class="gt_row gt_right" headers="Blend EV Units">−0.075</td>
+<td class="gt_row gt_right" headers="Market EV Units">0.075</td>
+<td class="gt_row gt_center" headers="Blend Beat Market?" style="background-color: #166534; color: #FFFFFF;">No</td>
+<td class="gt_row gt_center" headers="Market Winning?">Yes</td>
+<td class="gt_row gt_right" headers="Market Home Prob">35.5%</td>
+<td class="gt_row gt_right" headers="Blend Home Prob">37.8%</td>
+<td class="gt_row gt_right" headers="Market Away Prob">64.5%</td>
+<td class="gt_row gt_right" headers="Blend Away Prob">62.2%</td>
+<td class="gt_row gt_left" headers="Winner">NA</td></tr>
+<tr><td class="gt_row gt_center gt_striped" headers="Season">2025</td>
+<td class="gt_row gt_center gt_striped" headers="Week">6</td>
+<td class="gt_row gt_right gt_striped" headers="Date">2025-10-12</td>
+<td class="gt_row gt_left gt_striped" headers="Matchup">NE @ NO</td>
+<td class="gt_row gt_center gt_striped" headers="Blend Favorite">NE</td><td class="gt_row gt_center gt_striped" headers="Blend Pick">—</td>
+<td class="gt_row gt_center gt_striped" headers="Blend Recommendation">Pass</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Stake (Units)">0.000</td>
+<td class="gt_row gt_right gt_striped" headers="Market Home Moneyline">+160</td>
+<td class="gt_row gt_right gt_striped" headers="Market Away Moneyline">-192</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Home Moneyline (vig)">+158</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Away Moneyline (vig)">-191</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Pick Moneyline (vig)">-191</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Median Home Score">NA</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Median Away Score">NA</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Median Total">NA</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Median Margin">NA</td>
+<td class="gt_row gt_right gt_striped" headers="Market Home Spread">−3.5</td>
+<td class="gt_row gt_right gt_striped" headers="Market Implied Margin">3.5</td>
+<td class="gt_row gt_right gt_striped" headers="Market Total">46.5</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Edge">0.4%</td>
+<td class="gt_row gt_right gt_striped" headers="Blend EV Units">−0.035</td>
+<td class="gt_row gt_right gt_striped" headers="Market EV Units">0.035</td>
+<td class="gt_row gt_center gt_striped" headers="Blend Beat Market?" style="background-color: #166534; color: #FFFFFF;">No</td>
+<td class="gt_row gt_center gt_striped" headers="Market Winning?">Yes</td>
+<td class="gt_row gt_right gt_striped" headers="Market Home Prob">36.9%</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Home Prob">36.5%</td>
+<td class="gt_row gt_right gt_striped" headers="Market Away Prob">63.1%</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Away Prob">63.5%</td>
+<td class="gt_row gt_left gt_striped" headers="Winner">NA</td></tr>
+<tr><td class="gt_row gt_center" headers="Season">2025</td>
+<td class="gt_row gt_center" headers="Week">6</td>
+<td class="gt_row gt_right" headers="Date">2025-10-12</td>
+<td class="gt_row gt_left" headers="Matchup">SEA @ JAX</td>
+<td class="gt_row gt_center" headers="Blend Favorite">SEA</td><td class="gt_row gt_center" headers="Blend Pick">SEA</td>
+<td class="gt_row gt_center" headers="Blend Recommendation">Bet SEA moneyline</td>
+<td class="gt_row gt_right" headers="Blend Stake (Units)">0.069</td>
+<td class="gt_row gt_right" headers="Market Home Moneyline">-105</td>
+<td class="gt_row gt_right" headers="Market Away Moneyline">-115</td>
+<td class="gt_row gt_right" headers="Blend Home Moneyline (vig)">+122</td>
+<td class="gt_row gt_right" headers="Blend Away Moneyline (vig)">-147</td>
+<td class="gt_row gt_right" headers="Blend Pick Moneyline (vig)">-147</td>
+<td class="gt_row gt_right" headers="Blend Median Home Score">NA</td>
+<td class="gt_row gt_right" headers="Blend Median Away Score">NA</td>
+<td class="gt_row gt_right" headers="Blend Median Total">NA</td>
+<td class="gt_row gt_right" headers="Blend Median Margin">NA</td>
+<td class="gt_row gt_right" headers="Market Home Spread">−1.5</td>
+<td class="gt_row gt_right" headers="Market Implied Margin">1.5</td>
+<td class="gt_row gt_right" headers="Market Total">47.5</td>
+<td class="gt_row gt_right" headers="Blend Edge">6.1%</td>
+<td class="gt_row gt_right" headers="Blend EV Units">0.069</td>
+<td class="gt_row gt_right" headers="Market EV Units">−0.069</td>
+<td class="gt_row gt_center" headers="Blend Beat Market?" style="background-color: #374151; color: #FFFFFF;">Yes</td>
+<td class="gt_row gt_center" headers="Market Winning?">No</td>
+<td class="gt_row gt_right" headers="Market Home Prob">48.9%</td>
+<td class="gt_row gt_right" headers="Blend Home Prob">42.8%</td>
+<td class="gt_row gt_right" headers="Market Away Prob">51.1%</td>
+<td class="gt_row gt_right" headers="Blend Away Prob">57.2%</td>
+<td class="gt_row gt_left" headers="Winner">NA</td></tr>
+<tr><td class="gt_row gt_center gt_striped" headers="Season">2025</td>
+<td class="gt_row gt_center gt_striped" headers="Week">6</td>
+<td class="gt_row gt_right gt_striped" headers="Date">2025-10-12</td>
+<td class="gt_row gt_left gt_striped" headers="Matchup">SF @ TB</td>
+<td class="gt_row gt_center gt_striped" headers="Blend Favorite">TB</td><td class="gt_row gt_center gt_striped" headers="Blend Pick">TB</td>
+<td class="gt_row gt_center gt_striped" headers="Blend Recommendation">Bet TB moneyline</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Stake (Units)">0.024</td>
+<td class="gt_row gt_right gt_striped" headers="Market Home Moneyline">-192</td>
+<td class="gt_row gt_right gt_striped" headers="Market Away Moneyline">+160</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Home Moneyline (vig)">-227</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Away Moneyline (vig)">+187</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Pick Moneyline (vig)">-227</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Median Home Score">NA</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Median Away Score">NA</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Median Total">NA</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Median Margin">NA</td>
+<td class="gt_row gt_right gt_striped" headers="Market Home Spread">3.5</td>
+<td class="gt_row gt_right gt_striped" headers="Market Implied Margin">−3.5</td>
+<td class="gt_row gt_right gt_striped" headers="Market Total">46.5</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Edge">4.2%</td>
+<td class="gt_row gt_right gt_striped" headers="Blend EV Units">0.024</td>
+<td class="gt_row gt_right gt_striped" headers="Market EV Units">−0.024</td>
+<td class="gt_row gt_center gt_striped" headers="Blend Beat Market?" style="background-color: #374151; color: #FFFFFF;">Yes</td>
+<td class="gt_row gt_center gt_striped" headers="Market Winning?">No</td>
+<td class="gt_row gt_right gt_striped" headers="Market Home Prob">63.1%</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Home Prob">67.3%</td>
+<td class="gt_row gt_right gt_striped" headers="Market Away Prob">36.9%</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Away Prob">32.7%</td>
+<td class="gt_row gt_left gt_striped" headers="Winner">NA</td></tr>
+<tr><td class="gt_row gt_center" headers="Season">2025</td>
+<td class="gt_row gt_center" headers="Week">6</td>
+<td class="gt_row gt_right" headers="Date">2025-10-12</td>
+<td class="gt_row gt_left" headers="Matchup">TEN @ LV</td>
+<td class="gt_row gt_center" headers="Blend Favorite">LV</td><td class="gt_row gt_center" headers="Blend Pick">—</td>
+<td class="gt_row gt_center" headers="Blend Recommendation">Pass</td>
+<td class="gt_row gt_right" headers="Blend Stake (Units)">0.000</td>
+<td class="gt_row gt_right" headers="Market Home Moneyline">-185</td>
+<td class="gt_row gt_right" headers="Market Away Moneyline">+154</td>
+<td class="gt_row gt_right" headers="Blend Home Moneyline (vig)">-160</td>
+<td class="gt_row gt_right" headers="Blend Away Moneyline (vig)">+132</td>
+<td class="gt_row gt_right" headers="Blend Pick Moneyline (vig)">-160</td>
+<td class="gt_row gt_right" headers="Blend Median Home Score">NA</td>
+<td class="gt_row gt_right" headers="Blend Median Away Score">NA</td>
+<td class="gt_row gt_right" headers="Blend Median Total">NA</td>
+<td class="gt_row gt_right" headers="Blend Median Margin">NA</td>
+<td class="gt_row gt_right" headers="Market Home Spread">3.5</td>
+<td class="gt_row gt_right" headers="Market Implied Margin">−3.5</td>
+<td class="gt_row gt_right" headers="Market Total">41.5</td>
+<td class="gt_row gt_right" headers="Blend Edge">−3.0%</td>
+<td class="gt_row gt_right" headers="Blend EV Units">−0.088</td>
+<td class="gt_row gt_right" headers="Market EV Units">0.088</td>
+<td class="gt_row gt_center" headers="Blend Beat Market?" style="background-color: #166534; color: #FFFFFF;">No</td>
+<td class="gt_row gt_center" headers="Market Winning?">Yes</td>
+<td class="gt_row gt_right" headers="Market Home Prob">62.2%</td>
+<td class="gt_row gt_right" headers="Blend Home Prob">59.2%</td>
+<td class="gt_row gt_right" headers="Market Away Prob">37.8%</td>
+<td class="gt_row gt_right" headers="Blend Away Prob">40.8%</td>
+<td class="gt_row gt_left" headers="Winner">NA</td></tr>
+<tr><td class="gt_row gt_center gt_striped" headers="Season">2025</td>
+<td class="gt_row gt_center gt_striped" headers="Week">6</td>
+<td class="gt_row gt_right gt_striped" headers="Date">2025-10-13</td>
+<td class="gt_row gt_left gt_striped" headers="Matchup">BUF @ ATL</td>
+<td class="gt_row gt_center gt_striped" headers="Blend Favorite">BUF</td><td class="gt_row gt_center gt_striped" headers="Blend Pick">BUF</td>
+<td class="gt_row gt_center gt_striped" headers="Blend Recommendation">Bet BUF moneyline</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Stake (Units)">0.009</td>
+<td class="gt_row gt_right gt_striped" headers="Market Home Moneyline">+170</td>
+<td class="gt_row gt_right gt_striped" headers="Market Away Moneyline">-205</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Home Moneyline (vig)">+192</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Away Moneyline (vig)">-232</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Pick Moneyline (vig)">-232</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Median Home Score">NA</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Median Away Score">NA</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Median Total">NA</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Median Margin">NA</td>
+<td class="gt_row gt_right gt_striped" headers="Market Home Spread">−3.5</td>
+<td class="gt_row gt_right gt_striped" headers="Market Implied Margin">3.5</td>
+<td class="gt_row gt_right gt_striped" headers="Market Total">49.5</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Edge">3.3%</td>
+<td class="gt_row gt_right gt_striped" headers="Blend EV Units">0.009</td>
+<td class="gt_row gt_right gt_striped" headers="Market EV Units">−0.009</td>
+<td class="gt_row gt_center gt_striped" headers="Blend Beat Market?" style="background-color: #374151; color: #FFFFFF;">Yes</td>
+<td class="gt_row gt_center gt_striped" headers="Market Winning?">No</td>
+<td class="gt_row gt_right gt_striped" headers="Market Home Prob">35.5%</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Home Prob">32.2%</td>
+<td class="gt_row gt_right gt_striped" headers="Market Away Prob">64.5%</td>
+<td class="gt_row gt_right gt_striped" headers="Blend Away Prob">67.8%</td>
+<td class="gt_row gt_left gt_striped" headers="Winner">NA</td></tr>
+<tr><td class="gt_row gt_center" headers="Season">2025</td>
+<td class="gt_row gt_center" headers="Week">6</td>
+<td class="gt_row gt_right" headers="Date">2025-10-13</td>
+<td class="gt_row gt_left" headers="Matchup">CHI @ WAS</td>
+<td class="gt_row gt_center" headers="Blend Favorite">WAS</td><td class="gt_row gt_center" headers="Blend Pick">—</td>
+<td class="gt_row gt_center" headers="Blend Recommendation">Pass</td>
+<td class="gt_row gt_right" headers="Blend Stake (Units)">0.000</td>
+<td class="gt_row gt_right" headers="Market Home Moneyline">-258</td>
+<td class="gt_row gt_right" headers="Market Away Moneyline">+210</td>
+<td class="gt_row gt_right" headers="Blend Home Moneyline (vig)">-220</td>
+<td class="gt_row gt_right" headers="Blend Away Moneyline (vig)">+182</td>
+<td class="gt_row gt_right" headers="Blend Pick Moneyline (vig)">-220</td>
+<td class="gt_row gt_right" headers="Blend Median Home Score">NA</td>
+<td class="gt_row gt_right" headers="Blend Median Away Score">NA</td>
+<td class="gt_row gt_right" headers="Blend Median Total">NA</td>
+<td class="gt_row gt_right" headers="Blend Median Margin">NA</td>
+<td class="gt_row gt_right" headers="Market Home Spread">5.5</td>
+<td class="gt_row gt_right" headers="Market Implied Margin">−5.5</td>
+<td class="gt_row gt_right" headers="Market Total">49.5</td>
+<td class="gt_row gt_right" headers="Blend Edge">−2.4%</td>
+<td class="gt_row gt_right" headers="Blend EV Units">−0.075</td>
+<td class="gt_row gt_right" headers="Market EV Units">0.075</td>
+<td class="gt_row gt_center" headers="Blend Beat Market?" style="background-color: #166534; color: #FFFFFF;">No</td>
+<td class="gt_row gt_center" headers="Market Winning?">Yes</td>
+<td class="gt_row gt_right" headers="Market Home Prob">69.1%</td>
+<td class="gt_row gt_right" headers="Blend Home Prob">66.6%</td>
+<td class="gt_row gt_right" headers="Market Away Prob">30.9%</td>
+<td class="gt_row gt_right" headers="Blend Away Prob">33.4%</td>
+<td class="gt_row gt_left" headers="Winner">NA</td></tr>
+</tbody>
 </table>
 </div>
+</div>
+</section>
+</main>
 </body>
 </html>
