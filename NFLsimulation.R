@@ -614,14 +614,26 @@ if (!exists("build_moneyline_comparison_table", inherits = FALSE)) {
         ~ paste0(.x, "_sched"),
         -dplyr::all_of(join_cols)
       )
-  
-    combined <- scores %>%
+
+    scores_collapsed <- collapse_by_keys_relaxed(
+      scores,
+      keys = join_cols,
+      label = "Moneyline score table"
+    )
+
+    scores_ready <- scores_collapsed %>%
       ensure_score_defaults() %>%
       dplyr::mutate(
         blend_home_prob = dplyr::coalesce(blend_home_prob, model_prob),
         market_home_prob = dplyr::coalesce(market_home_prob, market_prob)
-      ) %>%
-      dplyr::inner_join(schedule_context, by = join_cols) %>%
+      )
+
+    join_args <- list(x = scores_ready, y = schedule_context, by = join_cols)
+    if ("relationship" %in% names(formals(dplyr::inner_join))) {
+      join_args$relationship <- "many-to-one"
+    }
+
+    combined <- rlang::exec(dplyr::inner_join, !!!join_args) %>%
       ensure_schedule_defaults() %>%
       dplyr::mutate(
         market_home_ml = market_home_ml_sched,
@@ -660,27 +672,27 @@ if (!exists("build_moneyline_comparison_table", inherits = FALSE)) {
           NA_character_,
           paste(away_team, "@", home_team)
         ),
-      blend_home_prob = clamp_probability(blend_home_prob),
-      blend_away_prob = clamp_probability(1 - blend_home_prob),
-      market_home_prob = clamp_probability(market_home_prob),
-      market_away_prob = clamp_probability(1 - market_home_prob),
-      market_home_spread = coerce_numeric_safely(market_home_spread),
-      market_total_line = coerce_numeric_safely(market_total_line),
-      blend_median_margin = dplyr::if_else(
-        is.na(blend_home_median) | is.na(blend_away_median),
-        NA_real_,
-        blend_home_median - blend_away_median
-      ),
-      market_implied_margin = dplyr::if_else(
-        is.na(market_home_spread),
-        NA_real_,
-        -market_home_spread
-      ),
-      market_total = market_total_line,
-      market_home_ml = dplyr::if_else(
-        is.na(market_home_ml),
-        probability_to_american(market_home_prob),
-        market_home_ml
+        blend_home_prob = clamp_probability(blend_home_prob),
+        blend_away_prob = clamp_probability(1 - blend_home_prob),
+        market_home_prob = clamp_probability(market_home_prob),
+        market_away_prob = clamp_probability(1 - market_home_prob),
+        market_home_spread = coerce_numeric_safely(market_home_spread),
+        market_total_line = coerce_numeric_safely(market_total_line),
+        blend_median_margin = dplyr::if_else(
+          is.na(blend_home_median) | is.na(blend_away_median),
+          NA_real_,
+          blend_home_median - blend_away_median
+        ),
+        market_implied_margin = dplyr::if_else(
+          is.na(market_home_spread),
+          NA_real_,
+          -market_home_spread
+        ),
+        market_total = market_total_line,
+        market_home_ml = dplyr::if_else(
+          is.na(market_home_ml),
+          probability_to_american(market_home_prob),
+          market_home_ml
         ),
         market_away_ml = dplyr::if_else(
           is.na(market_away_ml),
