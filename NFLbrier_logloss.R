@@ -10,6 +10,75 @@ if (!exists("PREDICTION_JOIN_KEYS", inherits = FALSE)) {
   PREDICTION_JOIN_KEYS <- names(JOIN_KEY_ALIASES)
 }
 
+if (!exists("first_non_missing_typed", inherits = FALSE)) {
+  first_non_missing_typed <- function(x) {
+    if (!length(x)) {
+      return(x)
+    }
+    valid_idx <- if (is.numeric(x)) {
+      which(is.finite(x))
+    } else {
+      which(!is.na(x))
+    }
+    if (!length(valid_idx)) {
+      return(x[NA_integer_])
+    }
+    x[[valid_idx[1L]]]
+  }
+}
+
+dedupe_by_keys <- function(df, keys, label) {
+  if (is.null(df) || !inherits(df, "data.frame") || !nrow(df) || !length(keys)) {
+    return(df)
+  }
+
+  missing_keys <- setdiff(keys, names(df))
+  if (length(missing_keys)) {
+    warning(sprintf(
+      "%s: unable to deduplicate because required keys are missing: %s",
+      label,
+      paste(missing_keys, collapse = ", ")
+    ))
+    return(df)
+  }
+
+  complete_df <- df[stats::complete.cases(df[keys]), , drop = FALSE]
+  dup <- complete_df %>%
+    dplyr::count(dplyr::across(dplyr::all_of(keys))) %>%
+    dplyr::filter(.data$n > 1L)
+
+  if (!nrow(dup)) {
+    return(df)
+  }
+
+  message(sprintf(
+    "%s: collapsing %d duplicate rows keyed by %s for join stability.",
+    label,
+    nrow(dup),
+    paste(keys, collapse = ", ")
+  ))
+
+  non_key_cols <- setdiff(names(complete_df), keys)
+
+  collapsed <- complete_df %>%
+    dplyr::group_by(dplyr::across(dplyr::all_of(keys))) %>%
+    dplyr::summarise(
+      dplyr::across(
+        dplyr::all_of(non_key_cols),
+        ~ first_non_missing_typed(.x),
+        .names = "{.col}"
+      ),
+      .groups = "drop"
+    )
+
+  remainder <- df[!stats::complete.cases(df[keys]), , drop = FALSE]
+
+  out <- dplyr::bind_rows(collapsed, remainder) %>%
+    dplyr::arrange(dplyr::across(dplyr::all_of(keys)))
+
+  out
+}
+
 if (!exists("standardize_join_keys", inherits = FALSE)) {
   standardize_join_keys <- function(df, key_alias = JOIN_KEY_ALIASES) {
     if (is.null(df) || !inherits(df, "data.frame")) {
@@ -405,6 +474,7 @@ compare_to_market <- function(res,
   preds_comp <- tibble::as_tibble(preds_comp) %>%
     dplyr::filter(is.finite(p_model))
   preds_comp <- collapse_duplicates(preds_comp, dedupe_join_keys, "Model probability table")
+  preds_comp <- dedupe_by_keys(preds_comp, dedupe_join_keys, "Model probability table")
 
   mkt_tbl <- mkt_tbl %>%
     dplyr::transmute(game_id, season, week, p_home_mkt_2w = .clamp01(p_home_mkt_2w))
@@ -412,6 +482,7 @@ compare_to_market <- function(res,
   mkt_tbl <- tibble::as_tibble(mkt_tbl) %>%
     dplyr::filter(is.finite(p_home_mkt_2w))
   mkt_tbl <- collapse_duplicates(mkt_tbl, dedupe_join_keys, "Market probability table")
+  mkt_tbl <- dedupe_by_keys(mkt_tbl, dedupe_join_keys, "Market probability table")
 
   outcomes <- outcomes %>%
     dplyr::transmute(game_id, season, week, y2)
@@ -429,6 +500,7 @@ compare_to_market <- function(res,
   }
 
   outcomes <- collapse_duplicates(outcomes, dedupe_join_keys, "Outcome table")
+  outcomes <- dedupe_by_keys(outcomes, dedupe_join_keys, "Outcome table")
 
   mkt_tbl <- standardize_join_keys(mkt_tbl)
   outcomes <- standardize_join_keys(outcomes)
@@ -514,6 +586,7 @@ compare_to_market <- function(res,
       .groups = "drop"
     ) %>%
     dplyr::arrange(season, week)
+  wk_stats <- dedupe_by_keys(wk_stats, c("season", "week"), "Week summary table")
   
   overall <- tibble::tibble(
     model_Brier2 = mean(comp$b_model, na.rm = TRUE),
@@ -793,6 +866,7 @@ compare_to_market <- function(res,
         p_peer = .clamp01(as.numeric(.data[[prob_col]]))
       ) %>%
       dplyr::filter(!is.na(model), is.finite(p_peer))
+    peers_clean <- dedupe_by_keys(peers_clean, c("model", "game_id", "season", "week"), "Peer probability table")
 
     base_comp <- comp %>%
       dplyr::select(game_id, season, week, y2, p_mkt, b_mkt, ll_mkt,
