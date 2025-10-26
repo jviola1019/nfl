@@ -156,9 +156,79 @@ coerce_numeric_safely <- function(x) {
   suppressWarnings(as.numeric(x))
 }
 
+ensure_columns_with_defaults <- function(df, defaults) {
+  if (is.null(df)) {
+    df <- tibble::tibble()
+  }
+  if (!inherits(df, "data.frame")) {
+    df <- tibble::as_tibble(df)
+  }
+  missing <- setdiff(names(defaults), names(df))
+  if (!length(missing)) {
+    return(df)
+  }
+  for (col in missing) {
+    df[[col]] <- defaults[[col]]
+  }
+  df
+}
+
+SCORE_DEFAULTS <- list(
+  blend_home_prob = NA_real_,
+  market_home_prob = NA_real_,
+  home_team = NA_character_,
+  away_team = NA_character_,
+  game_date = as.Date(NA_character_),
+  blend_home_median = NA_real_,
+  blend_away_median = NA_real_,
+  blend_total_median = NA_real_,
+  blend_median_margin = NA_real_,
+  actual_winner = NA_character_
+)
+
+SCHEDULE_DEFAULTS <- list(
+  home_team_sched = NA_character_,
+  away_team_sched = NA_character_,
+  game_date_sched = as.Date(NA_character_),
+  market_home_ml_sched = NA_real_,
+  market_away_ml_sched = NA_real_,
+  blend_home_median_sched = NA_real_,
+  blend_away_median_sched = NA_real_,
+  blend_total_median_sched = NA_real_,
+  market_home_spread_sched = NA_real_,
+  market_total_line_sched = NA_real_,
+  winner_sched = NA_character_
+)
+
+ensure_score_defaults <- function(df) {
+  ensure_columns_with_defaults(df, SCORE_DEFAULTS)
+}
+
+ensure_schedule_defaults <- function(df) {
+  ensure_columns_with_defaults(df, SCHEDULE_DEFAULTS)
+}
+
 american_to_probability <- function(odds) {
   odds <- coerce_numeric_safely(odds)
-  ifelse(odds < 0, (-odds) / ((-odds) + 100), 100 / (odds + 100))
+  dplyr::case_when(
+    is.na(odds) ~ NA_real_,
+    !is.finite(odds) ~ NA_real_,
+    odds == 0 ~ NA_real_,
+    odds < 0 ~ (-odds) / ((-odds) + 100),
+    TRUE ~ 100 / (odds + 100)
+  )
+}
+
+american_to_decimal <- function(odds) {
+  odds <- coerce_numeric_safely(odds)
+  dec <- rep(NA_real_, length(odds))
+  valid <- is.finite(odds) & odds != 0
+  neg_mask <- valid & odds < 0
+  pos_mask <- valid & odds > 0
+  dec[neg_mask] <- 1 + 100 / abs(odds[neg_mask])
+  dec[pos_mask] <- 1 + odds[pos_mask] / 100
+  dec[!valid] <- NA_real_
+  dec
 }
 
 clamp_probability <- function(p, eps = 1e-06) {
@@ -169,10 +239,10 @@ clamp_probability <- function(p, eps = 1e-06) {
 
 probability_to_american <- function(prob) {
   prob <- clamp_probability(prob)
-  dplyr::if_else(
-    prob >= 0.5,
-    -round(100 * prob / (1 - prob)),
-    round(100 * (1 - prob) / prob)
+  dplyr::case_when(
+    is.na(prob) ~ NA_real_,
+    prob >= 0.5 ~ -round(100 * prob / (1 - prob)),
+    TRUE ~ round(100 * (1 - prob) / prob)
   )
 }
 
@@ -181,28 +251,32 @@ apply_moneyline_vig <- function(odds, vig = 0.10) {
   vig <- coerce_numeric_safely(vig)
   vig[is.na(vig)] <- 0
   dplyr::case_when(
+    is.na(odds) ~ NA_real_,
     !is.finite(odds) ~ NA_real_,
-    odds < 0        ~ -as.numeric(round(abs(odds) * (1 + vig))),
-    TRUE            ~ as.numeric(round(odds / (1 + vig)))
+    odds == 0 ~ NA_real_,
+    odds < 0 ~ -as.numeric(round(abs(odds) * (1 + vig))),
+    TRUE ~ as.numeric(round(odds / (1 + vig)))
   )
 }
 
 expected_value_units <- function(prob, odds) {
   prob <- clamp_probability(prob)
-  odds <- coerce_numeric_safely(odds)
-  dec <- dplyr::if_else(
-    odds < 0,
-    1 + 100 / abs(odds),
-    1 + odds / 100
-  )
-  prob * (dec - 1) - (1 - prob)
+  dec <- american_to_decimal(odds)
+  b <- dec - 1
+  out <- prob * b - (1 - prob)
+  invalid <- is.na(prob) | is.na(dec) | !is.finite(dec) | b <= 0
+  out[invalid] <- NA_real_
+  out
 }
 
 devig_two_way_probabilities <- function(p_home_raw, p_away_raw) {
+  p_home_raw <- coerce_numeric_safely(p_home_raw)
+  p_away_raw <- coerce_numeric_safely(p_away_raw)
   total <- p_home_raw + p_away_raw
+  valid <- is.finite(total) & total > 0
   tibble::tibble(
-    p_home = dplyr::if_else(total > 0, p_home_raw / total, NA_real_),
-    p_away = dplyr::if_else(total > 0, p_away_raw / total, NA_real_)
+    p_home = dplyr::if_else(valid, p_home_raw / total, NA_real_),
+    p_away = dplyr::if_else(valid, p_away_raw / total, NA_real_)
   )
 }
 
@@ -807,51 +881,6 @@ build_moneyline_comparison_table <- function(market_comparison_result,
     join_args$relationship <- "many-to-one"
   }
 
-  schedule_defaults <- list(
-    home_team_sched = NA_character_,
-    away_team_sched = NA_character_,
-    game_date_sched = as.Date(NA_character_),
-    market_home_ml_sched = NA_real_,
-    market_away_ml_sched = NA_real_,
-    blend_home_median_sched = NA_real_,
-    blend_away_median_sched = NA_real_,
-    blend_total_median_sched = NA_real_,
-    market_home_spread_sched = NA_real_,
-    market_total_line_sched = NA_real_,
-    winner_sched = NA_character_
-  )
-
-  ensure_schedule_defaults <- function(df) {
-    for (col in names(schedule_defaults)) {
-      if (!col %in% names(df)) {
-        df[[col]] <- schedule_defaults[[col]]
-      }
-    }
-    df
-  }
-
-  score_defaults <- list(
-    blend_home_prob = NA_real_,
-    market_home_prob = NA_real_,
-    home_team = NA_character_,
-    away_team = NA_character_,
-    game_date = as.Date(NA_character_),
-    blend_home_median = NA_real_,
-    blend_away_median = NA_real_,
-    blend_total_median = NA_real_,
-    blend_median_margin = NA_real_,
-    actual_winner = NA_character_
-  )
-
-  ensure_score_defaults <- function(df) {
-    for (col in names(score_defaults)) {
-      if (!col %in% names(df)) {
-        df[[col]] <- score_defaults[[col]]
-      }
-    }
-    df
-  }
-
   combined <- rlang::exec(dplyr::inner_join, !!!join_args) %>%
     ensure_schedule_defaults() %>%
     dplyr::mutate(
@@ -928,44 +957,82 @@ build_moneyline_comparison_table <- function(market_comparison_result,
       blend_ev_units_away = expected_value_units(blend_away_prob, market_away_ml),
       blend_favorite_side = dplyr::if_else(blend_home_prob >= blend_away_prob, "home", "away"),
       blend_favorite = dplyr::if_else(blend_favorite_side == "home", home_team, away_team),
-      market_moneyline = dplyr::if_else(
-        blend_favorite_side == "home",
-        market_home_ml,
-        market_away_ml
+      blend_best_ev = dplyr::case_when(
+        !is.na(blend_ev_units_home) | !is.na(blend_ev_units_away) ~ pmax(
+          dplyr::coalesce(blend_ev_units_home, -Inf),
+          dplyr::coalesce(blend_ev_units_away, -Inf)
+        ),
+        TRUE ~ NA_real_
+      ),
+      blend_best_ev = dplyr::if_else(
+        is.na(blend_best_ev) | blend_best_ev == -Inf,
+        NA_real_,
+        blend_best_ev
+      ),
+      blend_pick_side = dplyr::case_when(
+        is.na(blend_best_ev) ~ NA_character_,
+        blend_best_ev <= 0 ~ NA_character_,
+        dplyr::near(blend_best_ev, blend_ev_units_home) ~ "home",
+        dplyr::near(blend_best_ev, blend_ev_units_away) ~ "away",
+        TRUE ~ NA_character_
+      ),
+      blend_pick_side = dplyr::if_else(
+        is.na(blend_pick_side) & !is.na(blend_best_ev) & blend_best_ev > 0,
+        dplyr::if_else(
+          dplyr::coalesce(blend_ev_units_home, -Inf) >= dplyr::coalesce(blend_ev_units_away, -Inf),
+          "home",
+          "away"
+        ),
+        blend_pick_side
+      ),
+      blend_pick = dplyr::case_when(
+        blend_pick_side == "home" ~ home_team,
+        blend_pick_side == "away" ~ away_team,
+        TRUE ~ NA_character_
+      ),
+      blend_prob_pick = dplyr::case_when(
+        blend_pick_side == "home" ~ blend_home_prob,
+        blend_pick_side == "away" ~ blend_away_prob,
+        TRUE ~ NA_real_
+      ),
+      market_prob_pick = dplyr::case_when(
+        blend_pick_side == "home" ~ market_home_prob,
+        blend_pick_side == "away" ~ market_away_prob,
+        TRUE ~ NA_real_
+      ),
+      blend_moneyline = dplyr::case_when(
+        blend_pick_side == "home" ~ blend_home_ml,
+        blend_pick_side == "away" ~ blend_away_ml,
+        TRUE ~ NA_real_
+      ),
+      blend_moneyline_vig = dplyr::case_when(
+        blend_pick_side == "home" ~ blend_home_ml_vig,
+        blend_pick_side == "away" ~ blend_away_ml_vig,
+        TRUE ~ NA_real_
+      ),
+      market_moneyline = dplyr::case_when(
+        blend_pick_side == "home" ~ market_home_ml,
+        blend_pick_side == "away" ~ market_away_ml,
+        TRUE ~ NA_real_
       ),
       market_moneyline = dplyr::if_else(
-        is.na(market_moneyline),
+        is.na(market_moneyline) & !is.na(blend_pick_side),
         probability_to_american(
-          dplyr::if_else(blend_favorite_side == "home", market_home_prob, market_away_prob)
+          dplyr::case_when(
+            blend_pick_side == "home" ~ market_home_prob,
+            blend_pick_side == "away" ~ market_away_prob,
+            TRUE ~ NA_real_
+          )
         ),
         market_moneyline
       ),
-      blend_moneyline = dplyr::if_else(
-        blend_favorite_side == "home",
-        blend_home_ml,
-        blend_away_ml
+      blend_prob_fav = blend_prob_pick,
+      market_prob_fav = market_prob_pick,
+      blend_edge_prob = dplyr::case_when(
+        is.na(blend_prob_pick) | is.na(market_prob_pick) ~ NA_real_,
+        TRUE ~ blend_prob_pick - market_prob_pick
       ),
-      blend_moneyline_vig = dplyr::if_else(
-        blend_favorite_side == "home",
-        blend_home_ml_vig,
-        blend_away_ml_vig
-      ),
-      blend_prob_fav = dplyr::if_else(
-        blend_favorite_side == "home",
-        blend_home_prob,
-        blend_away_prob
-      ),
-      market_prob_fav = dplyr::if_else(
-        blend_favorite_side == "home",
-        market_home_prob,
-        market_away_prob
-      ),
-      blend_edge_prob = blend_prob_fav - market_prob_fav,
-      blend_ev_units = dplyr::if_else(
-        blend_favorite_side == "home",
-        blend_ev_units_home,
-        blend_ev_units_away
-      ),
+      blend_ev_units = blend_best_ev,
       blend_beats_market = dplyr::case_when(
         is.na(blend_ev_units) ~ NA,
         TRUE ~ blend_ev_units > 0
@@ -982,13 +1049,24 @@ build_moneyline_comparison_table <- function(market_comparison_result,
       ),
       blend_recommendation = dplyr::case_when(
         is.na(blend_ev_units) ~ "No play",
-        blend_ev_units > 0 ~ paste("Bet", blend_favorite, "moneyline"),
+        blend_ev_units > 0 ~ paste("Bet", blend_pick, "moneyline"),
         TRUE ~ "Pass"
       ),
+      blend_kelly_fraction = dplyr::case_when(
+        is.na(blend_pick_side) ~ NA_real_,
+        TRUE ~ {
+          dec <- american_to_decimal(market_moneyline)
+          b <- dec - 1
+          stake <- (blend_prob_pick * b - (1 - blend_prob_pick)) / b
+          invalid <- is.na(dec) | !is.finite(dec) | b <= 0 | is.na(stake)
+          stake[invalid] <- NA_real_
+          stake
+        }
+      ),
       blend_confidence = dplyr::case_when(
-        is.na(blend_ev_units) ~ NA_real_,
-        blend_ev_units < 0 ~ 0,
-        TRUE ~ blend_ev_units
+        is.na(blend_kelly_fraction) ~ NA_real_,
+        blend_kelly_fraction < 0 ~ 0,
+        TRUE ~ blend_kelly_fraction
       ),
       actual_winner = dplyr::case_when(
         is.na(actual_home_win) ~ actual_winner,
@@ -1010,6 +1088,7 @@ build_moneyline_comparison_table <- function(market_comparison_result,
       model_ev_units = blend_ev_units_home,
       market_beats_model = brier_market < brier_model
     ) %>%
+    dplyr::select(-blend_best_ev) %>%
     dplyr::arrange(season, week, game_date, matchup)
 
   combined
@@ -1082,7 +1161,7 @@ export_moneyline_comparison_html <- function(comparison_tbl,
   moneyline_cols <- c(
     "Blend Home Moneyline (vig)",
     "Blend Away Moneyline (vig)",
-    "Blend Favorite Moneyline (vig)"
+    "Blend Pick Moneyline (vig)"
   )
 
   format_moneyline_strings <- function(x) {
@@ -1102,11 +1181,12 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       Date = game_date,
       Matchup = matchup,
       `Blend Favorite` = blend_favorite,
+      `Blend Pick` = blend_pick,
       `Blend Recommendation` = blend_recommendation,
       `Blend Stake (Units)` = blend_confidence,
       `Blend Home Moneyline (vig)` = blend_home_ml_vig,
       `Blend Away Moneyline (vig)` = blend_away_ml_vig,
-      `Blend Favorite Moneyline (vig)` = blend_moneyline_vig,
+      `Blend Pick Moneyline (vig)` = blend_moneyline_vig,
       `Blend Median Home Score` = blend_home_median,
       `Blend Median Away Score` = blend_away_median,
       `Blend Median Total` = blend_total_median,

@@ -709,44 +709,82 @@ if (!exists("build_moneyline_comparison_table", inherits = FALSE)) {
         blend_ev_units_away = expected_value_units(blend_away_prob, market_away_ml),
         blend_favorite_side = dplyr::if_else(blend_home_prob >= blend_away_prob, "home", "away"),
         blend_favorite = dplyr::if_else(blend_favorite_side == "home", home_team, away_team),
-        market_moneyline = dplyr::if_else(
-          blend_favorite_side == "home",
-          market_home_ml,
-          market_away_ml
+        blend_best_ev = dplyr::case_when(
+          !is.na(blend_ev_units_home) | !is.na(blend_ev_units_away) ~ pmax(
+            dplyr::coalesce(blend_ev_units_home, -Inf),
+            dplyr::coalesce(blend_ev_units_away, -Inf)
+          ),
+          TRUE ~ NA_real_
+        ),
+        blend_best_ev = dplyr::if_else(
+          is.na(blend_best_ev) | blend_best_ev == -Inf,
+          NA_real_,
+          blend_best_ev
+        ),
+        blend_pick_side = dplyr::case_when(
+          is.na(blend_best_ev) ~ NA_character_,
+          blend_best_ev <= 0 ~ NA_character_,
+          dplyr::near(blend_best_ev, blend_ev_units_home) ~ "home",
+          dplyr::near(blend_best_ev, blend_ev_units_away) ~ "away",
+          TRUE ~ NA_character_
+        ),
+        blend_pick_side = dplyr::if_else(
+          is.na(blend_pick_side) & !is.na(blend_best_ev) & blend_best_ev > 0,
+          dplyr::if_else(
+            dplyr::coalesce(blend_ev_units_home, -Inf) >= dplyr::coalesce(blend_ev_units_away, -Inf),
+            "home",
+            "away"
+          ),
+          blend_pick_side
+        ),
+        blend_pick = dplyr::case_when(
+          blend_pick_side == "home" ~ home_team,
+          blend_pick_side == "away" ~ away_team,
+          TRUE ~ NA_character_
+        ),
+        blend_prob_pick = dplyr::case_when(
+          blend_pick_side == "home" ~ blend_home_prob,
+          blend_pick_side == "away" ~ blend_away_prob,
+          TRUE ~ NA_real_
+        ),
+        market_prob_pick = dplyr::case_when(
+          blend_pick_side == "home" ~ market_home_prob,
+          blend_pick_side == "away" ~ market_away_prob,
+          TRUE ~ NA_real_
+        ),
+        blend_moneyline = dplyr::case_when(
+          blend_pick_side == "home" ~ blend_home_ml,
+          blend_pick_side == "away" ~ blend_away_ml,
+          TRUE ~ NA_real_
+        ),
+        blend_moneyline_vig = dplyr::case_when(
+          blend_pick_side == "home" ~ blend_home_ml_vig,
+          blend_pick_side == "away" ~ blend_away_ml_vig,
+          TRUE ~ NA_real_
+        ),
+        market_moneyline = dplyr::case_when(
+          blend_pick_side == "home" ~ market_home_ml,
+          blend_pick_side == "away" ~ market_away_ml,
+          TRUE ~ NA_real_
         ),
         market_moneyline = dplyr::if_else(
-          is.na(market_moneyline),
+          is.na(market_moneyline) & !is.na(blend_pick_side),
           probability_to_american(
-            dplyr::if_else(blend_favorite_side == "home", market_home_prob, market_away_prob)
+            dplyr::case_when(
+              blend_pick_side == "home" ~ market_home_prob,
+              blend_pick_side == "away" ~ market_away_prob,
+              TRUE ~ NA_real_
+            )
           ),
           market_moneyline
         ),
-        blend_moneyline = dplyr::if_else(
-          blend_favorite_side == "home",
-          blend_home_ml,
-          blend_away_ml
+        blend_prob_fav = blend_prob_pick,
+        market_prob_fav = market_prob_pick,
+        blend_edge_prob = dplyr::case_when(
+          is.na(blend_prob_pick) | is.na(market_prob_pick) ~ NA_real_,
+          TRUE ~ blend_prob_pick - market_prob_pick
         ),
-        blend_moneyline_vig = dplyr::if_else(
-          blend_favorite_side == "home",
-          blend_home_ml_vig,
-          blend_away_ml_vig
-        ),
-        blend_prob_fav = dplyr::if_else(
-          blend_favorite_side == "home",
-          blend_home_prob,
-          blend_away_prob
-        ),
-        market_prob_fav = dplyr::if_else(
-          blend_favorite_side == "home",
-          market_home_prob,
-          market_away_prob
-        ),
-        blend_edge_prob = blend_prob_fav - market_prob_fav,
-        blend_ev_units = dplyr::if_else(
-          blend_favorite_side == "home",
-          blend_ev_units_home,
-          blend_ev_units_away
-        ),
+        blend_ev_units = blend_best_ev,
         blend_beats_market = dplyr::case_when(
           is.na(blend_ev_units) ~ NA,
           TRUE ~ blend_ev_units > 0
@@ -763,13 +801,24 @@ if (!exists("build_moneyline_comparison_table", inherits = FALSE)) {
         ),
         blend_recommendation = dplyr::case_when(
           is.na(blend_ev_units) ~ "No play",
-          blend_ev_units > 0 ~ paste("Bet", blend_favorite, "moneyline"),
+          blend_ev_units > 0 ~ paste("Bet", blend_pick, "moneyline"),
           TRUE ~ "Pass"
         ),
+        blend_kelly_fraction = dplyr::case_when(
+          is.na(blend_pick_side) ~ NA_real_,
+          TRUE ~ {
+            dec <- american_to_decimal(market_moneyline)
+            b <- dec - 1
+            stake <- (blend_prob_pick * b - (1 - blend_prob_pick)) / b
+            invalid <- is.na(dec) | !is.finite(dec) | b <= 0 | is.na(stake)
+            stake[invalid] <- NA_real_
+            stake
+          }
+        ),
         blend_confidence = dplyr::case_when(
-          is.na(blend_ev_units) ~ NA_real_,
-          blend_ev_units < 0 ~ 0,
-          TRUE ~ blend_ev_units
+          is.na(blend_kelly_fraction) ~ NA_real_,
+          blend_kelly_fraction < 0 ~ 0,
+          TRUE ~ blend_kelly_fraction
         ),
         actual_winner = dplyr::case_when(
           is.na(actual_home_win) ~ actual_winner,
@@ -791,8 +840,9 @@ if (!exists("build_moneyline_comparison_table", inherits = FALSE)) {
         model_ev_units = blend_ev_units_home,
         market_beats_model = brier_market < brier_model
       ) %>%
+      dplyr::select(-blend_best_ev) %>%
       dplyr::arrange(season, week, game_date, matchup)
-  
+
     combined
   }
   
