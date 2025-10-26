@@ -1342,14 +1342,15 @@ if (!exists("build_res_blend", inherits = FALSE)) {
       blend_join[[col_name]] <- cast_column(blend_join[[col_name]], base_per_game[[col_name]], col_name)
     }
 
-    join_args <- list(x = base_per_game, y = blend_join, by = join_keys)
-    if ("relationship" %in% names(formals(dplyr::left_join))) {
-      join_args$relationship <- "many-to-one"
-    }
-
     per_game_with_blend <- tryCatch(
       {
-        rlang::exec(dplyr::left_join, !!!join_args)
+        safe_left_join(
+          x = base_per_game,
+          y = blend_join,
+          by = join_keys,
+          relationship = "many-to-one",
+          label = "build_res_blend()"
+        )
       },
       error = function(e) {
         warning(sprintf("build_res_blend(): left_join failed; keeping original probabilities. Reason: %s", conditionMessage(e)))

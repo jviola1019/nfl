@@ -52,11 +52,15 @@ collapse_by_keys_relaxed <- function(df, keys, label = "data frame") {
 
   missing_keys <- setdiff(keys, names(df))
   if (length(missing_keys)) {
-    warning(sprintf(
-      "%s is missing required key columns: %s; skipping duplicate collapse.",
+    emit_safe_join_signal(
+      sprintf(
+        "%s is missing required key columns: %s; skipping duplicate collapse.",
+        label,
+        paste(missing_keys, collapse = ", ")
+      ),
       label,
-      paste(missing_keys, collapse = ", ")
-    ))
+      severity = "warn"
+    )
     return(df)
   }
 
@@ -105,11 +109,15 @@ collapse_by_keys_relaxed <- function(df, keys, label = "data frame") {
     dplyr::filter(.data$n > 1L)
 
   if (nrow(dup_check)) {
-    warning(sprintf(
-      "%s: duplicates remain for %d key combinations after relaxed collapse.",
+    emit_safe_join_signal(
+      sprintf(
+        "%s: duplicates remain for %d key combinations after relaxed collapse.",
+        label,
+        nrow(dup_check)
+      ),
       label,
-      nrow(dup_check)
-    ))
+      severity = "warn"
+    )
   }
 
   out
@@ -122,11 +130,15 @@ ensure_unique_join_keys <- function(df, keys, label = "data frame") {
 
   missing_keys <- setdiff(keys, names(df))
   if (length(missing_keys)) {
-    warning(sprintf(
-      "%s: cannot check join uniqueness because keys are missing: %s",
+    emit_safe_join_signal(
+      sprintf(
+        "%s: cannot check join uniqueness because keys are missing: %s",
+        label,
+        paste(missing_keys, collapse = ", ")
+      ),
       label,
-      paste(missing_keys, collapse = ", ")
-    ))
+      severity = "warn"
+    )
     return(df)
   }
 
@@ -139,15 +151,141 @@ ensure_unique_join_keys <- function(df, keys, label = "data frame") {
     return(df)
   }
 
-  warning(sprintf(
-    "%s: detected %d duplicate join key combinations; keeping first occurrence after sorting.",
+  emit_safe_join_signal(
+    sprintf(
+      "%s: detected %d duplicate join key combinations; keeping first occurrence after sorting.",
+      label,
+      nrow(dup_keys)
+    ),
     label,
-    nrow(dup_keys)
-  ))
+    severity = "inform"
+  )
 
   df %>%
     dplyr::arrange(dplyr::across(dplyr::all_of(keys))) %>%
     dplyr::distinct(dplyr::across(dplyr::all_of(keys)), .keep_all = TRUE)
+}
+
+resolve_join_key_map <- function(by, x, y) {
+  dplyr_ns <- asNamespace("dplyr")
+  common_by <- NULL
+  if (exists("common_by", envir = dplyr_ns, inherits = FALSE)) {
+    common_by <- get("common_by", envir = dplyr_ns)
+  }
+
+  if (!is.null(common_by)) {
+    mapped <- tryCatch(common_by(by, x, y), error = function(e) NULL)
+    if (!is.null(mapped) && all(c("x", "y") %in% names(mapped))) {
+      return(list(x = mapped$x, y = mapped$y))
+    }
+  }
+
+  if (is.null(by)) {
+    return(list(x = character(), y = character()))
+  }
+
+  if (is.character(by)) {
+    if (is.null(names(by)) || !length(names(by))) {
+      return(list(x = by, y = by))
+    }
+    return(list(x = names(by), y = unname(by)))
+  }
+
+  list(x = character(), y = character())
+}
+
+emit_safe_join_signal <- function(msg,
+                                  label,
+                                  severity = c("inform", "warn")) {
+  severity <- match.arg(severity)
+  freq_id <- paste0("safe_left_join::", label, "::", severity)
+
+  if (requireNamespace("rlang", quietly = TRUE)) {
+    if (severity == "inform") {
+      rlang::inform(msg, .frequency = "once", .frequency_id = freq_id)
+    } else {
+      rlang::warn(msg, .frequency = "once", .frequency_id = freq_id)
+    }
+  } else if (severity == "inform") {
+    message(msg)
+  } else {
+    warning(msg, call. = FALSE)
+  }
+}
+
+safe_left_join <- function(x, y, by = NULL, relationship = NULL, label = "left_join", ...) {
+  join_args <- c(list(x = x, y = y, by = by), list(...))
+  left_join_formals <- names(formals(dplyr::left_join))
+  has_relationship <- !is.null(relationship) && "relationship" %in% left_join_formals
+  has_multiple <- "multiple" %in% left_join_formals
+  if (has_relationship) {
+    join_args$relationship <- relationship
+  }
+  if (!has_multiple && "multiple" %in% names(join_args)) {
+    join_args$multiple <- NULL
+  }
+
+  join_exec <- function(args) {
+    rlang::exec(dplyr::left_join, !!!args)
+  }
+
+  tryCatch(
+    join_exec(join_args),
+    error = function(e) {
+      msg <- conditionMessage(e)
+      dup_error <- grepl("Each row in `y` must be matched at most once", msg, fixed = TRUE) ||
+        grepl("Many-to-many relationship", msg, fixed = TRUE)
+
+      if (!dup_error) {
+        stop(e)
+      }
+
+      key_map <- resolve_join_key_map(by, x, y)
+      y_keys <- key_map$y
+
+      if (!length(y_keys) || !all(y_keys %in% names(y))) {
+        emit_safe_join_signal(
+          sprintf(
+            "%s: duplicate join keys detected but unable to determine right-table keys; retrying without relationship enforcement. Original error: %s",
+            label,
+            msg
+          ),
+          label,
+          severity = "warn"
+        )
+        if (has_relationship) {
+          join_args$relationship <- NULL
+        }
+        return(join_exec(join_args))
+      }
+
+      y_dedup <- y %>%
+        dplyr::arrange(dplyr::across(dplyr::all_of(y_keys))) %>%
+        dplyr::distinct(dplyr::across(dplyr::all_of(y_keys)), .keep_all = TRUE)
+
+      removed <- nrow(y) - nrow(y_dedup)
+      if (removed > 0) {
+        emit_safe_join_signal(
+          sprintf(
+            "%s: resolved %d duplicate rows on right join keys after %s; original error: %s",
+            label,
+            max(removed, 0L),
+            label,
+            msg
+          ),
+          label,
+          severity = "inform"
+        )
+      }
+
+      join_args$y <- y_dedup
+      if (has_relationship) {
+        join_args$relationship <- relationship
+      }
+
+      join_exec(join_args)
+    }
+  )
 }
 
 standardize_join_keys <- function(df, key_alias = JOIN_KEY_ALIASES) {
@@ -359,13 +497,16 @@ enrich_with_pre_kickoff_espn_lines <- function(sched,
     }
 
     if (!is.null(join_args$by)) {
-      if ("relationship" %in% names(formals(dplyr::left_join))) {
-        join_args$relationship <- "many-to-many"
-        join_args$multiple <- "all"
-      }
       sched_std <- tryCatch(
         {
-          rlang::exec(dplyr::left_join, !!!join_args)
+          safe_left_join(
+            x = sched_std,
+            y = join_args$y,
+            by = join_args$by,
+            relationship = "many-to-many",
+            label = "enrich_with_pre_kickoff_espn_lines()",
+            multiple = "all"
+          )
         },
         error = function(e) {
           if (verbose) {
@@ -499,14 +640,15 @@ build_res_blend <- function(res,
     blend_join[[col_name]] <- cast_column(blend_join[[col_name]], base_per_game[[col_name]], col_name)
   }
 
-  join_args <- list(x = base_per_game, y = blend_join, by = join_keys)
-  if ("relationship" %in% names(formals(dplyr::left_join))) {
-    join_args$relationship <- "many-to-one"
-  }
-
   per_game_with_blend <- tryCatch(
     {
-      rlang::exec(dplyr::left_join, !!!join_args)
+      safe_left_join(
+        x = base_per_game,
+        y = blend_join,
+        by = join_keys,
+        relationship = "many-to-one",
+        label = "build_res_blend()"
+      )
     },
     error = function(e) {
       warning(sprintf("build_res_blend(): left_join failed; keeping original probabilities. Reason: %s", conditionMessage(e)))
