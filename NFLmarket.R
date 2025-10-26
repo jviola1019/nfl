@@ -1301,11 +1301,11 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         `Blend EV Units` = "Blend EV (units)",
         `Market EV Units` = "Market EV (units)",
         `Blend Stake (Units)` = "Blend Stake",
-        `Blend Pick Moneyline (vig)` = "Blend Pick ML (vig)",
-        `Blend Home Moneyline (vig)` = "Blend Home ML (vig)",
-        `Blend Away Moneyline (vig)` = "Blend Away ML (vig)",
-        `Market Home Moneyline` = "Market Home ML",
-        `Market Away Moneyline` = "Market Away ML"
+        `Blend Pick Moneyline (vig)` = "Blend ML (vig)",
+        `Blend Median Margin` = "Blend Margin",
+        `Market Home Spread` = "Market Home Spread",
+        `Market Implied Margin` = "Market Margin",
+        `Market Total` = "Market Total"
       ) %>%
       gt::tab_header(title = title) %>%
       gt::tab_options(
