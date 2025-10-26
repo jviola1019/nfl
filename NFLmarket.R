@@ -115,6 +115,41 @@ collapse_by_keys_relaxed <- function(df, keys, label = "data frame") {
   out
 }
 
+ensure_unique_join_keys <- function(df, keys, label = "data frame") {
+  if (is.null(df) || !inherits(df, "data.frame") || !nrow(df) || !length(keys)) {
+    return(df)
+  }
+
+  missing_keys <- setdiff(keys, names(df))
+  if (length(missing_keys)) {
+    warning(sprintf(
+      "%s: cannot check join uniqueness because keys are missing: %s",
+      label,
+      paste(missing_keys, collapse = ", ")
+    ))
+    return(df)
+  }
+
+  dup_keys <- df %>%
+    dplyr::filter(dplyr::if_all(dplyr::all_of(keys), ~ !is.na(.))) %>%
+    dplyr::count(dplyr::across(dplyr::all_of(keys))) %>%
+    dplyr::filter(.data$n > 1L)
+
+  if (!nrow(dup_keys)) {
+    return(df)
+  }
+
+  warning(sprintf(
+    "%s: detected %d duplicate join key combinations; keeping first occurrence after sorting.",
+    label,
+    nrow(dup_keys)
+  ))
+
+  df %>%
+    dplyr::arrange(dplyr::across(dplyr::all_of(keys))) %>%
+    dplyr::distinct(dplyr::across(dplyr::all_of(keys)), .keep_all = TRUE)
+}
+
 standardize_join_keys <- function(df, key_alias = JOIN_KEY_ALIASES) {
   if (is.null(df) || !inherits(df, "data.frame")) {
     return(df)
@@ -921,12 +956,43 @@ build_moneyline_comparison_table <- function(market_comparison_result,
       market_home_prob = dplyr::coalesce(market_home_prob, market_prob)
     )
 
+  scores_ready <- ensure_unique_join_keys(
+    scores_ready,
+    keys = join_cols,
+    label = "Moneyline score table (post-defaults)"
+  )
+
+  schedule_context <- ensure_unique_join_keys(
+    schedule_context,
+    keys = join_cols,
+    label = "Schedule context table"
+  )
+
   join_args <- list(x = scores_ready, y = schedule_context, by = join_cols)
   if ("relationship" %in% names(formals(dplyr::inner_join))) {
     join_args$relationship <- "many-to-one"
+    if ("multiple" %in% names(formals(dplyr::inner_join))) {
+      join_args$multiple <- "all"
+    }
   }
 
-  combined <- rlang::exec(dplyr::inner_join, !!!join_args) %>%
+  combined <- tryCatch(
+    rlang::exec(dplyr::inner_join, !!!join_args),
+    error = function(e) {
+      warning(sprintf(
+        "build_moneyline_comparison_table(): strict inner_join failed (%s); falling back to distinct join keys.",
+        conditionMessage(e)
+      ))
+      fallback_scores <- scores_ready %>%
+        dplyr::distinct(dplyr::across(dplyr::all_of(join_cols)), .keep_all = TRUE)
+      fallback_sched <- schedule_context %>%
+        dplyr::distinct(dplyr::across(dplyr::all_of(join_cols)), .keep_all = TRUE)
+      fallback_args <- join_args
+      fallback_args$x <- fallback_scores
+      fallback_args$y <- fallback_sched
+      rlang::exec(dplyr::inner_join, !!!fallback_args)
+    }
+  ) %>%
     ensure_schedule_defaults() %>%
     dplyr::mutate(
       market_home_ml = market_home_ml_sched,
