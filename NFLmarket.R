@@ -1296,17 +1296,17 @@ export_moneyline_comparison_html <- function(comparison_tbl,
           "Blend Beat Market?", "Market Winning?"
         )
       ) %>%
-        gt::cols_label(
-          `Blend Edge` = "Blend Edge (pp)",
-          `Blend EV Units` = "Blend EV (units)",
-          `Market EV Units` = "Market EV (units)",
-          `Blend Stake (Units)` = "Blend Stake",
-          `Blend Favorite Moneyline (vig)` = "Blend ML (vig)",
-          `Blend Median Margin` = "Blend Margin",
-          `Market Home Spread` = "Market Home Spread",
-          `Market Implied Margin` = "Market Margin",
-          `Market Total` = "Market Total"
-        ) %>%
+      gt::cols_label(
+        `Blend Edge` = "Blend Edge (pp)",
+        `Blend EV Units` = "Blend EV (units)",
+        `Market EV Units` = "Market EV (units)",
+        `Blend Stake (Units)` = "Blend Stake",
+        `Blend Pick Moneyline (vig)` = "Blend ML (vig)",
+        `Blend Median Margin` = "Blend Margin",
+        `Market Home Spread` = "Market Home Spread",
+        `Market Implied Margin` = "Market Margin",
+        `Market Total` = "Market Total"
+      ) %>%
       gt::tab_header(title = title) %>%
       gt::tab_options(
         table.font.names = c("Source Sans Pro", "Helvetica Neue", "Arial", "sans-serif"),
