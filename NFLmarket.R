@@ -758,36 +758,54 @@ build_moneyline_comparison_table <- function(market_comparison_result,
     "espn_final_total", "market_total", "total_line", "total", "over_under"
   ))
 
-    schedule_context <- schedule_collapsed %>%
-      dplyr::mutate(
-        home_team = as.character(pull_or_default(schedule_collapsed, home_team_col, NA_character_)),
-        away_team = as.character(pull_or_default(schedule_collapsed, away_team_col, NA_character_)),
-        game_date = suppressWarnings(as.Date(pull_or_default(schedule_collapsed, date_col, NA_character_))),
-        market_home_ml = coerce_numeric_safely(pull_or_default(schedule_collapsed, home_ml_col, NA_real_)),
-        market_away_ml = coerce_numeric_safely(pull_or_default(schedule_collapsed, away_ml_col, NA_real_)),
-        blend_home_median = coerce_numeric_safely(pull_or_default(schedule_collapsed, home_median_col, NA_real_)),
-        blend_away_median = coerce_numeric_safely(pull_or_default(schedule_collapsed, away_median_col, NA_real_)),
-        blend_total_median = coerce_numeric_safely(pull_or_default(schedule_collapsed, total_median_col, NA_real_)),
-        market_home_spread = coerce_numeric_safely(pull_or_default(schedule_collapsed, spread_col, NA_real_)),
-        market_total_line = coerce_numeric_safely(pull_or_default(schedule_collapsed, total_col, NA_real_))
-      ) %>%
-      dplyr::transmute(
-        dplyr::across(dplyr::all_of(join_cols)),
-        home_team,
-        away_team,
-        game_date,
-        market_home_ml,
-        market_away_ml,
-        blend_home_median,
-        blend_away_median,
-        blend_total_median,
-        market_home_spread,
-        market_total_line
-      ) %>%
-      dplyr::rename_with(
-        ~ paste0(.x, "_sched"),
-        -dplyr::all_of(join_cols)
-      )
+  schedule_context <- schedule_collapsed %>%
+    dplyr::mutate(
+      home_team = as.character(pull_or_default(schedule_collapsed, home_team_col, NA_character_)),
+      away_team = as.character(pull_or_default(schedule_collapsed, away_team_col, NA_character_)),
+      game_date = suppressWarnings(as.Date(pull_or_default(schedule_collapsed, date_col, NA_character_))),
+      market_home_ml = coerce_numeric_safely(pull_or_default(schedule_collapsed, home_ml_col, NA_real_)),
+      market_away_ml = coerce_numeric_safely(pull_or_default(schedule_collapsed, away_ml_col, NA_real_)),
+      blend_home_median = coerce_numeric_safely(pull_or_default(schedule_collapsed, home_median_col, NA_real_)),
+      blend_away_median = coerce_numeric_safely(pull_or_default(schedule_collapsed, away_median_col, NA_real_)),
+      blend_total_median = coerce_numeric_safely(pull_or_default(schedule_collapsed, total_median_col, NA_real_)),
+      market_home_spread = coerce_numeric_safely(pull_or_default(schedule_collapsed, spread_col, NA_real_)),
+      market_total_line = coerce_numeric_safely(pull_or_default(schedule_collapsed, total_col, NA_real_))
+    ) %>%
+    dplyr::transmute(
+      dplyr::across(dplyr::all_of(join_cols)),
+      home_team,
+      away_team,
+      game_date,
+      market_home_ml,
+      market_away_ml,
+      blend_home_median,
+      blend_away_median,
+      blend_total_median,
+      market_home_spread,
+      market_total_line
+    ) %>%
+    dplyr::rename_with(
+      ~ paste0(.x, "_sched"),
+      -dplyr::all_of(join_cols)
+    )
+
+  scores_collapsed <- collapse_by_keys_relaxed(
+    scores,
+    keys = join_cols,
+    label = "Moneyline score table"
+  )
+
+  scores_ready <- scores_collapsed %>%
+    ensure_score_defaults() %>%
+    dplyr::mutate(
+      blend_home_prob = dplyr::coalesce(blend_home_prob, model_prob),
+      market_home_prob = dplyr::coalesce(market_home_prob, market_prob)
+    )
+
+  join_args <- list(x = scores_ready, y = schedule_context, by = join_cols)
+  if ("relationship" %in% names(formals(dplyr::inner_join))) {
+    join_args$relationship <- "many-to-one"
+  }
 
   schedule_defaults <- list(
     home_team_sched = NA_character_,
@@ -834,13 +852,7 @@ build_moneyline_comparison_table <- function(market_comparison_result,
     df
   }
 
-  combined <- scores %>%
-    ensure_score_defaults() %>%
-    dplyr::mutate(
-      blend_home_prob = dplyr::coalesce(blend_home_prob, model_prob),
-      market_home_prob = dplyr::coalesce(market_home_prob, market_prob)
-    ) %>%
-    dplyr::inner_join(schedule_context, by = join_cols) %>%
+  combined <- rlang::exec(dplyr::inner_join, !!!join_args) %>%
     ensure_schedule_defaults() %>%
     dplyr::mutate(
       market_home_ml = market_home_ml_sched,
