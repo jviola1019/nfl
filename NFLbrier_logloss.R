@@ -398,16 +398,31 @@ compare_to_market <- function(res,
         .groups = "drop"
       )
 
-    join_args <- list(
-      x = sched_eval,
-      y = espn_tbl,
-      by = c("game_date" = "date", "home_team", "away_team")
-    )
-    if ("relationship" %in% names(formals(dplyr::left_join))) {
-      join_args$relationship <- "many-to-one"
-      join_args$multiple <- "all"
+    join_by <- c("game_date" = "date", "home_team", "away_team")
+    join_label <- "compare_to_market(): schedule <- ESPN consensus odds"
+    if (exists("safe_left_join", mode = "function")) {
+      sched_eval <- safe_left_join(
+        x = sched_eval,
+        y = espn_tbl,
+        by = join_by,
+        relationship = "many-to-one",
+        multiple = "all",
+        label = join_label
+      )
+    } else {
+      join_args <- list(
+        x = sched_eval,
+        y = espn_tbl,
+        by = join_by
+      )
+      if ("relationship" %in% names(formals(dplyr::left_join))) {
+        join_args$relationship <- "many-to-one"
+      }
+      if ("multiple" %in% names(formals(dplyr::left_join))) {
+        join_args$multiple <- "all"
+      }
+      sched_eval <- rlang::exec(dplyr::left_join, !!!join_args)
     }
-    sched_eval <- rlang::exec(dplyr::left_join, !!!join_args)
   }
   
   

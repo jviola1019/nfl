@@ -52,11 +52,15 @@ collapse_by_keys_relaxed <- function(df, keys, label = "data frame") {
 
   missing_keys <- setdiff(keys, names(df))
   if (length(missing_keys)) {
-    warning(sprintf(
-      "%s is missing required key columns: %s; skipping duplicate collapse.",
+    emit_safe_join_signal(
+      sprintf(
+        "%s is missing required key columns: %s; skipping duplicate collapse.",
+        label,
+        paste(missing_keys, collapse = ", ")
+      ),
       label,
-      paste(missing_keys, collapse = ", ")
-    ))
+      severity = "warn"
+    )
     return(df)
   }
 
@@ -105,11 +109,15 @@ collapse_by_keys_relaxed <- function(df, keys, label = "data frame") {
     dplyr::filter(.data$n > 1L)
 
   if (nrow(dup_check)) {
-    warning(sprintf(
-      "%s: duplicates remain for %d key combinations after relaxed collapse.",
+    emit_safe_join_signal(
+      sprintf(
+        "%s: duplicates remain for %d key combinations after relaxed collapse.",
+        label,
+        nrow(dup_check)
+      ),
       label,
-      nrow(dup_check)
-    ))
+      severity = "warn"
+    )
   }
 
   out
@@ -122,11 +130,15 @@ ensure_unique_join_keys <- function(df, keys, label = "data frame") {
 
   missing_keys <- setdiff(keys, names(df))
   if (length(missing_keys)) {
-    warning(sprintf(
-      "%s: cannot check join uniqueness because keys are missing: %s",
+    emit_safe_join_signal(
+      sprintf(
+        "%s: cannot check join uniqueness because keys are missing: %s",
+        label,
+        paste(missing_keys, collapse = ", ")
+      ),
       label,
-      paste(missing_keys, collapse = ", ")
-    ))
+      severity = "warn"
+    )
     return(df)
   }
 
@@ -139,11 +151,15 @@ ensure_unique_join_keys <- function(df, keys, label = "data frame") {
     return(df)
   }
 
-  warning(sprintf(
-    "%s: detected %d duplicate join key combinations; keeping first occurrence after sorting.",
+  emit_safe_join_signal(
+    sprintf(
+      "%s: detected %d duplicate join key combinations; keeping first occurrence after sorting.",
+      label,
+      nrow(dup_keys)
+    ),
     label,
-    nrow(dup_keys)
-  ))
+    severity = "inform"
+  )
 
   df %>%
     dplyr::arrange(dplyr::across(dplyr::all_of(keys))) %>%
