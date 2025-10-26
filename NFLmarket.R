@@ -795,16 +795,26 @@ build_moneyline_comparison_table <- function(market_comparison_result,
     label = "Moneyline score table"
   )
 
-  scores_ready <- scores_collapsed %>%
-    ensure_score_defaults() %>%
-    dplyr::mutate(
-      blend_home_prob = dplyr::coalesce(blend_home_prob, model_prob),
-      market_home_prob = dplyr::coalesce(market_home_prob, market_prob)
-    )
+  score_defaults <- list(
+    blend_home_prob = NA_real_,
+    market_home_prob = NA_real_,
+    home_team = NA_character_,
+    away_team = NA_character_,
+    game_date = as.Date(NA_character_),
+    blend_home_median = NA_real_,
+    blend_away_median = NA_real_,
+    blend_total_median = NA_real_,
+    blend_median_margin = NA_real_,
+    actual_winner = NA_character_
+  )
 
-  join_args <- list(x = scores_ready, y = schedule_context, by = join_cols)
-  if ("relationship" %in% names(formals(dplyr::inner_join))) {
-    join_args$relationship <- "many-to-one"
+  ensure_score_defaults <- function(df) {
+    for (col in names(score_defaults)) {
+      if (!col %in% names(df)) {
+        df[[col]] <- score_defaults[[col]]
+      }
+    }
+    df
   }
 
   schedule_defaults <- list(
@@ -830,26 +840,16 @@ build_moneyline_comparison_table <- function(market_comparison_result,
     df
   }
 
-  score_defaults <- list(
-    blend_home_prob = NA_real_,
-    market_home_prob = NA_real_,
-    home_team = NA_character_,
-    away_team = NA_character_,
-    game_date = as.Date(NA_character_),
-    blend_home_median = NA_real_,
-    blend_away_median = NA_real_,
-    blend_total_median = NA_real_,
-    blend_median_margin = NA_real_,
-    actual_winner = NA_character_
-  )
+  scores_ready <- scores_collapsed %>%
+    ensure_score_defaults() %>%
+    dplyr::mutate(
+      blend_home_prob = dplyr::coalesce(blend_home_prob, model_prob),
+      market_home_prob = dplyr::coalesce(market_home_prob, market_prob)
+    )
 
-  ensure_score_defaults <- function(df) {
-    for (col in names(score_defaults)) {
-      if (!col %in% names(df)) {
-        df[[col]] <- score_defaults[[col]]
-      }
-    }
-    df
+  join_args <- list(x = scores_ready, y = schedule_context, by = join_cols)
+  if ("relationship" %in% names(formals(dplyr::inner_join))) {
+    join_args$relationship <- "many-to-one"
   }
 
   combined <- rlang::exec(dplyr::inner_join, !!!join_args) %>%
