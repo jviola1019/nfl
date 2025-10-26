@@ -194,35 +194,11 @@ resolve_join_key_map <- function(by, x, y) {
   list(x = character(), y = character())
 }
 
-emit_safe_join_signal <- function(msg,
-                                  label,
-                                  severity = c("inform", "warn")) {
-  severity <- match.arg(severity)
-  freq_id <- paste0("safe_left_join::", label, "::", severity)
-
-  if (requireNamespace("rlang", quietly = TRUE)) {
-    if (severity == "inform") {
-      rlang::inform(msg, .frequency = "once", .frequency_id = freq_id)
-    } else {
-      rlang::warn(msg, .frequency = "once", .frequency_id = freq_id)
-    }
-  } else if (severity == "inform") {
-    message(msg)
-  } else {
-    warning(msg, call. = FALSE)
-  }
-}
-
 safe_left_join <- function(x, y, by = NULL, relationship = NULL, label = "left_join", ...) {
   join_args <- c(list(x = x, y = y, by = by), list(...))
-  left_join_formals <- names(formals(dplyr::left_join))
-  has_relationship <- !is.null(relationship) && "relationship" %in% left_join_formals
-  has_multiple <- "multiple" %in% left_join_formals
+  has_relationship <- !is.null(relationship) && "relationship" %in% names(formals(dplyr::left_join))
   if (has_relationship) {
     join_args$relationship <- relationship
-  }
-  if (!has_multiple && "multiple" %in% names(join_args)) {
-    join_args$multiple <- NULL
   }
 
   join_exec <- function(args) {
@@ -244,15 +220,11 @@ safe_left_join <- function(x, y, by = NULL, relationship = NULL, label = "left_j
       y_keys <- key_map$y
 
       if (!length(y_keys) || !all(y_keys %in% names(y))) {
-        emit_safe_join_signal(
-          sprintf(
-            "%s: duplicate join keys detected but unable to determine right-table keys; retrying without relationship enforcement. Original error: %s",
-            label,
-            msg
-          ),
+        warning(sprintf(
+          "%s: duplicate join keys detected but unable to determine right-table keys; retrying without relationship enforcement. Original error: %s",
           label,
-          severity = "warn"
-        )
+          msg
+        ))
         if (has_relationship) {
           join_args$relationship <- NULL
         }
@@ -264,19 +236,13 @@ safe_left_join <- function(x, y, by = NULL, relationship = NULL, label = "left_j
         dplyr::distinct(dplyr::across(dplyr::all_of(y_keys)), .keep_all = TRUE)
 
       removed <- nrow(y) - nrow(y_dedup)
-      if (removed > 0) {
-        emit_safe_join_signal(
-          sprintf(
-            "%s: resolved %d duplicate rows on right join keys after %s; original error: %s",
-            label,
-            max(removed, 0L),
-            label,
-            msg
-          ),
-          label,
-          severity = "inform"
-        )
-      }
+      warning(sprintf(
+        "%s: resolved %d duplicate rows on right join keys after %s; original error: %s",
+        label,
+        max(removed, 0L),
+        label,
+        msg
+      ))
 
       join_args$y <- y_dedup
       if (has_relationship) {
