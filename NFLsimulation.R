@@ -1102,43 +1102,73 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
       )
   
     saved <- FALSE
-  
+
     if (requireNamespace("gt", quietly = TRUE)) {
-      gt_tbl <- display_tbl %>%
-        gt::gt() %>%
-        gt::fmt_percent(
-          columns = c(
-            "Blend Edge",
-            "Market Home Prob", "Blend Home Prob",
-            "Market Away Prob", "Blend Away Prob"
-          ),
-          decimals = 1
-        ) %>%
-        gt::fmt_number(
-          columns = c(
-            "Blend Median Home Score", "Blend Median Away Score", "Blend Median Total",
-            "Blend Median Margin", "Market Home Spread", "Market Implied Margin", "Market Total"
-          ),
-          decimals = 1,
-          drop_trailing_zeros = TRUE
-        ) %>%
-        gt::fmt_number(
-          columns = c("Blend EV Units", "Market EV Units", "Blend Stake (Units)"),
-          decimals = 3,
-          drop_trailing_zeros = FALSE
-        ) %>%
-        gt::fmt(
-          columns = moneyline_cols,
-          fns = function(x) format_moneyline_strings(x)
-        ) %>%
-        gt::cols_align(
-          align = "center",
-          columns = c(
-            "Season", "Week", "Blend Favorite", "Blend Recommendation",
-            "Blend Beat Market?", "Market Winning?"
-          )
-        ) %>%
-        gt::cols_label(
+      display_cols <- names(display_tbl)
+
+      gt_apply_if_columns <- function(gt_tbl, columns, fn, ...) {
+        existing <- intersect(columns, display_cols)
+        if (!length(existing)) {
+          return(gt_tbl)
+        }
+        args <- c(list(gt_tbl, columns = dplyr::all_of(existing)), list(...))
+        do.call(fn, args)
+      }
+
+      gt_apply_labels <- function(gt_tbl, label_map) {
+        label_map <- label_map[names(label_map) %in% display_cols]
+        if (!length(label_map)) {
+          return(gt_tbl)
+        }
+        do.call(gt::cols_label, c(list(gt_tbl), as.list(label_map)))
+      }
+
+      gt_tbl <- gt::gt(display_tbl)
+      gt_tbl <- gt_apply_if_columns(
+        gt_tbl,
+        c(
+          "Blend Edge",
+          "Market Home Prob", "Blend Home Prob",
+          "Market Away Prob", "Blend Away Prob"
+        ),
+        gt::fmt_percent,
+        decimals = 1
+      )
+      gt_tbl <- gt_apply_if_columns(
+        gt_tbl,
+        c(
+          "Blend Median Home Score", "Blend Median Away Score", "Blend Median Total",
+          "Blend Median Margin", "Market Home Spread", "Market Implied Margin", "Market Total"
+        ),
+        gt::fmt_number,
+        decimals = 1,
+        drop_trailing_zeros = TRUE
+      )
+      gt_tbl <- gt_apply_if_columns(
+        gt_tbl,
+        c("Blend EV Units", "Market EV Units", "Blend Stake (Units)"),
+        gt::fmt_number,
+        decimals = 3,
+        drop_trailing_zeros = FALSE
+      )
+      gt_tbl <- gt_apply_if_columns(
+        gt_tbl,
+        moneyline_cols,
+        gt::fmt,
+        fns = function(x) format_moneyline_strings(x)
+      )
+      gt_tbl <- gt_apply_if_columns(
+        gt_tbl,
+        c(
+          "Season", "Week", "Blend Favorite", "Blend Recommendation",
+          "Blend Beat Market?", "Market Winning?"
+        ),
+        gt::cols_align,
+        align = "center"
+      )
+      gt_tbl <- gt_apply_labels(
+        gt_tbl,
+        c(
           `Blend Edge` = "Blend Edge (pp)",
           `Blend EV Units` = "Blend EV (units)",
           `Market EV Units` = "Market EV (units)",
@@ -1148,35 +1178,44 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
           `Market Home Spread` = "Market Home Spread",
           `Market Implied Margin` = "Market Margin",
           `Market Total` = "Market Total"
-        ) %>%
-        gt::tab_header(title = title) %>%
-        gt::tab_options(
-          table.font.names = c("Source Sans Pro", "Helvetica Neue", "Arial", "sans-serif"),
-          table.background.color = "#020617",
-          table.font.color = "#e2e8f0",
-          heading.background.color = "#0f172a",
-          column_labels.background.color = "#1e293b",
-          column_labels.font.weight = "bold",
-          column_labels.text_transform = "uppercase",
-          row.striping.background_color = "#111827"
-        ) %>%
-        gt::tab_style(
-          style = gt::cell_text(color = "#f8fafc"),
-          locations = gt::cells_title(groups = "title")
-        ) %>%
-        gt::tab_style(
-          style = gt::cell_text(color = "#cbd5f5"),
-          locations = gt::cells_title(groups = "subtitle")
-        ) %>%
-        gt::opt_row_striping() %>%
-        gt::data_color(
+        )
+      )
+      gt_tbl <- gt::tab_header(gt_tbl, title = title)
+      gt_tbl <- gt::tab_options(
+        gt_tbl,
+        table.font.names = c("Source Sans Pro", "Helvetica Neue", "Arial", "sans-serif"),
+        table.background.color = "#020617",
+        table.font.color = "#e2e8f0",
+        heading.background.color = "#0f172a",
+        column_labels.background.color = "#1e293b",
+        column_labels.font.weight = "bold",
+        column_labels.text_transform = "uppercase",
+        row.striping.background_color = "#111827"
+      )
+      gt_tbl <- gt::tab_style(
+        gt_tbl,
+        style = gt::cell_text(color = "#f8fafc"),
+        locations = gt::cells_title(groups = "title")
+      )
+      gt_tbl <- gt::tab_style(
+        gt_tbl,
+        style = gt::cell_text(color = "#cbd5f5"),
+        locations = gt::cells_title(groups = "subtitle")
+      )
+      gt_tbl <- gt::opt_row_striping(gt_tbl)
+      if ("Blend Beat Market?" %in% display_cols) {
+        gt_tbl <- gt::data_color(
+          gt_tbl,
           columns = "Blend Beat Market?",
           colors = scales::col_factor(
             palette = c("No" = "#1f2937", "Yes" = "#166534", "N/A" = "#374151"),
             domain = c("No", "Yes", "N/A")
           )
-        ) %>%
-        gt::tab_style(
+        )
+      }
+      if ("Blend Recommendation" %in% display_cols) {
+        gt_tbl <- gt::tab_style(
+          gt_tbl,
           style = list(
             gt::cell_fill(color = "#1d4ed8"),
             gt::cell_text(color = "#f8fafc", weight = "bold")
@@ -1185,15 +1224,17 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
             columns = "Blend Recommendation",
             rows = !is.na(`Blend Recommendation`) & `Blend Recommendation` != "Pass"
           )
-        ) %>%
-        gt::tab_style(
-          style = list(
-            gt::cell_fill(color = "#1e293b"),
-            gt::cell_text(color = "#f8fafc", weight = "bold")
-          ),
-          locations = gt::cells_column_labels(columns = gt::everything())
         )
-  
+      }
+      gt_tbl <- gt::tab_style(
+        gt_tbl,
+        style = list(
+          gt::cell_fill(color = "#1e293b"),
+          gt::cell_text(color = "#f8fafc", weight = "bold")
+        ),
+        locations = gt::cells_column_labels(columns = gt::everything())
+      )
+
       try({
         gt::gtsave(gt_tbl, file = file)
         saved <- TRUE
