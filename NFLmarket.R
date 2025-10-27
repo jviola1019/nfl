@@ -166,6 +166,76 @@ ensure_unique_join_keys <- function(df, keys, label = "data frame") {
     dplyr::distinct(dplyr::across(dplyr::all_of(keys)), .keep_all = TRUE)
 }
 
+count_duplicate_join_rows <- function(df, keys) {
+  if (is.null(df) || !inherits(df, "data.frame") || !nrow(df) || !length(keys)) {
+    return(NA_integer_)
+  }
+
+  missing_keys <- setdiff(keys, names(df))
+  if (length(missing_keys)) {
+    return(NA_integer_)
+  }
+
+  df %>%
+    dplyr::filter(dplyr::if_all(dplyr::all_of(keys), ~ !is.na(.))) %>%
+    dplyr::count(dplyr::across(dplyr::all_of(keys))) %>%
+    dplyr::filter(.data$n > 1L) %>%
+    nrow()
+}
+
+infer_join_relationship <- function(x, y, keys, label = NULL, default = NULL) {
+  result <- list(
+    relationship = default,
+    x_duplicates = NA_integer_,
+    y_duplicates = NA_integer_
+  )
+
+  if (!length(keys)) {
+    return(result)
+  }
+
+  dups_x <- count_duplicate_join_rows(x, keys)
+  dups_y <- count_duplicate_join_rows(y, keys)
+
+  result$x_duplicates <- dups_x
+  result$y_duplicates <- dups_y
+
+  if (is.na(dups_x) || is.na(dups_y)) {
+    return(result)
+  }
+
+  relationship <- default
+  if (dups_x > 0L && dups_y > 0L) {
+    relationship <- "many-to-many"
+  } else if (dups_x > 0L) {
+    relationship <- "one-to-many"
+  } else if (dups_y > 0L) {
+    relationship <- "many-to-one"
+  } else if (is.null(default)) {
+    relationship <- "one-to-one"
+  }
+
+  result$relationship <- relationship
+
+  if ((dups_x > 0L || dups_y > 0L) && !is.null(label)) {
+    msg <- sprintf(
+      "%s: inferred %s join on keys %s (duplicates: x=%d, y=%d).",
+      label,
+      relationship,
+      paste(keys, collapse = ", "),
+      dups_x,
+      dups_y
+    )
+    if (exists("emit_safe_join_signal", mode = "function")) {
+      emit_safe_join_signal(msg, label, severity = "inform")
+    } else {
+      message(msg)
+    }
+  }
+
+  result
+}
+
 resolve_join_key_map <- function(by, x, y) {
   dplyr_ns <- asNamespace("dplyr")
   common_by <- NULL
@@ -1077,9 +1147,19 @@ build_moneyline_comparison_table <- function(market_comparison_result,
   )
 
   join_args <- list(x = scores_ready, y = schedule_context, by = join_cols)
+  join_meta <- infer_join_relationship(
+    scores_ready,
+    schedule_context,
+    join_cols,
+    label = "build_moneyline_comparison_table()",
+    default = "many-to-one"
+  )
   if ("relationship" %in% names(formals(dplyr::inner_join))) {
-    join_args$relationship <- "many-to-one"
-    if ("multiple" %in% names(formals(dplyr::inner_join))) {
+    if (!is.null(join_meta$relationship)) {
+      join_args$relationship <- join_meta$relationship
+    }
+    if ("multiple" %in% names(formals(dplyr::inner_join)) &&
+        (isTRUE(join_meta$x_duplicates > 0L) || isTRUE(join_meta$y_duplicates > 0L))) {
       join_args$multiple <- "all"
     }
   }
