@@ -1048,9 +1048,18 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
   
     moneyline_cols <- c(
       "Blend Home Moneyline (vig)",
-      "Blend Away Moneyline (vig)",
-      "Blend Favorite Moneyline (vig)"
+      "Blend Away Moneyline (vig)"
     )
+
+    format_signed_spread <- function(x) {
+      num <- suppressWarnings(as.numeric(x))
+      out <- rep("", length(x))
+      mask <- !is.na(num) & is.finite(num)
+      if (any(mask)) {
+        out[mask] <- sprintf("%+.1f", round(num[mask], 1))
+      }
+      out
+    }
   
     format_moneyline_strings <- function(x) {
       num <- suppressWarnings(as.numeric(x))
@@ -1073,7 +1082,6 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
         `Blend Stake (Units)` = blend_confidence,
         `Blend Home Moneyline (vig)` = blend_home_ml_vig,
         `Blend Away Moneyline (vig)` = blend_away_ml_vig,
-        `Blend Favorite Moneyline (vig)` = blend_moneyline_vig,
         `Blend Median Home Score` = blend_home_median,
         `Blend Median Away Score` = blend_away_median,
         `Blend Median Total` = blend_total_median,
@@ -1173,7 +1181,6 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
           `Blend EV Units` = "Blend EV (units)",
           `Market EV Units` = "Market EV (units)",
           `Blend Stake (Units)` = "Blend Stake",
-          `Blend Favorite Moneyline (vig)` = "Blend ML (vig)",
           `Blend Median Margin` = "Blend Margin",
           `Market Home Spread` = "Market Home Spread",
           `Market Implied Margin` = "Market Margin",
@@ -1265,9 +1272,9 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
         `Blend Median Home Score` = format(round(`Blend Median Home Score`, 1), nsmall = 1),
         `Blend Median Away Score` = format(round(`Blend Median Away Score`, 1), nsmall = 1),
         `Blend Median Total` = format(round(`Blend Median Total`, 1), nsmall = 1),
-        `Blend Median Margin` = format(round(`Blend Median Margin`, 1), nsmall = 1),
-        `Market Home Spread` = format(round(`Market Home Spread`, 1), nsmall = 1),
-        `Market Implied Margin` = format(round(`Market Implied Margin`, 1), nsmall = 1),
+        `Blend Median Margin` = format_signed_spread(`Blend Median Margin`),
+        `Market Home Spread` = format_signed_spread(`Market Home Spread`),
+        `Market Implied Margin` = format_signed_spread(`Market Implied Margin`),
         `Market Total` = format(round(`Market Total`, 1), nsmall = 1),
         `Blend EV Units` = format(round(`Blend EV Units`, 3), nsmall = 3),
         `Market EV Units` = format(round(`Market EV Units`, 3), nsmall = 3),
@@ -2118,13 +2125,53 @@ safe_load_injuries <- function(seasons, prefer_fast = TRUE, ...) {
     message("nflfastR not installed; using nflreadr::load_injuries() instead.")
   }
 
+  fast_env <- if (use_fast) asNamespace("nflfastR") else NULL
+  fast_bulk <- NULL
+  fast_scraper <- NULL
+
+  if (!is.null(fast_env)) {
+    fast_bulk <- get0("load_injuries", envir = fast_env, inherits = FALSE)
+    if (is.function(fast_bulk)) {
+      fast_bulk <- tryCatch(
+        fast_bulk(seasons = seasons, ...),
+        error = function(e) {
+          warning(
+            sprintf(
+              "nflfastR::load_injuries failed (%s); falling back to per-season loaders.",
+              conditionMessage(e)
+            ),
+            call. = FALSE
+          )
+          NULL
+        }
+      )
+    } else {
+      fast_bulk <- NULL
+    }
+
+    fast_scraper <- get0("fast_scraper_injuries", envir = fast_env, inherits = FALSE)
+    if (!is.function(fast_scraper)) {
+      fast_scraper <- NULL
+    }
+  }
+
   missing <- integer(0)
   pieces <- lapply(seasons, function(season) {
+    if (is.data.frame(fast_bulk) && nrow(fast_bulk)) {
+      bulk_slice <- fast_bulk
+      if ("season" %in% names(bulk_slice)) {
+        bulk_slice <- dplyr::filter(bulk_slice, .data$season %in% season)
+      }
+      if (nrow(bulk_slice)) {
+        return(bulk_slice)
+      }
+    }
+
     fast_result <- NULL
 
-    if (use_fast) {
+    if (is.function(fast_scraper)) {
       fast_result <- tryCatch(
-        nflfastR::fast_scraper_injuries(season = season),
+        fast_scraper(season = season),
         error = function(e) {
           msg <- conditionMessage(e)
           if (grepl("404", msg, fixed = TRUE)) {
@@ -2135,10 +2182,13 @@ safe_load_injuries <- function(seasons, prefer_fast = TRUE, ...) {
             ))
             return(tibble::tibble())
           }
-          warning(sprintf(
-            "nflfastR::fast_scraper_injuries failed for season %s (%s); falling back to nflreadr::load_injuries().",
-            season, msg
-          ), call. = FALSE)
+          warning(
+            sprintf(
+              "nflfastR::fast_scraper_injuries failed for season %s (%s); falling back to nflreadr::load_injuries().",
+              season, msg
+            ),
+            call. = FALSE
+          )
           return(NULL)
         }
       )
@@ -2202,6 +2252,9 @@ calc_injury_impacts <- function(df, group_vars = c("team")) {
   if (length(missing_groups)) return(tibble())
 
   df %>%
+    dplyr::mutate(
+      status = toupper(trimws(.data$status))
+    ) %>%
     dplyr::mutate(
       base_pen = dplyr::case_when(
         grepl("OUT|IR", status)       ~ -0.50,

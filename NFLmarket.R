@@ -1460,10 +1460,19 @@ export_moneyline_comparison_html <- function(comparison_tbl,
   moneyline_cols <- c(
     "Blend Home Moneyline (vig)",
     "Blend Away Moneyline (vig)",
-    "Blend Pick Moneyline (vig)",
     "Market Home Moneyline",
     "Market Away Moneyline"
   )
+
+  format_signed_spread <- function(x) {
+    num <- suppressWarnings(as.numeric(x))
+    out <- rep("", length(x))
+    mask <- !is.na(num) & is.finite(num)
+    if (any(mask)) {
+      out[mask] <- sprintf("%+.1f", round(num[mask], 1))
+    }
+    out
+  }
 
   format_moneyline_strings <- function(x) {
     num <- suppressWarnings(as.numeric(x))
@@ -1514,7 +1523,6 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       `Market Away Prob` = market_away_prob,
       `Blend Home Moneyline (vig)` = blend_home_ml_vig,
       `Blend Away Moneyline (vig)` = blend_away_ml_vig,
-      `Blend Pick Moneyline (vig)` = blend_moneyline_vig,
       `Market Home Moneyline` = market_home_ml,
       `Market Away Moneyline` = market_away_ml
     )
@@ -1594,7 +1602,6 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         `Blend EV Units` = "Blend EV (units)",
         `Market EV Units` = "Market EV (units)",
         `Blend Stake (Units)` = "Blend Stake",
-        `Blend Pick Moneyline (vig)` = "Blend ML (vig)",
         `Blend Median Margin` = "Blend Margin",
         `Market Home Spread` = "Market Home Spread",
         `Market Implied Margin` = "Market Margin",
