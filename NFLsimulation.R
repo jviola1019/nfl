@@ -2637,14 +2637,39 @@ slate_date <- min(as.Date(week_slate$game_date), na.rm = TRUE)
 # ---- Guard: define PBP selectors BEFORE QB block ----
 if (!exists("posteam_col")) {
   pick_col <- function(df, candidates, label){
-    nm <- intersect(candidates, names(df))
-    if (!length(nm)) stop(sprintf("Could not find a column for %s. Have: %s",
-                                  label, paste(names(df), collapse=", ")))
+    available <- names(df)
+    if (is.null(available)) {
+      available <- character(0)
+    }
+    nm <- intersect(candidates, available)
+    if (!length(nm)) {
+      stop(
+        sprintf(
+          "Could not find a column for %s. Have: %s",
+          label,
+          if (length(available)) paste(available, collapse = ", ") else "<none>"
+        )
+      )
+    }
     nm[1]
   }
   stype_col   <- intersect(c("season_type","game_type","season_type_name"), names(pbp_hist))
-  posteam_col <- pick_col(pbp_hist, c("posteam","pos_team","offense","offense_team"), "offense team (posteam)")
-  defteam_col <- pick_col(pbp_hist, c("defteam","def_team","defense","defense_team"), "defense team (defteam)")
+  posteam_col <- pick_col(
+    pbp_hist,
+    c(
+      "posteam","pos_team","offense","offense_team",
+      "possession_team","possessionTeam","team"
+    ),
+    "offense team (posteam)"
+  )
+  defteam_col <- pick_col(
+    pbp_hist,
+    c(
+      "defteam","def_team","defense","defense_team",
+      "defensive_team","possession_team_def","defTeam"
+    ),
+    "defense team (defteam)"
+  )
   drive_col   <- pick_col(pbp_hist, c("drive","fixed_drive","Drive"), "drive number")
 }
 
