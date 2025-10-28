@@ -1562,13 +1562,7 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     )
     gt_tbl <- gt_apply_if_columns(
       gt_tbl,
-      c("Blend Median Margin", "Market Home Spread", "Market Implied Margin"),
-      gt::fmt,
-      fns = format_signed_spread
-    )
-    gt_tbl <- gt_apply_if_columns(
-      gt_tbl,
-      c("Market Total"),
+      c("Blend Median Margin", "Market Home Spread", "Market Implied Margin", "Market Total"),
       gt::fmt_number,
       decimals = 1,
       drop_trailing_zeros = TRUE
@@ -1810,9 +1804,9 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         `Blend Home Prob` = scales::percent(`Blend Home Prob`, accuracy = 0.1),
         `Market Away Prob` = scales::percent(`Market Away Prob`, accuracy = 0.1),
         `Blend Away Prob` = scales::percent(`Blend Away Prob`, accuracy = 0.1),
-        `Blend Median Margin` = format_signed_spread(`Blend Median Margin`),
-        `Market Home Spread` = format_signed_spread(`Market Home Spread`),
-        `Market Implied Margin` = format_signed_spread(`Market Implied Margin`),
+        `Blend Median Margin` = format(round(`Blend Median Margin`, 1), nsmall = 1),
+        `Market Home Spread` = format(round(`Market Home Spread`, 1), nsmall = 1),
+        `Market Implied Margin` = format(round(`Market Implied Margin`, 1), nsmall = 1),
         `Market Total` = format(round(`Market Total`, 1), nsmall = 1),
         `Blend EV Units` = format(round(`Blend EV Units`, 3), nsmall = 3),
         `Market EV Units` = format(round(`Market EV Units`, 3), nsmall = 3),

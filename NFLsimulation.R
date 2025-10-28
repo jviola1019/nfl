@@ -1144,13 +1144,10 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
       )
       gt_tbl <- gt_apply_if_columns(
         gt_tbl,
-        c("Blend Median Margin", "Market Home Spread", "Market Implied Margin"),
-        gt::fmt,
-        fns = format_signed_spread
-      )
-      gt_tbl <- gt_apply_if_columns(
-        gt_tbl,
-        c("Blend Median Home Score", "Blend Median Away Score", "Blend Median Total", "Market Total"),
+        c(
+          "Blend Median Home Score", "Blend Median Away Score", "Blend Median Total",
+          "Blend Median Margin", "Market Home Spread", "Market Implied Margin", "Market Total"
+        ),
         gt::fmt_number,
         decimals = 1,
         drop_trailing_zeros = TRUE
