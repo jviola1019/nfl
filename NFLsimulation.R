@@ -1048,9 +1048,18 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
   
     moneyline_cols <- c(
       "Blend Home Moneyline (vig)",
-      "Blend Away Moneyline (vig)",
-      "Blend Favorite Moneyline (vig)"
+      "Blend Away Moneyline (vig)"
     )
+
+    format_signed_spread <- function(x) {
+      num <- suppressWarnings(as.numeric(x))
+      out <- rep("", length(x))
+      mask <- !is.na(num) & is.finite(num)
+      if (any(mask)) {
+        out[mask] <- sprintf("%+.1f", round(num[mask], 1))
+      }
+      out
+    }
   
     format_moneyline_strings <- function(x) {
       num <- suppressWarnings(as.numeric(x))
@@ -1073,7 +1082,6 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
         `Blend Stake (Units)` = blend_confidence,
         `Blend Home Moneyline (vig)` = blend_home_ml_vig,
         `Blend Away Moneyline (vig)` = blend_away_ml_vig,
-        `Blend Favorite Moneyline (vig)` = blend_moneyline_vig,
         `Blend Median Home Score` = blend_home_median,
         `Blend Median Away Score` = blend_away_median,
         `Blend Median Total` = blend_total_median,
@@ -1102,81 +1110,122 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
       )
   
     saved <- FALSE
-  
+
     if (requireNamespace("gt", quietly = TRUE)) {
-      gt_tbl <- display_tbl %>%
-        gt::gt() %>%
-        gt::fmt_percent(
-          columns = c(
-            "Blend Edge",
-            "Market Home Prob", "Blend Home Prob",
-            "Market Away Prob", "Blend Away Prob"
-          ),
-          decimals = 1
-        ) %>%
-        gt::fmt_number(
-          columns = c(
-            "Blend Median Home Score", "Blend Median Away Score", "Blend Median Total",
-            "Blend Median Margin", "Market Home Spread", "Market Implied Margin", "Market Total"
-          ),
-          decimals = 1,
-          drop_trailing_zeros = TRUE
-        ) %>%
-        gt::fmt_number(
-          columns = c("Blend EV Units", "Market EV Units", "Blend Stake (Units)"),
-          decimals = 3,
-          drop_trailing_zeros = FALSE
-        ) %>%
-        gt::fmt(
-          columns = moneyline_cols,
-          fns = function(x) format_moneyline_strings(x)
-        ) %>%
-        gt::cols_align(
-          align = "center",
-          columns = c(
-            "Season", "Week", "Blend Favorite", "Blend Recommendation",
-            "Blend Beat Market?", "Market Winning?"
-          )
-        ) %>%
-        gt::cols_label(
+      display_cols <- names(display_tbl)
+
+      gt_apply_if_columns <- function(gt_tbl, columns, fn, ...) {
+        existing <- intersect(columns, display_cols)
+        if (!length(existing)) {
+          return(gt_tbl)
+        }
+        args <- c(list(gt_tbl, columns = dplyr::all_of(existing)), list(...))
+        do.call(fn, args)
+      }
+
+      gt_apply_labels <- function(gt_tbl, label_map) {
+        label_map <- label_map[names(label_map) %in% display_cols]
+        if (!length(label_map)) {
+          return(gt_tbl)
+        }
+        do.call(gt::cols_label, c(list(gt_tbl), as.list(label_map)))
+      }
+
+      gt_tbl <- gt::gt(display_tbl)
+      gt_tbl <- gt_apply_if_columns(
+        gt_tbl,
+        c(
+          "Blend Edge",
+          "Market Home Prob", "Blend Home Prob",
+          "Market Away Prob", "Blend Away Prob"
+        ),
+        gt::fmt_percent,
+        decimals = 1
+      )
+      gt_tbl <- gt_apply_if_columns(
+        gt_tbl,
+        c("Blend Median Margin", "Market Home Spread", "Market Implied Margin"),
+        gt::fmt,
+        fns = format_signed_spread
+      )
+      gt_tbl <- gt_apply_if_columns(
+        gt_tbl,
+        c("Blend Median Home Score", "Blend Median Away Score", "Blend Median Total", "Market Total"),
+        gt::fmt_number,
+        decimals = 1,
+        drop_trailing_zeros = TRUE
+      )
+      gt_tbl <- gt_apply_if_columns(
+        gt_tbl,
+        c("Blend EV Units", "Market EV Units", "Blend Stake (Units)"),
+        gt::fmt_number,
+        decimals = 3,
+        drop_trailing_zeros = FALSE
+      )
+      gt_tbl <- gt_apply_if_columns(
+        gt_tbl,
+        moneyline_cols,
+        gt::fmt,
+        fns = function(x) format_moneyline_strings(x)
+      )
+      gt_tbl <- gt_apply_if_columns(
+        gt_tbl,
+        c(
+          "Season", "Week", "Blend Favorite", "Blend Recommendation",
+          "Blend Beat Market?", "Market Winning?"
+        ),
+        gt::cols_align,
+        align = "center"
+      )
+      gt_tbl <- gt_apply_labels(
+        gt_tbl,
+        c(
           `Blend Edge` = "Blend Edge (pp)",
           `Blend EV Units` = "Blend EV (units)",
           `Market EV Units` = "Market EV (units)",
           `Blend Stake (Units)` = "Blend Stake",
-          `Blend Favorite Moneyline (vig)` = "Blend ML (vig)",
           `Blend Median Margin` = "Blend Margin",
           `Market Home Spread` = "Market Home Spread",
           `Market Implied Margin` = "Market Margin",
           `Market Total` = "Market Total"
-        ) %>%
-        gt::tab_header(title = title) %>%
-        gt::tab_options(
-          table.font.names = c("Source Sans Pro", "Helvetica Neue", "Arial", "sans-serif"),
-          table.background.color = "#020617",
-          table.font.color = "#e2e8f0",
-          heading.background.color = "#0f172a",
-          column_labels.background.color = "#1e293b",
-          column_labels.font.weight = "bold",
-          column_labels.text_transform = "uppercase",
-          row.striping.background_color = "#111827"
-        ) %>%
-        gt::tab_style(
-          style = gt::cell_text(color = "#f8fafc"),
-          locations = gt::cells_title(groups = "title")
-        ) %>%
-        gt::tab_style(
-          style = gt::cell_text(color = "#cbd5f5"),
-          locations = gt::cells_title(groups = "subtitle")
-        ) %>%
-        gt::opt_row_striping() %>%
-        gt::data_color(
+        )
+      )
+      gt_tbl <- gt::tab_header(gt_tbl, title = title)
+      gt_tbl <- gt::tab_options(
+        gt_tbl,
+        table.font.names = c("Source Sans Pro", "Helvetica Neue", "Arial", "sans-serif"),
+        table.background.color = "#020617",
+        table.font.color = "#e2e8f0",
+        heading.background.color = "#0f172a",
+        column_labels.background.color = "#1e293b",
+        column_labels.font.weight = "bold",
+        column_labels.text_transform = "uppercase",
+        row.striping.background_color = "#111827"
+      )
+      gt_tbl <- gt::tab_style(
+        gt_tbl,
+        style = gt::cell_text(color = "#f8fafc"),
+        locations = gt::cells_title(groups = "title")
+      )
+      gt_tbl <- gt::tab_style(
+        gt_tbl,
+        style = gt::cell_text(color = "#cbd5f5"),
+        locations = gt::cells_title(groups = "subtitle")
+      )
+      gt_tbl <- gt::opt_row_striping(gt_tbl)
+      if ("Blend Beat Market?" %in% display_cols) {
+        gt_tbl <- gt::data_color(
+          gt_tbl,
           columns = "Blend Beat Market?",
           colors = scales::col_factor(
             palette = c("No" = "#1f2937", "Yes" = "#166534", "N/A" = "#374151"),
             domain = c("No", "Yes", "N/A")
           )
-        ) %>%
-        gt::tab_style(
+        )
+      }
+      if ("Blend Recommendation" %in% display_cols) {
+        gt_tbl <- gt::tab_style(
+          gt_tbl,
           style = list(
             gt::cell_fill(color = "#1d4ed8"),
             gt::cell_text(color = "#f8fafc", weight = "bold")
@@ -1185,15 +1234,17 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
             columns = "Blend Recommendation",
             rows = !is.na(`Blend Recommendation`) & `Blend Recommendation` != "Pass"
           )
-        ) %>%
-        gt::tab_style(
-          style = list(
-            gt::cell_fill(color = "#1e293b"),
-            gt::cell_text(color = "#f8fafc", weight = "bold")
-          ),
-          locations = gt::cells_column_labels(columns = gt::everything())
         )
-  
+      }
+      gt_tbl <- gt::tab_style(
+        gt_tbl,
+        style = list(
+          gt::cell_fill(color = "#1e293b"),
+          gt::cell_text(color = "#f8fafc", weight = "bold")
+        ),
+        locations = gt::cells_column_labels(columns = gt::everything())
+      )
+
       try({
         gt::gtsave(gt_tbl, file = file)
         saved <- TRUE
@@ -1224,9 +1275,9 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
         `Blend Median Home Score` = format(round(`Blend Median Home Score`, 1), nsmall = 1),
         `Blend Median Away Score` = format(round(`Blend Median Away Score`, 1), nsmall = 1),
         `Blend Median Total` = format(round(`Blend Median Total`, 1), nsmall = 1),
-        `Blend Median Margin` = format(round(`Blend Median Margin`, 1), nsmall = 1),
-        `Market Home Spread` = format(round(`Market Home Spread`, 1), nsmall = 1),
-        `Market Implied Margin` = format(round(`Market Implied Margin`, 1), nsmall = 1),
+        `Blend Median Margin` = format_signed_spread(`Blend Median Margin`),
+        `Market Home Spread` = format_signed_spread(`Market Home Spread`),
+        `Market Implied Margin` = format_signed_spread(`Market Implied Margin`),
         `Market Total` = format(round(`Market Total`, 1), nsmall = 1),
         `Blend EV Units` = format(round(`Blend EV Units`, 3), nsmall = 3),
         `Market EV Units` = format(round(`Market EV Units`, 3), nsmall = 3),
@@ -2077,13 +2128,53 @@ safe_load_injuries <- function(seasons, prefer_fast = TRUE, ...) {
     message("nflfastR not installed; using nflreadr::load_injuries() instead.")
   }
 
+  fast_env <- if (use_fast) asNamespace("nflfastR") else NULL
+  fast_bulk <- NULL
+  fast_scraper <- NULL
+
+  if (!is.null(fast_env)) {
+    fast_bulk <- get0("load_injuries", envir = fast_env, inherits = FALSE)
+    if (is.function(fast_bulk)) {
+      fast_bulk <- tryCatch(
+        fast_bulk(seasons = seasons, ...),
+        error = function(e) {
+          warning(
+            sprintf(
+              "nflfastR::load_injuries failed (%s); falling back to per-season loaders.",
+              conditionMessage(e)
+            ),
+            call. = FALSE
+          )
+          NULL
+        }
+      )
+    } else {
+      fast_bulk <- NULL
+    }
+
+    fast_scraper <- get0("fast_scraper_injuries", envir = fast_env, inherits = FALSE)
+    if (!is.function(fast_scraper)) {
+      fast_scraper <- NULL
+    }
+  }
+
   missing <- integer(0)
   pieces <- lapply(seasons, function(season) {
+    if (is.data.frame(fast_bulk) && nrow(fast_bulk)) {
+      bulk_slice <- fast_bulk
+      if ("season" %in% names(bulk_slice)) {
+        bulk_slice <- dplyr::filter(bulk_slice, .data$season %in% season)
+      }
+      if (nrow(bulk_slice)) {
+        return(bulk_slice)
+      }
+    }
+
     fast_result <- NULL
 
-    if (use_fast) {
+    if (is.function(fast_scraper)) {
       fast_result <- tryCatch(
-        nflfastR::fast_scraper_injuries(season = season),
+        fast_scraper(season = season),
         error = function(e) {
           msg <- conditionMessage(e)
           if (grepl("404", msg, fixed = TRUE)) {
@@ -2094,10 +2185,13 @@ safe_load_injuries <- function(seasons, prefer_fast = TRUE, ...) {
             ))
             return(tibble::tibble())
           }
-          warning(sprintf(
-            "nflfastR::fast_scraper_injuries failed for season %s (%s); falling back to nflreadr::load_injuries().",
-            season, msg
-          ), call. = FALSE)
+          warning(
+            sprintf(
+              "nflfastR::fast_scraper_injuries failed for season %s (%s); falling back to nflreadr::load_injuries().",
+              season, msg
+            ),
+            call. = FALSE
+          )
           return(NULL)
         }
       )
@@ -2161,6 +2255,9 @@ calc_injury_impacts <- function(df, group_vars = c("team")) {
   if (length(missing_groups)) return(tibble())
 
   df %>%
+    dplyr::mutate(
+      status = toupper(trimws(.data$status))
+    ) %>%
     dplyr::mutate(
       base_pen = dplyr::case_when(
         grepl("OUT|IR", status)       ~ -0.50,
