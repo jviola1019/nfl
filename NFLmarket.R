@@ -1294,11 +1294,6 @@ build_moneyline_comparison_table <- function(market_comparison_result,
         blend_pick_side == "away" ~ blend_away_prob,
         TRUE ~ NA_real_
       ),
-      market_prob_pick = dplyr::case_when(
-        blend_pick_side == "home" ~ market_home_prob,
-        blend_pick_side == "away" ~ market_away_prob,
-        TRUE ~ NA_real_
-      ),
       blend_moneyline = dplyr::case_when(
         blend_pick_side == "home" ~ blend_home_ml,
         blend_pick_side == "away" ~ blend_away_ml,
@@ -1325,16 +1320,35 @@ build_moneyline_comparison_table <- function(market_comparison_result,
         ),
         market_moneyline
       ),
+      market_prob_pick = dplyr::case_when(
+        blend_pick_side == "home" ~ dplyr::coalesce(
+          market_home_prob,
+          american_to_probability(market_home_ml)
+        ),
+        blend_pick_side == "away" ~ dplyr::coalesce(
+          market_away_prob,
+          american_to_probability(market_away_ml)
+        ),
+        TRUE ~ NA_real_
+      ),
+      market_prob_pick = clamp_probability(market_prob_pick),
       blend_prob_fav = blend_prob_pick,
       market_prob_fav = market_prob_pick,
       blend_edge_prob = dplyr::case_when(
         is.na(blend_prob_pick) | is.na(market_prob_pick) ~ NA_real_,
         TRUE ~ blend_prob_pick - market_prob_pick
       ),
+      blend_edge_moneyline = dplyr::case_when(
+        is.na(blend_pick_side) ~ NA_real_,
+        blend_pick_side == "home" ~ market_home_ml - blend_home_ml,
+        blend_pick_side == "away" ~ market_away_ml - blend_away_ml,
+        TRUE ~ NA_real_
+      ),
       blend_ev_units = blend_best_ev,
       blend_beats_market = dplyr::case_when(
-        is.na(blend_ev_units) ~ NA,
-        TRUE ~ blend_ev_units > 0
+        !is.na(blend_edge_prob) ~ blend_edge_prob > sqrt(.Machine$double.eps),
+        !is.na(blend_edge_moneyline) ~ blend_edge_moneyline > 0,
+        TRUE ~ NA
       ),
       market_ev_units = dplyr::if_else(
         is.na(blend_ev_units),
