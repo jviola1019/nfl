@@ -1278,8 +1278,6 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
           blend_beats_market ~ "Yes",
           TRUE ~ "No"
         ),
-        `Blend Beat Market Basis` = blend_beats_market_basis,
-        `Blend Beat Market Note` = blend_beats_market_note,
         `Market Home Prob` = market_home_prob,
         `Blend Home Prob` = blend_home_prob,
         `Market Away Prob` = market_away_prob,
@@ -1352,7 +1350,8 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
       gt_tbl <- gt_apply_if_columns(
         gt_tbl,
         c(
-          "Season", "Week", "Blend Beat Market?"
+          "Season", "Week", "Blend Favorite", "Blend Recommendation",
+          "Blend Beat Market?"
         ),
         gt::cols_align,
         align = "center"

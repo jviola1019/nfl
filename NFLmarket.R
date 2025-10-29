@@ -1850,8 +1850,6 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         blend_beats_market ~ "Yes",
         TRUE ~ "No"
       ),
-      `Blend Beat Market Basis` = blend_beats_market_basis,
-      `Blend Beat Market Note` = blend_beats_market_note,
       `Blend Home Prob` = blend_home_prob,
       `Market Home Prob` = market_home_prob,
       `Blend Away Prob` = blend_away_prob,
