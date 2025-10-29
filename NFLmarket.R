@@ -1603,11 +1603,7 @@ build_moneyline_comparison_table <- function(market_comparison_result,
         blend_pick_side == "away" ~ market_away_ml - blend_away_ml,
         TRUE ~ NA_real_
       ),
-      market_ev_units = dplyr::if_else(
-        is.na(blend_ev_units),
-        NA_real_,
-        -blend_ev_units
-      ),
+      market_ev_units = expected_value_units(market_prob_pick, market_moneyline),
       blend_vs_market_info = purrr::pmap(
         list(
           blend_actual_units,
@@ -1837,6 +1833,8 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       ),
       `Blend Pick` = blend_pick,
       `Blend Recommendation` = blend_recommendation,
+      `Blend Beat Market Basis` = blend_beats_market_basis,
+      `Blend Beat Market Note` = blend_beats_market_note,
       `Blend Stake (Units)` = blend_confidence,
       `Blend Edge` = blend_edge_prob,
       `Blend EV Units` = blend_ev_units,
@@ -1980,10 +1978,13 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       gt_tbl <- gt::data_color(
         gt_tbl,
         columns = "Blend Beat Market?",
-        colors = scales::col_factor(
-          palette = c("No" = "#1f2937", "Yes" = "#166534", "N/A" = "#374151"),
-          domain = c("No", "Yes", "N/A")
-        )
+        colors = function(values) {
+          palette <- c(Yes = "#166534", No = "#1f2937", `N/A` = "#374151")
+          mapped <- palette[as.character(values)]
+          default <- palette[["N/A"]]
+          mapped[is.na(mapped)] <- default
+          unname(mapped)
+        }
       )
     }
     if ("Blend Recommendation" %in% display_cols) {
@@ -2168,6 +2169,8 @@ export_moneyline_comparison_html <- function(comparison_tbl,
           "",
           format(round(`Blend Stake (Units)`, 3), nsmall = 3)
         ),
+        `Blend Beat Market Basis` = dplyr::coalesce(`Blend Beat Market Basis`, ""),
+        `Blend Beat Market Note` = dplyr::coalesce(`Blend Beat Market Note`, ""),
         Date = suppressWarnings(format(as.Date(Date), "%b %d, %Y")),
         Date = dplyr::if_else(is.na(Date) | Date == "NA", "", Date),
         `Blend Favorite` = dplyr::if_else(is.na(`Blend Favorite`), "", `Blend Favorite`),
