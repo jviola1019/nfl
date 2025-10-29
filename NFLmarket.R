@@ -446,10 +446,14 @@ clamp_probability <- function(p, eps = 1e-06) {
   pmin(pmax(p, eps), 1 - eps)
 }
 
-resolve_home_probability <- function(home_prob, home_ml = NA_real_, away_ml = NA_real_) {
+resolve_home_probability <- function(home_prob,
+                                     home_ml = NA_real_,
+                                     away_ml = NA_real_,
+                                     home_spread = NA_real_) {
   home_prob <- suppressWarnings(as.numeric(home_prob))
   ml_home <- coerce_numeric_safely(home_ml)
   ml_away <- coerce_numeric_safely(away_ml)
+  spread_home <- coerce_numeric_safely(home_spread)
 
   needs_prob <- !is.finite(home_prob)
   if (any(needs_prob, na.rm = TRUE)) {
@@ -471,6 +475,15 @@ resolve_home_probability <- function(home_prob, home_ml = NA_real_, away_ml = NA
       if (any(replace_mask, na.rm = TRUE)) {
         home_prob[replace_mask] <- fallback[replace_mask]
       }
+    }
+  }
+
+  needs_prob <- !is.finite(home_prob)
+  if (any(needs_prob, na.rm = TRUE)) {
+    fallback <- spread_to_win_probability(spread_home)
+    replace_mask <- needs_prob & is.finite(fallback)
+    if (any(replace_mask, na.rm = TRUE)) {
+      home_prob[replace_mask] <- fallback[replace_mask]
     }
   }
 
@@ -513,6 +526,60 @@ harmonize_home_margin <- function(margin, home_prob, tolerance = 5e-03) {
     margin[mask] <- mar
   }
   margin
+}
+
+spread_to_win_probability <- function(spread, sigma = 13.86) {
+  spread <- coerce_numeric_safely(spread)
+  sigma <- coerce_numeric_safely(sigma)
+  if (!length(sigma) || !is.finite(sigma[[1L]]) || sigma[[1L]] <= 0) {
+    sigma <- 13.86
+  } else {
+    sigma <- sigma[[1L]]
+  }
+
+  implied <- rep(NA_real_, length(spread))
+  mask <- is.finite(spread)
+  if (any(mask)) {
+    implied[mask] <- 1 - stats::pnorm(spread[mask] / sigma)
+  }
+
+  clamp_probability(implied)
+}
+
+summarize_probability_gap <- function(gap, prefix, tolerance = 0.005) {
+  gap <- suppressWarnings(as.numeric(gap))
+  if (!length(gap) || !is.finite(gap) || is.na(gap)) {
+    return(NA_character_)
+  }
+
+  if (abs(gap) <= tolerance) {
+    return(NA_character_)
+  }
+
+  delta <- round(gap * 100, 1)
+  emphasis <- if (abs(gap) >= 0.1) {
+    " (!!)"
+  } else if (abs(gap) >= 0.05) {
+    " (!)"
+  } else {
+    ""
+  }
+
+  sprintf("%s Δ %+.1fpp%s", prefix, delta, emphasis)
+}
+
+build_probability_alignment_note <- function(market_gap, blend_gap, tolerance = 0.005) {
+  notes <- c(
+    summarize_probability_gap(market_gap, "Market", tolerance = tolerance),
+    summarize_probability_gap(blend_gap, "Blend", tolerance = tolerance)
+  )
+
+  notes <- notes[!is.na(notes) & nzchar(notes)]
+  if (!length(notes)) {
+    return(NA_character_)
+  }
+
+  paste(notes, collapse = " | ")
 }
 
 probability_to_american <- function(prob) {
@@ -1446,9 +1513,14 @@ build_moneyline_comparison_table <- function(market_comparison_result,
       ),
       blend_home_prob = clamp_probability(blend_home_prob),
       blend_away_prob = clamp_probability(1 - blend_home_prob),
-      market_home_prob = resolve_home_probability(market_home_prob, market_home_ml, market_away_ml),
-      market_away_prob = clamp_probability(1 - market_home_prob),
       market_home_spread = coerce_numeric_safely(market_home_spread),
+      market_home_prob = resolve_home_probability(
+        market_home_prob,
+        market_home_ml,
+        market_away_ml,
+        market_home_spread
+      ),
+      market_away_prob = clamp_probability(1 - market_home_prob),
       market_home_spread = harmonize_home_spread(market_home_spread, market_home_prob),
       market_total_line = coerce_numeric_safely(market_total_line),
       blend_median_margin = dplyr::if_else(
@@ -1457,6 +1529,21 @@ build_moneyline_comparison_table <- function(market_comparison_result,
         blend_home_median - blend_away_median
       ),
       blend_median_margin = harmonize_home_margin(blend_median_margin, blend_home_prob),
+      blend_spread_equiv = dplyr::if_else(
+        is.na(blend_median_margin),
+        NA_real_,
+        -blend_median_margin
+      ),
+      market_spread_win_prob = spread_to_win_probability(market_home_spread),
+      blend_spread_win_prob = spread_to_win_probability(blend_spread_equiv),
+      market_prob_spread_gap = market_home_prob - market_spread_win_prob,
+      blend_prob_spread_gap = blend_home_prob - blend_spread_win_prob,
+      probability_alignment_note = purrr::pmap_chr(
+        list(market_prob_spread_gap, blend_prob_spread_gap),
+        function(market_gap, blend_gap) {
+          build_probability_alignment_note(market_gap, blend_gap)
+        }
+      ),
       market_implied_margin = dplyr::if_else(
         is.na(market_home_spread),
         NA_real_,
@@ -1650,6 +1737,12 @@ build_moneyline_comparison_table <- function(market_comparison_result,
           detail
         }
       ),
+      blend_beats_market_note = dplyr::case_when(
+        is.na(probability_alignment_note) ~ blend_beats_market_note,
+        is.na(blend_beats_market_note) ~ probability_alignment_note,
+        !nzchar(blend_beats_market_note) ~ probability_alignment_note,
+        TRUE ~ paste(blend_beats_market_note, probability_alignment_note, sep = " | ")
+      ),
       market_winning = {
         realized_market <- dplyr::case_when(
           is.na(market_actual_units) ~ NA,
@@ -1667,8 +1760,8 @@ build_moneyline_comparison_table <- function(market_comparison_result,
         )
       },
       blend_recommendation = dplyr::case_when(
-        is.na(blend_ev_units) ~ "No play",
-        blend_ev_units > 0 ~ paste("Bet", blend_pick, "moneyline"),
+        is.na(blend_ev_units) ~ "No Play",
+        blend_ev_units > 0 ~ "Bet",
         TRUE ~ "Pass"
       ),
       blend_kelly_fraction = dplyr::case_when(
@@ -1708,7 +1801,7 @@ build_moneyline_comparison_table <- function(market_comparison_result,
       market_beats_model = brier_market < brier_model,
       blend_vs_market_info = NULL
     ) %>%
-    dplyr::select(-blend_best_ev) %>%
+    dplyr::select(-dplyr::any_of(c("blend_best_ev", "blend_spread_equiv", "probability_alignment_note"))) %>%
     dplyr::arrange(season, week, game_date, matchup)
 
   combined
@@ -1813,6 +1906,7 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     "<li><strong>Blend Beat Market?</strong> shows whether the blend outperforms the market using the listed basis.</li>",
     "<li><strong>Basis</strong> tells you if the edge comes from final results, expected value, win probability, or a better price. Upcoming games rely on the pregame math.</li>",
     "<li><strong>Note</strong> summarizes the comparison so you can see how the edge was determined.</li>",
+    "<li><strong>&Delta; columns</strong> flag any gap between the listed win percentage and the spread-implied win percentage.</li>",
     "<li>Spread columns are presented from the home team's perspective; plus signs identify underdogs.</li>",
     "</ul>",
     "</section>"
@@ -1850,6 +1944,10 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       ),
       `Blend Home Prob` = blend_home_prob,
       `Market Home Prob` = market_home_prob,
+      `Blend Spread Win%` = blend_spread_win_prob,
+      `Market Spread Win%` = market_spread_win_prob,
+      `Blend Prob Δ` = blend_prob_spread_gap,
+      `Market Prob Δ` = market_prob_spread_gap,
       `Blend Away Prob` = blend_away_prob,
       `Market Away Prob` = market_away_prob,
       `Blend Home Moneyline (vig)` = blend_home_ml_vig,
@@ -1886,6 +1984,8 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       c(
         "Blend Edge",
         "Market Home Prob", "Blend Home Prob",
+        "Market Spread Win%", "Blend Spread Win%",
+        "Market Prob Δ", "Blend Prob Δ",
         "Market Away Prob", "Blend Away Prob"
       ),
       gt::fmt_percent,
@@ -1943,25 +2043,38 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         `Blend Median Margin` = "Blend Margin",
         `Market Home Spread` = "Market Home Spread",
         `Market Implied Margin` = "Market Margin",
-        `Market Total` = "Market Total"
+        `Market Total` = "Market Total",
+        `Market Spread Win%` = "Market Spread Win%",
+        `Blend Spread Win%` = "Blend Spread Win%",
+        `Market Prob Δ` = "Market Prob Δ (pp)",
+        `Blend Prob Δ` = "Blend Prob Δ (pp)"
       )
     )
     gt_tbl <- gt::tab_header(gt_tbl, title = title)
+    gt_tbl <- gt::tab_source_note(
+      gt_tbl,
+      source_note = "Δ columns compare posted win percentages against the spread-implied win probability."
+    )
     gt_tbl <- gt::tab_options(
       gt_tbl,
-      table.font.names = c("Source Sans Pro", "Helvetica Neue", "Arial", "sans-serif"),
-      table.background.color = "#020617",
+      table.font.names = c("Inter", "Source Sans Pro", "Helvetica Neue", "Arial", "sans-serif"),
       table.font.color = "#e2e8f0",
-      heading.background.color = "#0f172a",
-      column_labels.background.color = "#1e293b",
-      column_labels.font.weight = "bold",
+      table.background.color = "transparent",
+      heading.background.color = "#0b1120",
+      heading.align = "center",
+      column_labels.background.color = "#111c2f",
+      column_labels.font.weight = "600",
       column_labels.text_transform = "uppercase",
-      row.striping.background_color = "#111827",
-      data_row.padding = gt::px(6),
+      column_labels.border.top.style = "solid",
+      column_labels.border.top.color = "#1f2a44",
+      column_labels.border.bottom.color = "#1f2a44",
+      row.striping.background_color = "rgba(15,23,42,0.55)",
+      data_row.padding = gt::px(10),
       table.border.top.color = "transparent",
       table.border.bottom.color = "transparent",
       table.border.left.color = "transparent",
-      table.border.right.color = "transparent"
+      table.border.right.color = "transparent",
+      table.font.size = gt::px(14)
     )
     gt_tbl <- gt::tab_style(
       gt_tbl,
@@ -1985,6 +2098,18 @@ export_moneyline_comparison_html <- function(comparison_tbl,
           mapped[is.na(mapped)] <- default
           unname(mapped)
         }
+      )
+    }
+    diff_cols <- intersect(c("Market Prob Δ", "Blend Prob Δ"), display_cols)
+    if (length(diff_cols)) {
+      palette <- scales::col_numeric(
+        palette = c("#ef4444", "#f59e0b", "#22c55e"),
+        domain = c(-0.15, 0.15)
+      )
+      gt_tbl <- gt::data_color(
+        gt_tbl,
+        columns = dplyr::all_of(diff_cols),
+        colors = palette
       )
     }
     if ("Blend Recommendation" %in% display_cols) {
@@ -2031,7 +2156,7 @@ export_moneyline_comparison_html <- function(comparison_tbl,
             use_search = TRUE,
             use_filters = TRUE,
             use_pagination = TRUE,
-            search_placeholder = "Search teams, winners, or bets...",
+            search_placeholder = "Search teams, wagers, or math checks...",
             filter_placeholder = "Filter column"
           )
         ),
@@ -2041,9 +2166,9 @@ export_moneyline_comparison_html <- function(comparison_tbl,
 
     if ("opt_css" %in% getNamespaceExports("gt")) {
       custom_css <- paste(
-        ".gt_table { border-radius: 16px; overflow: hidden; box-shadow: 0 16px 32px rgba(15, 23, 42, 0.55); }",
-        ".gt_table thead th { position: sticky; top: 0; z-index: 2; }",
-        ".gt_table tbody tr:hover { background-color: #1f2937; }",
+        ".gt_table { border-radius: 18px; overflow: hidden; box-shadow: 0 28px 60px rgba(15, 23, 42, 0.55); background-color: rgba(15, 23, 42, 0.9); }",
+        ".gt_table thead th { position: sticky; top: 0; z-index: 2; backdrop-filter: blur(6px); background-color: rgba(15, 23, 42, 0.92); }",
+        ".gt_table tbody tr:hover { background-color: rgba(37, 99, 235, 0.18); transition: background-color 180ms ease-in-out; }",
         sep = "\n"
       )
       gt_tbl <- tryCatch(
@@ -2071,27 +2196,27 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       }
 
       css_block_gt <- paste0(
-        "body {font-family: 'Source Sans Pro', Arial, sans-serif; background-color: #020617; color: #e2e8f0; margin: 0;}\n",
-        ".page-wrapper {padding: 2rem 1.5rem;}\n",
-        ".table-wrapper {overflow-x: auto;}\n",
-        ".report-intro {max-width: 960px; margin-bottom: 1.5rem; background-color: #0f172a; padding: 1rem 1.25rem; border-radius: 12px; box-shadow: 0 12px 24px rgba(15, 23, 42, 0.45);}\n",
-        ".report-intro h2 {margin: 0 0 0.5rem; font-size: 1.1rem; color: #f8fafc;}\n",
-        ".report-intro p {margin: 0 0 0.75rem; color: #cbd5f5;}\n",
-        ".report-intro ul {margin: 0; padding-left: 1.25rem; color: #e2e8f0;}\n",
-        ".report-intro li {margin-bottom: 0.35rem;}\n",
-        ".gt_table {border-radius: 16px; overflow: hidden; box-shadow: 0 18px 36px rgba(15, 23, 42, 0.55);}\n",
-        ".gt_table thead th {position: sticky; top: 0; z-index: 2;}\n",
-        ".gt_table tbody tr:hover {background-color: #1f2937 !important;}\n",
-        "#table-search {width: 100%; max-width: 360px; padding: 0.65rem 0.85rem; margin-bottom: 1rem; border-radius: 999px; border: 1px solid #1e3a8a; background-color: #0f172a; color: #e2e8f0;}\n",
-        "#table-search:focus {outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.35);}\n",
-        "@media (max-width: 768px) { .gt_table {font-size: 0.9rem;} .gt_table thead th {font-size: 0.75rem;} }\n"
+        "body {font-family: 'Inter','Source Sans Pro','Helvetica Neue',Arial,sans-serif; background: radial-gradient(circle at top,#172554 0%,#020617 70%); color: #e2e8f0; margin: 0;}\n",
+        ".page-wrapper {max-width: 1200px; margin: 0 auto; padding: 3rem 1.5rem 4rem;}\n",
+        ".table-wrapper {overflow-x: auto; border-radius: 18px;}\n",
+        ".report-intro {max-width: 960px; margin: 0 auto 2rem; background: linear-gradient(135deg,rgba(15,23,42,0.95),rgba(30,41,59,0.95)); padding: 1.5rem 1.75rem; border-radius: 18px; border: 1px solid rgba(148,163,184,0.25); box-shadow: 0 24px 56px rgba(15,23,42,0.55);}\n",
+        ".report-intro h2 {margin: 0 0 0.75rem; font-size: 1.3rem; color: #f8fafc; letter-spacing: 0.02em;}\n",
+        ".report-intro p {margin: 0 0 1rem; color: #cbd5f5; font-size: 0.95rem;}\n",
+        ".report-intro ul {margin: 0; padding-left: 1.25rem; color: #e2e8f0; line-height: 1.5;}\n",
+        ".report-intro li {margin-bottom: 0.4rem;}\n",
+        ".gt_table {border-radius: 18px; overflow: hidden; box-shadow: 0 28px 60px rgba(15,23,42,0.55);}\n",
+        ".gt_table thead th {position: sticky; top: 0; z-index: 2; background: rgba(15,23,42,0.92); backdrop-filter: blur(6px);}\n",
+        ".gt_table tbody tr:hover {background-color: rgba(37,99,235,0.18) !important;}\n",
+        "#table-search {width: 100%; max-width: 420px; padding: 0.75rem 1rem; margin: 0 auto 1.5rem; border-radius: 999px; border: 1px solid rgba(148,163,184,0.35); background-color: rgba(15,23,42,0.85); color: #f8fafc; display: block; box-shadow: 0 12px 30px rgba(15,23,42,0.45);}\n",
+        "#table-search:focus {outline: none; border-color: #60a5fa; box-shadow: 0 0 0 3px rgba(96,165,250,0.35);}\n",
+        "@media (max-width: 768px) { .gt_table {font-size: 0.88rem;} .gt_table thead th {font-size: 0.7rem;} .report-intro {padding: 1.25rem;} }\n"
       )
 
       search_box <- htmltools::tags$input(
         id = "table-search",
         type = "search",
         class = "table-search",
-        placeholder = "Search teams, winners, or picks...",
+        placeholder = "Search teams, wagers, or math checks...",
         `aria-label` = "Search moneyline table"
       )
 
@@ -2125,30 +2250,30 @@ export_moneyline_comparison_html <- function(comparison_tbl,
   }
 
   if (!saved) {
-    css_block <- "body {font-family: 'Source Sans Pro', Arial, sans-serif; background-color: #020617; color: #e2e8f0; margin: 0;}\n"
+    css_block <- "body {font-family: 'Inter','Source Sans Pro','Helvetica Neue',Arial,sans-serif; background: radial-gradient(circle at top,#172554 0%,#020617 70%); color: #e2e8f0; margin: 0;}\n"
     css_block <- paste0(
       css_block,
-      ".page-wrapper {padding: 2rem 1.5rem;}\n",
-      ".table-wrapper {overflow-x: auto;}\n",
-      ".report-intro {max-width: 960px; margin-bottom: 1.5rem; background-color: #0f172a; padding: 1rem 1.25rem; border-radius: 12px; box-shadow: 0 12px 24px rgba(15, 23, 42, 0.45);}\n",
-      ".report-intro h2 {margin: 0 0 0.5rem; font-size: 1.1rem; color: #f8fafc;}\n",
-      ".report-intro p {margin: 0 0 0.75rem; color: #cbd5f5;}\n",
-      ".report-intro ul {margin: 0; padding-left: 1.25rem; color: #e2e8f0;}\n",
-      ".report-intro li {margin-bottom: 0.35rem;}\n",
-      "table {width: 100%; border-collapse: separate; border-spacing: 0; background-color: #0f172a; color: #e2e8f0; border-radius: 16px; overflow: hidden; box-shadow: 0 18px 36px rgba(15, 23, 42, 0.55); border: 1px solid #1e293b;}\n",
-      "thead th {background-color: #1e293b; color: #f8fafc; text-transform: uppercase; letter-spacing: 0.08em; position: sticky; top: 0; z-index: 2;}\n",
-      "td, th {padding: 10px 12px; border-bottom: 1px solid #1f2937; text-align: center;}\n",
+      ".page-wrapper {max-width: 1200px; margin: 0 auto; padding: 3rem 1.5rem 4rem;}\n",
+      ".table-wrapper {overflow-x: auto; border-radius: 18px;}\n",
+      ".report-intro {max-width: 960px; margin: 0 auto 2rem; background: linear-gradient(135deg,rgba(15,23,42,0.95),rgba(30,41,59,0.95)); padding: 1.5rem 1.75rem; border-radius: 18px; border: 1px solid rgba(148,163,184,0.25); box-shadow: 0 24px 56px rgba(15,23,42,0.55);}\n",
+      ".report-intro h2 {margin: 0 0 0.75rem; font-size: 1.3rem; color: #f8fafc; letter-spacing: 0.02em;}\n",
+      ".report-intro p {margin: 0 0 1rem; color: #cbd5f5; font-size: 0.95rem;}\n",
+      ".report-intro ul {margin: 0; padding-left: 1.25rem; color: #e2e8f0; line-height: 1.5;}\n",
+      ".report-intro li {margin-bottom: 0.4rem;}\n",
+      "table {width: 100%; border-collapse: separate; border-spacing: 0; background-color: rgba(15,23,42,0.94); color: #e2e8f0; border-radius: 18px; overflow: hidden; box-shadow: 0 28px 60px rgba(15,23,42,0.55); border: 1px solid rgba(148,163,184,0.2);}\n",
+      "thead th {background-color: rgba(17,28,47,0.95); color: #f8fafc; text-transform: uppercase; letter-spacing: 0.08em; position: sticky; top: 0; z-index: 2;}\n",
+      "td, th {padding: 12px 14px; border-bottom: 1px solid rgba(30,41,59,0.75); text-align: center;}\n",
       "td.text-left {text-align: left;}\n",
-      "tr:nth-child(even) {background-color: #111c2f;}\n",
-      "tr.blend-win {background-color: #14532d;}\n",
+      "tr:nth-child(even) {background-color: rgba(15,23,42,0.65);}\n",
+      "tr.blend-win {background: linear-gradient(135deg,rgba(22,101,52,0.75),rgba(21,128,61,0.6));}\n",
       "tr.blend-win td {color: #ecfdf5;}\n",
-      "td.blend-reco {background-color: #1d4ed8 !important; color: #f8fafc !important; font-weight: 600;}\n",
+      "td.blend-reco {background-color: rgba(37,99,235,0.75) !important; color: #f8fafc !important; font-weight: 600;}\n",
       "td.winner-cell {color: #fcd34d; font-weight: 600;}\n",
-      "tbody tr:hover {background-color: #1f2937;}\n",
+      "tbody tr:hover {background-color: rgba(37,99,235,0.18);}\n",
       "caption {caption-side: top; font-size: 1.35rem; font-weight: 600; margin-bottom: 0.75rem; color: #f8fafc;}\n",
-      "#table-search {width: 100%; max-width: 360px; padding: 0.65rem 0.85rem; margin-bottom: 1rem; border-radius: 999px; border: 1px solid #1e3a8a; background-color: #0f172a; color: #e2e8f0;}\n",
-      "#table-search:focus {outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.35);}\n",
-      "@media (max-width: 768px) { table {font-size: 0.9rem;} thead th {font-size: 0.75rem;} }\n"
+      "#table-search {width: 100%; max-width: 420px; padding: 0.75rem 1rem; margin: 0 auto 1.5rem; border-radius: 999px; border: 1px solid rgba(148,163,184,0.35); background-color: rgba(15,23,42,0.85); color: #f8fafc; display: block; box-shadow: 0 12px 30px rgba(15,23,42,0.45);}\n",
+      "#table-search:focus {outline: none; border-color: #60a5fa; box-shadow: 0 0 0 3px rgba(96,165,250,0.35);}\n",
+      "@media (max-width: 768px) { table {font-size: 0.88rem;} thead th {font-size: 0.7rem;} }\n"
     )
 
     formatted_tbl <- display_tbl %>%
@@ -2156,6 +2281,10 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         `Blend Edge` = scales::percent(`Blend Edge`, accuracy = 0.1),
         `Market Home Prob` = scales::percent(`Market Home Prob`, accuracy = 0.1),
         `Blend Home Prob` = scales::percent(`Blend Home Prob`, accuracy = 0.1),
+        `Market Spread Win%` = scales::percent(`Market Spread Win%`, accuracy = 0.1),
+        `Blend Spread Win%` = scales::percent(`Blend Spread Win%`, accuracy = 0.1),
+        `Market Prob Δ` = scales::percent(`Market Prob Δ`, accuracy = 0.1),
+        `Blend Prob Δ` = scales::percent(`Blend Prob Δ`, accuracy = 0.1),
         `Market Away Prob` = scales::percent(`Market Away Prob`, accuracy = 0.1),
         `Blend Away Prob` = scales::percent(`Blend Away Prob`, accuracy = 0.1),
         `Blend Median Margin` = format_signed_spread(`Blend Median Margin`),
@@ -2240,7 +2369,7 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         id = "table-search",
         type = "search",
         class = "table-search",
-        placeholder = "Search teams, winners, or picks...",
+        placeholder = "Search teams, wagers, or math checks...",
         `aria-label` = "Search moneyline table"
       )
 
@@ -2312,7 +2441,7 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       html <- paste0(
         "<html><head><style>",
         css_block,
-        "</style></head><body><div class=\"page-wrapper\"><input id=\"table-search\" type=\"search\" placeholder=\"Search teams, winners, or picks...\" aria-label=\"Search moneyline table\"/>",
+        "</style></head><body><div class=\"page-wrapper\"><input id=\"table-search\" type=\"search\" placeholder=\"Search teams, wagers, or math checks...\" aria-label=\"Search moneyline table\"/>",
         intro_html,
         "<div class=\"table-wrapper\"><table id=\"",
         table_id,
