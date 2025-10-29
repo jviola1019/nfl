@@ -1031,13 +1031,12 @@ if (!exists("build_moneyline_comparison_table", inherits = FALSE)) {
           blend_pick_side == "away" ~ market_away_ml - blend_away_ml,
           TRUE ~ NA_real_
         ),
-        market_ev_units = expected_value_units(market_prob_pick, market_moneyline),
         blend_vs_market_info = purrr::pmap(
           list(
             blend_actual_units,
             market_actual_units,
             blend_ev_units,
-            market_ev_units,
+            dplyr::if_else(is.na(blend_ev_units), NA_real_, -blend_ev_units),
             blend_prob_pick,
             market_prob_pick,
             blend_pick,
@@ -1077,6 +1076,11 @@ if (!exists("build_moneyline_comparison_table", inherits = FALSE)) {
             }
             detail
           }
+        ),
+        market_ev_units = dplyr::if_else(
+          is.na(blend_ev_units),
+          NA_real_,
+          -blend_ev_units
         ),
         market_winning = {
           realized_market <- dplyr::case_when(
@@ -1274,8 +1278,6 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
           blend_beats_market ~ "Yes",
           TRUE ~ "No"
         ),
-        `Basis` = blend_beats_market_basis,
-        `Note` = blend_beats_market_note,
         `Market Home Prob` = market_home_prob,
         `Blend Home Prob` = blend_home_prob,
         `Market Away Prob` = market_away_prob,
@@ -1348,7 +1350,8 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
       gt_tbl <- gt_apply_if_columns(
         gt_tbl,
         c(
-          "Season", "Week", "Blend Beat Market?"
+          "Season", "Week", "Blend Favorite", "Blend Recommendation",
+          "Blend Beat Market?"
         ),
         gt::cols_align,
         align = "center"
@@ -1357,7 +1360,7 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
         gt_tbl,
         c(
           "Matchup", "Winner", "Blend Favorite", "Blend Recommendation",
-          "Basis", "Note"
+          "Blend Beat Market Basis", "Blend Beat Market Note"
         ),
         gt::cols_align,
         align = "left"
@@ -1493,7 +1496,7 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
       if (requireNamespace("htmltools", quietly = TRUE)) {
         left_align_cols <- c(
           "Matchup", "Winner", "Blend Favorite", "Blend Recommendation",
-          "Basis", "Note"
+          "Blend Beat Market Basis", "Blend Beat Market Note"
         )
         rows <- purrr::map(
           seq_len(nrow(formatted_tbl)),
@@ -1579,7 +1582,7 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
         header <- paste(names(formatted_tbl), collapse = "</th><th>")
         left_align_cols <- c(
           "Matchup", "Winner", "Blend Favorite", "Blend Recommendation",
-          "Basis", "Note"
+          "Blend Beat Market Basis", "Blend Beat Market Note"
         )
         body <- purrr::map_chr(
           seq_len(nrow(formatted_tbl)),

@@ -654,41 +654,17 @@ assess_blend_vs_market <- function(
     return(list(result = result, basis = basis, detail = detail))
   }
 
-  if (!is.na(blend_ev_units) || !is.na(market_ev_units)) {
+  if (!is.na(blend_ev_units)) {
+    result <- ifelse(blend_ev_units > eps, TRUE, ifelse(blend_ev_units < -eps, FALSE, NA))
     basis <- "Expected value"
-    if (!is.na(blend_ev_units) && !is.na(market_ev_units)) {
-      diff_ev <- blend_ev_units - market_ev_units
-      result <- ifelse(diff_ev > eps, TRUE, ifelse(diff_ev < -eps, FALSE, NA))
-      detail <- sprintf(
-        "EV diff on %s: blend %s vs market %s units (diff %+.3f).",
-        safe_label,
-        fmt_units(blend_ev_units),
-        fmt_units(market_ev_units),
-        diff_ev
-      )
-      if (!is.na(result)) {
-        return(list(result = result, basis = basis, detail = detail))
-      }
-    } else if (!is.na(blend_ev_units)) {
-      result <- ifelse(blend_ev_units > eps, TRUE, ifelse(blend_ev_units < -eps, FALSE, NA))
-      detail <- sprintf(
-        "EV on %s: blend %s units; market EV unavailable.",
-        safe_label,
-        fmt_units(blend_ev_units)
-      )
-      if (!is.na(result)) {
-        return(list(result = result, basis = basis, detail = detail))
-      }
-    } else if (!is.na(market_ev_units)) {
-      result <- ifelse(market_ev_units < -eps, TRUE, ifelse(market_ev_units > eps, FALSE, NA))
-      detail <- sprintf(
-        "Market EV for %s is %s; blend EV unavailable.",
-        safe_label,
-        fmt_units(market_ev_units)
-      )
-      if (!is.na(result)) {
-        return(list(result = result, basis = basis, detail = detail))
-      }
+    detail <- sprintf(
+      "EV on %s: blend %s units vs market %s.",
+      safe_label,
+      fmt_units(blend_ev_units),
+      fmt_units(market_ev_units)
+    )
+    if (!is.na(result)) {
+      return(list(result = result, basis = basis, detail = detail))
     }
   }
 
@@ -697,11 +673,10 @@ assess_blend_vs_market <- function(
     result <- ifelse(prob_diff > eps, TRUE, ifelse(prob_diff < -eps, FALSE, NA))
     basis <- "Win probability"
     detail <- sprintf(
-      "%s win probability: blend %s vs market %s (diff %+.1f pp).",
+      "%s win probability: blend %s vs market %s.",
       safe_label,
       fmt_prob(blend_prob_pick),
-      fmt_prob(market_prob_pick),
-      100 * prob_diff
+      fmt_prob(market_prob_pick)
     )
     if (!is.na(result)) {
       return(list(result = result, basis = basis, detail = detail))
@@ -1628,7 +1603,11 @@ build_moneyline_comparison_table <- function(market_comparison_result,
         blend_pick_side == "away" ~ market_away_ml - blend_away_ml,
         TRUE ~ NA_real_
       ),
-      market_ev_units = expected_value_units(market_prob_pick, market_moneyline),
+      market_ev_units = dplyr::if_else(
+        is.na(blend_ev_units),
+        NA_real_,
+        -blend_ev_units
+      ),
       blend_vs_market_info = purrr::pmap(
         list(
           blend_actual_units,
@@ -1871,8 +1850,6 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         blend_beats_market ~ "Yes",
         TRUE ~ "No"
       ),
-      `Basis` = blend_beats_market_basis,
-      `Note` = blend_beats_market_note,
       `Blend Home Prob` = blend_home_prob,
       `Market Home Prob` = market_home_prob,
       `Blend Away Prob` = blend_away_prob,
@@ -1946,8 +1923,8 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       gt_tbl,
       c(
         "Matchup", "Winner", "Blend Favorite", "Market Favorite",
-        "Blend Pick", "Blend Recommendation", "Basis",
-        "Note"
+        "Blend Pick", "Blend Recommendation", "Blend Beat Market Basis",
+        "Blend Beat Market Note"
       ),
       gt::cols_align,
       align = "left"
@@ -2206,8 +2183,8 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     if (requireNamespace("htmltools", quietly = TRUE)) {
       left_align_cols <- c(
         "Matchup", "Winner", "Blend Favorite", "Market Favorite",
-        "Blend Pick", "Blend Recommendation", "Basis",
-        "Note"
+        "Blend Pick", "Blend Recommendation", "Blend Beat Market Basis",
+        "Blend Beat Market Note"
       )
       rows <- purrr::map(
         seq_len(nrow(formatted_tbl)),
@@ -2289,8 +2266,8 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       header <- paste(names(formatted_tbl), collapse = "</th><th>")
       left_align_cols <- c(
         "Matchup", "Winner", "Blend Favorite", "Market Favorite",
-        "Blend Pick", "Blend Recommendation", "Basis",
-        "Note"
+        "Blend Pick", "Blend Recommendation", "Blend Beat Market Basis",
+        "Blend Beat Market Note"
       )
       body <- purrr::map_chr(
         seq_len(nrow(formatted_tbl)),
