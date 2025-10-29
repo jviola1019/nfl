@@ -912,25 +912,81 @@ if (!exists("build_moneyline_comparison_table", inherits = FALSE)) {
         ),
         blend_prob_fav = blend_prob_pick,
         market_prob_fav = market_prob_pick,
+        market_pick_side = dplyr::case_when(
+          is.na(market_home_prob) ~ NA_character_,
+          market_home_prob >= market_away_prob ~ "home",
+          TRUE ~ "away"
+        ),
+        market_pick = dplyr::case_when(
+          market_pick_side == "home" ~ home_team,
+          market_pick_side == "away" ~ away_team,
+          TRUE ~ NA_character_
+        ),
+        market_pick_moneyline = dplyr::case_when(
+          market_pick_side == "home" ~ market_home_ml,
+          market_pick_side == "away" ~ market_away_ml,
+          TRUE ~ NA_real_
+        ),
+        actual_winner_side = dplyr::case_when(
+          is.na(actual_home_win) ~ NA_character_,
+          actual_home_win == 1L ~ "home",
+          actual_home_win == 0L ~ "away",
+          TRUE ~ NA_character_
+        ),
+        blend_actual_units = realized_moneyline_units(
+          pick_side = blend_pick_side,
+          winner_side = actual_winner_side,
+          odds = market_moneyline
+        ),
+        market_actual_units = realized_moneyline_units(
+          pick_side = market_pick_side,
+          winner_side = actual_winner_side,
+          odds = market_pick_moneyline
+        ),
         blend_edge_prob = dplyr::case_when(
           is.na(blend_prob_pick) | is.na(market_prob_pick) ~ NA_real_,
           TRUE ~ blend_prob_pick - market_prob_pick
         ),
         blend_ev_units = blend_best_ev,
-        blend_beats_market = dplyr::case_when(
-          is.na(blend_ev_units) ~ NA,
-          TRUE ~ blend_ev_units > 0
-        ),
+        blend_beats_market = {
+          realized_cmp <- dplyr::case_when(
+            is.na(blend_actual_units) ~ NA,
+            is.na(market_actual_units) ~ dplyr::case_when(
+              blend_actual_units > 0 ~ TRUE,
+              blend_actual_units < 0 ~ FALSE,
+              TRUE ~ NA
+            ),
+            TRUE ~ blend_actual_units > market_actual_units
+          )
+          dplyr::coalesce(
+            realized_cmp,
+            dplyr::case_when(
+              is.na(blend_ev_units) ~ NA,
+              TRUE ~ blend_ev_units > 0
+            )
+          )
+        },
         market_ev_units = dplyr::if_else(
           is.na(blend_ev_units),
           NA_real_,
           -blend_ev_units
         ),
-        market_winning = dplyr::case_when(
-          is.na(market_ev_units) ~ NA,
-          market_ev_units > 0 ~ TRUE,
-          TRUE ~ FALSE
-        ),
+        market_winning = {
+          realized_market <- dplyr::case_when(
+            is.na(market_actual_units) ~ NA,
+            market_actual_units > 0 ~ TRUE,
+            market_actual_units < 0 ~ FALSE,
+            TRUE ~ NA
+          )
+          dplyr::coalesce(
+            realized_market,
+            dplyr::case_when(
+              is.na(market_ev_units) ~ NA,
+              market_ev_units > 0 ~ TRUE,
+              TRUE ~ FALSE
+            )
+          )
+        },
         blend_recommendation = dplyr::case_when(
           is.na(blend_ev_units) ~ "No play",
           blend_ev_units > 0 ~ paste("Bet", blend_pick, "moneyline"),
