@@ -930,6 +930,7 @@ if (!exists("build_moneyline_comparison_table", inherits = FALSE)) {
           NA_real_,
           blend_best_ev
         ),
+        blend_ev_units = blend_best_ev,
         blend_pick_side = dplyr::case_when(
           is.na(blend_best_ev) ~ NA_character_,
           blend_best_ev <= 0 ~ NA_character_,
@@ -1024,25 +1025,58 @@ if (!exists("build_moneyline_comparison_table", inherits = FALSE)) {
           is.na(blend_prob_pick) | is.na(market_prob_pick) ~ NA_real_,
           TRUE ~ blend_prob_pick - market_prob_pick
         ),
-        blend_ev_units = blend_best_ev,
-        blend_beats_market = {
-          realized_cmp <- dplyr::case_when(
-            is.na(blend_actual_units) ~ NA,
-            is.na(market_actual_units) ~ dplyr::case_when(
-              blend_actual_units > 0 ~ TRUE,
-              blend_actual_units < 0 ~ FALSE,
-              TRUE ~ NA
-            ),
-            TRUE ~ blend_actual_units > market_actual_units
-          )
-          dplyr::coalesce(
-            realized_cmp,
-            dplyr::case_when(
-              is.na(blend_ev_units) ~ NA,
-              TRUE ~ blend_ev_units > 0
-            )
-          )
-        },
+        blend_edge_moneyline = dplyr::case_when(
+          is.na(blend_pick_side) ~ NA_real_,
+          blend_pick_side == "home" ~ market_home_ml - blend_home_ml,
+          blend_pick_side == "away" ~ market_away_ml - blend_away_ml,
+          TRUE ~ NA_real_
+        ),
+        blend_vs_market_info = purrr::pmap(
+          list(
+            blend_actual_units,
+            market_actual_units,
+            blend_ev_units,
+            dplyr::if_else(is.na(blend_ev_units), NA_real_, -blend_ev_units),
+            blend_prob_pick,
+            market_prob_pick,
+            blend_pick,
+            blend_moneyline,
+            market_moneyline,
+            blend_edge_moneyline
+          ),
+          assess_blend_vs_market
+        ),
+        blend_beats_market = vapply(
+          blend_vs_market_info,
+          function(x) {
+            res <- x$result
+            if (is.null(res)) {
+              return(NA)
+            }
+            res
+          },
+          logical(1)
+        ),
+        blend_beats_market_basis = purrr::map_chr(
+          blend_vs_market_info,
+          function(x) {
+            basis <- x$basis
+            if (is.null(basis) || is.na(basis)) {
+              return(NA_character_)
+            }
+            basis
+          }
+        ),
+        blend_beats_market_note = purrr::map_chr(
+          blend_vs_market_info,
+          function(x) {
+            detail <- x$detail
+            if (is.null(detail) || is.na(detail)) {
+              return(NA_character_)
+            }
+            detail
+          }
+        ),
         market_ev_units = dplyr::if_else(
           is.na(blend_ev_units),
           NA_real_,
@@ -1105,6 +1139,7 @@ if (!exists("build_moneyline_comparison_table", inherits = FALSE)) {
         model_ev_units = blend_ev_units_home,
         market_beats_model = brier_market < brier_model
       ) %>%
+      dplyr::mutate(blend_vs_market_info = NULL) %>%
       dplyr::select(-blend_best_ev) %>%
       dplyr::arrange(season, week, game_date, matchup)
 
@@ -1204,6 +1239,19 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
       out
     }
   
+    intro_html <- paste0(
+      "<section class=\"report-intro\">",
+      "<h2>How to read this report</h2>",
+      "<p>Each row compares the blend's Monte Carlo outlook to the active moneyline market.</p>",
+      "<ul>",
+      "<li><strong>Blend Beat Market?</strong> reflects the basis listed next to it, prioritizing final results when available.</li>",
+      "<li><strong>Basis</strong> notes whether the edge comes from results, expected value, win probability, or a better posted price.</li>",
+      "<li><strong>Note</strong> summarizes how the blend surpassed (or failed to surpass) the market.</li>",
+      "<li>Median scores, totals, and margins come from the simulation; spreads are from the home team perspective with plus signs for underdogs.</li>",
+      "</ul>",
+      "</section>"
+    )
+
     display_tbl <- comparison_tbl %>%
       dplyr::transmute(
         Season = season,
@@ -1234,7 +1282,7 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
         `Blend Home Prob` = blend_home_prob,
         `Market Away Prob` = market_away_prob,
         `Blend Away Prob` = blend_away_prob,
-        Winner = actual_winner
+        Winner = dplyr::coalesce(actual_winner, "TBD")
       )
   
     saved <- FALSE
@@ -1307,6 +1355,15 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
         ),
         gt::cols_align,
         align = "center"
+      )
+      gt_tbl <- gt_apply_if_columns(
+        gt_tbl,
+        c(
+          "Matchup", "Winner", "Blend Favorite", "Blend Recommendation",
+          "Blend Beat Market Basis", "Blend Beat Market Note"
+        ),
+        gt::cols_align,
+        align = "left"
       )
       gt_tbl <- gt_apply_labels(
         gt_tbl,
@@ -1383,12 +1440,23 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
     }
   
     if (!saved) {
-      css_block <- "body {font-family: 'Source Sans Pro', Arial, sans-serif; background-color: #020617; color: #e2e8f0;}\n"
+      css_block <- "body {font-family: 'Source Sans Pro', Arial, sans-serif; background-color: #020617; color: #e2e8f0; margin: 0;}\n"
       css_block <- paste0(
         css_block,
+        ".page-wrapper {padding: 2rem 1.5rem;}\n",
+        ".table-wrapper {overflow-x: auto;}\n",
+        ".report-intro {max-width: 960px; margin-bottom: 1.5rem; background-color: #0f172a; padding: 1rem 1.25rem; border-radius: 12px; box-shadow: 0 12px 24px rgba(15, 23, 42, 0.45);}\n",
+        ".report-intro h2 {margin: 0 0 0.5rem; font-size: 1.1rem; color: #f8fafc;}\n",
+        ".report-intro p {margin: 0 0 0.75rem; color: #cbd5f5;}\n",
+        ".report-intro ul {margin: 0; padding-left: 1.25rem; color: #e2e8f0;}\n",
+        ".report-intro li {margin-bottom: 0.35rem;}\n",
+        "#table-search {width: 100%; max-width: 360px; padding: 0.65rem 0.85rem; margin-bottom: 1rem; border-radius: 999px; border: 1px solid #1e3a8a; background-color: #0f172a; color: #e2e8f0;}\n",
+        "#table-search:focus {outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.35);}\n",
         "table {width: 100%; border-collapse: collapse; background-color: #0f172a; color: #e2e8f0;}\n",
         "th {background-color: #1e293b; color: #f8fafc; text-transform: uppercase; letter-spacing: 0.08em;}\n",
         "td, th {padding: 10px 12px; border-bottom: 1px solid #1f2937; text-align: center;}\n",
+        "td.text-left {text-align: left;}\n",
+        "td.winner-cell {color: #fcd34d; font-weight: 600;}\n",
         "tr:nth-child(even) {background-color: #111c2f;}\n",
         "tr.blend-win {background-color: #14532d;}\n",
         "tr.blend-win td {color: #ecfdf5;}\n",
@@ -1423,7 +1491,13 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
           )
         )
   
+      table_id <- "simulation-moneyline-table"
+
       if (requireNamespace("htmltools", quietly = TRUE)) {
+        left_align_cols <- c(
+          "Matchup", "Winner", "Blend Favorite", "Blend Recommendation",
+          "Blend Beat Market Basis", "Blend Beat Market Note"
+        )
         rows <- purrr::map(
           seq_len(nrow(formatted_tbl)),
           ~ {
@@ -1441,14 +1515,20 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
             htmltools::tags$tr(
               class = paste(row_classes, collapse = " "),
               purrr::imap(row_list, function(value, col_name) {
-                cell_class <- NULL
+                cell_classes <- character(0)
                 if (identical(col_name, "Blend Recommendation") && !is.null(recommendation_val) &&
                     !identical(recommendation_val, "Pass") && !is.na(recommendation_val)) {
-                  cell_class <- "blend-reco"
+                  cell_classes <- c(cell_classes, "blend-reco")
+                }
+                if (col_name %in% left_align_cols) {
+                  cell_classes <- c(cell_classes, "text-left")
+                }
+                if (identical(col_name, "Winner") && !is.na(value) && nzchar(value) && value != "TBD") {
+                  cell_classes <- c(cell_classes, "winner-cell")
                 }
                 cell_value <- ifelse(is.na(value), "", value)
-                if (length(cell_class)) {
-                  htmltools::tags$td(class = cell_class, cell_value)
+                if (length(cell_classes)) {
+                  htmltools::tags$td(class = paste(cell_classes, collapse = " "), cell_value)
                 } else {
                   htmltools::tags$td(cell_value)
                 }
@@ -1456,22 +1536,54 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
             )
           }
         )
-  
+
         table_html <- htmltools::tags$table(
+          id = table_id,
           htmltools::tags$caption(title),
           htmltools::tags$thead(htmltools::tags$tr(purrr::map(names(formatted_tbl), htmltools::tags$th))),
           htmltools::tags$tbody(rows)
         )
-  
+
+        search_box <- htmltools::tags$input(
+          id = "table-search",
+          type = "search",
+          class = "table-search",
+          placeholder = "Search teams, winners, or picks...",
+          `aria-label` = "Search moneyline table"
+        )
+
+        intro_block <- htmltools::HTML(intro_html)
+
+        wrapper <- htmltools::tags$div(
+          class = "page-wrapper",
+          search_box,
+          intro_block,
+          htmltools::tags$div(
+            class = "table-wrapper",
+            table_html
+          )
+        )
+
+        script_block <- htmltools::tags$script(htmltools::HTML(
+          sprintf(
+            "(function(){var input=document.getElementById('table-search');var table=document.getElementById('%s');if(!input||!table){return;}var rows=table.getElementsByTagName('tbody')[0].rows;input.addEventListener('input',function(){var query=this.value.toLowerCase();Array.prototype.forEach.call(rows,function(row){var text=row.textContent.toLowerCase();row.style.display=text.indexOf(query)>-1?'':'none';});});})();",
+            table_id
+          )
+        ))
+
         doc <- htmltools::tags$html(
           htmltools::tags$head(htmltools::tags$style(css_block)),
-          htmltools::tags$body(table_html)
+          htmltools::tags$body(wrapper, script_block)
         )
-  
+
         htmltools::save_html(doc, file = file)
         saved <- TRUE
       } else {
         header <- paste(names(formatted_tbl), collapse = "</th><th>")
+        left_align_cols <- c(
+          "Matchup", "Winner", "Blend Favorite", "Blend Recommendation",
+          "Blend Beat Market Basis", "Blend Beat Market Note"
+        )
         body <- purrr::map_chr(
           seq_len(nrow(formatted_tbl)),
           function(idx) {
@@ -1488,14 +1600,20 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
             }
             row_class_attr <- if (length(row_classes)) sprintf(" class=\"%s\"", paste(row_classes, collapse = " ")) else ""
             cells <- purrr::imap_chr(row_list, function(value, col_name) {
-              cell_class <- NULL
+              cell_classes <- character(0)
               if (identical(col_name, "Blend Recommendation") && !is.null(recommendation_val) &&
                   !identical(recommendation_val, "Pass") && !is.na(recommendation_val)) {
-                cell_class <- "blend-reco"
+                cell_classes <- c(cell_classes, "blend-reco")
+              }
+              if (col_name %in% left_align_cols) {
+                cell_classes <- c(cell_classes, "text-left")
+              }
+              if (identical(col_name, "Winner") && !is.null(value) && !is.na(value) && nzchar(value) && value != "TBD") {
+                cell_classes <- c(cell_classes, "winner-cell")
               }
               cell_value <- ifelse(is.na(value), "", value)
-              if (length(cell_class)) {
-                sprintf("<td class=\"%s\">%s</td>", cell_class, cell_value)
+              if (length(cell_classes)) {
+                sprintf("<td class=\"%s\">%s</td>", paste(cell_classes, collapse = " "), cell_value)
               } else {
                 sprintf("<td>%s</td>", cell_value)
               }
@@ -1506,13 +1624,19 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
         html <- paste0(
           "<html><head><style>",
           css_block,
-          "</style></head><body><table><caption>",
+          "</style></head><body><div class=\"page-wrapper\"><input id=\"table-search\" type=\"search\" placeholder=\"Search teams, winners, or picks...\" aria-label=\"Search moneyline table\"/>",
+          intro_html,
+          "<div class=\"table-wrapper\"><table id=\"",
+          table_id,
+          "\"><caption>",
           title,
           "</caption><thead><tr><th>",
           header,
           "</th></tr></thead><tbody>",
           paste(body, collapse = ""),
-          "</tbody></table></body></html>"
+          "</tbody></table></div></div><script>(function(){var input=document.getElementById('table-search');var table=document.getElementById('",
+          table_id,
+          "');if(!input||!table){return;}var rows=table.getElementsByTagName('tbody')[0].rows;input.addEventListener('input',function(){var query=this.value.toLowerCase();Array.prototype.forEach.call(rows,function(row){var text=row.textContent.toLowerCase();row.style.display=text.indexOf(query)>-1?'':'none';});});})();</script></body></html>"
         )
         writeLines(html, con = file)
         saved <- TRUE

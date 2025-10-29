@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 
 <html lang="en">
@@ -7,13 +8,25 @@
 <style>body {font-family: 'Source Sans Pro', Arial, sans-serif; background-color: #020617; color: #e2e8f0; margin: 0;}
 .page-wrapper {padding: 2rem 1.5rem;}
 .table-wrapper {overflow-x: auto;}
-.gt_table {border-radius: 16px; overflow: hidden; box-shadow: 0 18px 36px rgba(15, 23, 42, 0.55);}
-.gt_table thead th {position: sticky; top: 0; z-index: 2;}
-.gt_table tbody tr:hover {background-color: #1f2937 !important;}
+.report-intro {max-width: 960px; margin-bottom: 1.5rem; background-color: #0f172a; padding: 1rem 1.25rem; border-radius: 12px; box-shadow: 0 12px 24px rgba(15, 23, 42, 0.45);}
+.report-intro h2 {margin: 0 0 0.5rem; font-size: 1.1rem; color: #f8fafc;}
+.report-intro p {margin: 0 0 0.75rem; color: #cbd5f5;}
+.report-intro ul {margin: 0; padding-left: 1.25rem; color: #e2e8f0;}
+.report-intro li {margin-bottom: 0.35rem;}
+table {width: 100%; border-collapse: separate; border-spacing: 0; background-color: #0f172a; color: #e2e8f0; border-radius: 16px; overflow: hidden; box-shadow: 0 18px 36px rgba(15, 23, 42, 0.55); border: 1px solid #1e293b;}
+thead th {background-color: #1e293b; color: #f8fafc; text-transform: uppercase; letter-spacing: 0.08em; position: sticky; top: 0; z-index: 2;}
+td, th {padding: 10px 12px; border-bottom: 1px solid #1f2937; text-align: center;}
+td.text-left {text-align: left;}
+td.winner-cell {color: #fcd34d; font-weight: 600;}
+tr:nth-child(even) {background-color: #111c2f;}
+tr.blend-win {background-color: #14532d;}
+tr.blend-win td {color: #ecfdf5;}
+tr.blend-action td {font-weight: 500;}
+td.blend-reco {background-color: #1d4ed8 !important; color: #f8fafc !important; font-weight: 600;}
+caption {caption-side: top; font-size: 1.25rem; font-weight: 600; margin-bottom: 0.75rem; color: #f8fafc;}
 #table-search {width: 100%; max-width: 360px; padding: 0.65rem 0.85rem; margin-bottom: 1rem; border-radius: 999px; border: 1px solid #1e3a8a; background-color: #0f172a; color: #e2e8f0;}
 #table-search:focus {outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.35);}
-@media (max-width: 768px) { .gt_table {font-size: 0.9rem;} .gt_table thead th {font-size: 0.75rem;} }
-</style>
+@media (max-width: 768px) { table {font-size: 0.9rem;} thead th {font-size: 0.75rem;} }</style>
 </head>
 <html>
 <body>

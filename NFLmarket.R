@@ -588,6 +588,121 @@ realized_moneyline_units <- function(pick_side, winner_side, odds, stake = 1) {
   out
 }
 
+assess_blend_vs_market <- function(
+    blend_actual_units,
+    market_actual_units,
+    blend_ev_units,
+    market_ev_units,
+    blend_prob_pick,
+    market_prob_pick,
+    blend_pick_label,
+    blend_moneyline,
+    market_moneyline,
+    blend_edge_moneyline) {
+  eps <- sqrt(.Machine$double.eps)
+
+  fmt_units <- function(x) {
+    ifelse(is.na(x), "n/a", sprintf("%+.3f", as.numeric(x)))
+  }
+
+  fmt_prob <- function(x) {
+    ifelse(is.na(x), "n/a", sprintf("%.1f%%", 100 * as.numeric(x)))
+  }
+
+  fmt_odds <- function(x) {
+    if (is.na(x) || !is.finite(x)) {
+      return("n/a")
+    }
+    odds_int <- as.integer(round(x))
+    if (odds_int > 0) {
+      sprintf("+%d", odds_int)
+    } else {
+      sprintf("%d", odds_int)
+    }
+  }
+
+  safe_label <- if (is.null(blend_pick_label) || is.na(blend_pick_label) || !nzchar(blend_pick_label)) {
+    "the blend side"
+  } else {
+    blend_pick_label
+  }
+
+  basis <- NA_character_
+  detail <- NA_character_
+  result <- NA
+
+  if (!is.na(blend_actual_units) && !is.na(market_actual_units)) {
+    diff_units <- blend_actual_units - market_actual_units
+    result <- ifelse(diff_units > eps, TRUE, ifelse(diff_units < -eps, FALSE, NA))
+    basis <- "Final score"
+    detail <- sprintf(
+      "Final result: blend %s vs market %s units (diff %+.3f).",
+      fmt_units(blend_actual_units),
+      fmt_units(market_actual_units),
+      diff_units
+    )
+    return(list(result = result, basis = basis, detail = detail))
+  }
+
+  if (!is.na(blend_actual_units)) {
+    result <- ifelse(blend_actual_units > eps, TRUE, ifelse(blend_actual_units < -eps, FALSE, NA))
+    basis <- "Final score"
+    detail <- sprintf(
+      "Blend realized %s units; market result unavailable.",
+      fmt_units(blend_actual_units)
+    )
+    return(list(result = result, basis = basis, detail = detail))
+  }
+
+  if (!is.na(blend_ev_units)) {
+    result <- ifelse(blend_ev_units > eps, TRUE, ifelse(blend_ev_units < -eps, FALSE, NA))
+    basis <- "Expected value"
+    detail <- sprintf(
+      "EV on %s: blend %s units vs market %s.",
+      safe_label,
+      fmt_units(blend_ev_units),
+      fmt_units(market_ev_units)
+    )
+    if (!is.na(result)) {
+      return(list(result = result, basis = basis, detail = detail))
+    }
+  }
+
+  if (!is.na(blend_prob_pick) && !is.na(market_prob_pick)) {
+    prob_diff <- blend_prob_pick - market_prob_pick
+    result <- ifelse(prob_diff > eps, TRUE, ifelse(prob_diff < -eps, FALSE, NA))
+    basis <- "Win probability"
+    detail <- sprintf(
+      "%s win probability: blend %s vs market %s.",
+      safe_label,
+      fmt_prob(blend_prob_pick),
+      fmt_prob(market_prob_pick)
+    )
+    if (!is.na(result)) {
+      return(list(result = result, basis = basis, detail = detail))
+    }
+  }
+
+  if (!is.na(blend_edge_moneyline)) {
+    result <- ifelse(blend_edge_moneyline > eps, TRUE, ifelse(blend_edge_moneyline < -eps, FALSE, NA))
+    basis <- "Moneyline price"
+    detail <- sprintf(
+      "Price comparison: market %s vs blend %s.",
+      fmt_odds(market_moneyline),
+      fmt_odds(blend_moneyline)
+    )
+    if (!is.na(result)) {
+      return(list(result = result, basis = basis, detail = detail))
+    }
+  }
+
+  list(
+    result = NA,
+    basis = "Insufficient data",
+    detail = "No outcome, EV, probability, or pricing edge available."
+  )
+}
+
 devig_two_way_probabilities <- function(p_home_raw, p_away_raw) {
   p_home_raw <- coerce_numeric_safely(p_home_raw)
   p_away_raw <- coerce_numeric_safely(p_away_raw)
@@ -1380,6 +1495,7 @@ build_moneyline_comparison_table <- function(market_comparison_result,
         NA_real_,
         blend_best_ev
       ),
+      blend_ev_units = blend_best_ev,
       blend_pick_side = dplyr::case_when(
         is.na(blend_best_ev) ~ NA_character_,
         blend_best_ev <= 0 ~ NA_character_,
@@ -1487,30 +1603,56 @@ build_moneyline_comparison_table <- function(market_comparison_result,
         blend_pick_side == "away" ~ market_away_ml - blend_away_ml,
         TRUE ~ NA_real_
       ),
-      blend_ev_units = blend_best_ev,
-      blend_beats_market = {
-        realized_cmp <- dplyr::case_when(
-          is.na(blend_actual_units) ~ NA,
-          is.na(market_actual_units) ~ dplyr::case_when(
-            blend_actual_units > 0 ~ TRUE,
-            blend_actual_units < 0 ~ FALSE,
-            TRUE ~ NA
-          ),
-          TRUE ~ blend_actual_units > market_actual_units
-        )
-        dplyr::coalesce(
-          realized_cmp,
-          dplyr::case_when(
-            !is.na(blend_edge_prob) ~ blend_edge_prob > sqrt(.Machine$double.eps),
-            !is.na(blend_edge_moneyline) ~ blend_edge_moneyline > 0,
-            TRUE ~ NA
-          )
-        )
-      },
       market_ev_units = dplyr::if_else(
         is.na(blend_ev_units),
         NA_real_,
         -blend_ev_units
+      ),
+      blend_vs_market_info = purrr::pmap(
+        list(
+          blend_actual_units,
+          market_actual_units,
+          blend_ev_units,
+          market_ev_units,
+          blend_prob_pick,
+          market_prob_pick,
+          blend_pick,
+          blend_moneyline,
+          market_moneyline,
+          blend_edge_moneyline
+        ),
+        assess_blend_vs_market
+      ),
+      blend_beats_market = vapply(
+        blend_vs_market_info,
+        function(x) {
+          res <- x$result
+          if (is.null(res)) {
+            return(NA)
+          }
+          res
+        },
+        logical(1)
+      ),
+      blend_beats_market_basis = purrr::map_chr(
+        blend_vs_market_info,
+        function(x) {
+          basis <- x$basis
+          if (is.null(basis) || is.na(basis)) {
+            return(NA_character_)
+          }
+          basis
+        }
+      ),
+      blend_beats_market_note = purrr::map_chr(
+        blend_vs_market_info,
+        function(x) {
+          detail <- x$detail
+          if (is.null(detail) || is.na(detail)) {
+            return(NA_character_)
+          }
+          detail
+        }
       ),
       market_winning = {
         realized_market <- dplyr::case_when(
@@ -1567,7 +1709,8 @@ build_moneyline_comparison_table <- function(market_comparison_result,
       model_away_ml_vig = blend_away_ml_vig,
       model_edge_prob = blend_edge_prob_home,
       model_ev_units = blend_ev_units_home,
-      market_beats_model = brier_market < brier_model
+      market_beats_model = brier_market < brier_model,
+      blend_vs_market_info = NULL
     ) %>%
     dplyr::select(-blend_best_ev) %>%
     dplyr::arrange(season, week, game_date, matchup)
@@ -1665,6 +1808,19 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     }
     out
   }
+
+  intro_html <- paste0(
+    "<section class=\"report-intro\">",
+    "<h2>How to read this report</h2>",
+    "<p>Each row compares the blended model to the active moneyline market.</p>",
+    "<ul>",
+    "<li><strong>Blend Beat Market?</strong> shows whether the blend outperforms the market using the listed basis.</li>",
+    "<li><strong>Basis</strong> tells you if the edge comes from final results, expected value, win probability, or a better price. Upcoming games rely on the pregame math.</li>",
+    "<li><strong>Note</strong> summarizes the comparison so you can see how the edge was determined.</li>",
+    "<li>Spread columns are presented from the home team's perspective; plus signs identify underdogs.</li>",
+    "</ul>",
+    "</section>"
+  )
 
   display_tbl <- comparison_tbl %>%
     dplyr::transmute(
@@ -1767,7 +1923,8 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       gt_tbl,
       c(
         "Matchup", "Winner", "Blend Favorite", "Market Favorite",
-        "Blend Pick", "Blend Recommendation"
+        "Blend Pick", "Blend Recommendation", "Blend Beat Market Basis",
+        "Blend Beat Market Note"
       ),
       gt::cols_align,
       align = "left"
@@ -1916,6 +2073,11 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         "body {font-family: 'Source Sans Pro', Arial, sans-serif; background-color: #020617; color: #e2e8f0; margin: 0;}\n",
         ".page-wrapper {padding: 2rem 1.5rem;}\n",
         ".table-wrapper {overflow-x: auto;}\n",
+        ".report-intro {max-width: 960px; margin-bottom: 1.5rem; background-color: #0f172a; padding: 1rem 1.25rem; border-radius: 12px; box-shadow: 0 12px 24px rgba(15, 23, 42, 0.45);}\n",
+        ".report-intro h2 {margin: 0 0 0.5rem; font-size: 1.1rem; color: #f8fafc;}\n",
+        ".report-intro p {margin: 0 0 0.75rem; color: #cbd5f5;}\n",
+        ".report-intro ul {margin: 0; padding-left: 1.25rem; color: #e2e8f0;}\n",
+        ".report-intro li {margin-bottom: 0.35rem;}\n",
         ".gt_table {border-radius: 16px; overflow: hidden; box-shadow: 0 18px 36px rgba(15, 23, 42, 0.55);}\n",
         ".gt_table thead th {position: sticky; top: 0; z-index: 2;}\n",
         ".gt_table tbody tr:hover {background-color: #1f2937 !important;}\n",
@@ -1932,9 +2094,12 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         `aria-label` = "Search moneyline table"
       )
 
+      intro_block <- htmltools::HTML(intro_html)
+
       wrapper <- htmltools::tags$div(
         class = "page-wrapper",
         search_box,
+        intro_block,
         htmltools::tags$div(
           class = "table-wrapper",
           htmltools::HTML(gt_html)
@@ -1964,6 +2129,11 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       css_block,
       ".page-wrapper {padding: 2rem 1.5rem;}\n",
       ".table-wrapper {overflow-x: auto;}\n",
+      ".report-intro {max-width: 960px; margin-bottom: 1.5rem; background-color: #0f172a; padding: 1rem 1.25rem; border-radius: 12px; box-shadow: 0 12px 24px rgba(15, 23, 42, 0.45);}\n",
+      ".report-intro h2 {margin: 0 0 0.5rem; font-size: 1.1rem; color: #f8fafc;}\n",
+      ".report-intro p {margin: 0 0 0.75rem; color: #cbd5f5;}\n",
+      ".report-intro ul {margin: 0; padding-left: 1.25rem; color: #e2e8f0;}\n",
+      ".report-intro li {margin-bottom: 0.35rem;}\n",
       "table {width: 100%; border-collapse: separate; border-spacing: 0; background-color: #0f172a; color: #e2e8f0; border-radius: 16px; overflow: hidden; box-shadow: 0 18px 36px rgba(15, 23, 42, 0.55); border: 1px solid #1e293b;}\n",
       "thead th {background-color: #1e293b; color: #f8fafc; text-transform: uppercase; letter-spacing: 0.08em; position: sticky; top: 0; z-index: 2;}\n",
       "td, th {padding: 10px 12px; border-bottom: 1px solid #1f2937; text-align: center;}\n",
@@ -2011,7 +2181,11 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       )
 
     if (requireNamespace("htmltools", quietly = TRUE)) {
-      left_align_cols <- c("Matchup", "Winner", "Blend Favorite", "Market Favorite", "Blend Pick", "Blend Recommendation")
+      left_align_cols <- c(
+        "Matchup", "Winner", "Blend Favorite", "Market Favorite",
+        "Blend Pick", "Blend Recommendation", "Blend Beat Market Basis",
+        "Blend Beat Market Note"
+      )
       rows <- purrr::map(
         seq_len(nrow(formatted_tbl)),
         ~ {
@@ -2090,7 +2264,11 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     } else {
       table_id <- "moneyline-table"
       header <- paste(names(formatted_tbl), collapse = "</th><th>")
-      left_align_cols <- c("Matchup", "Winner", "Blend Favorite", "Market Favorite", "Blend Pick", "Blend Recommendation")
+      left_align_cols <- c(
+        "Matchup", "Winner", "Blend Favorite", "Market Favorite",
+        "Blend Pick", "Blend Recommendation", "Blend Beat Market Basis",
+        "Blend Beat Market Note"
+      )
       body <- purrr::map_chr(
         seq_len(nrow(formatted_tbl)),
         function(idx) {
@@ -2131,7 +2309,9 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       html <- paste0(
         "<html><head><style>",
         css_block,
-        "</style></head><body><div class=\"page-wrapper\"><input id=\"table-search\" type=\"search\" placeholder=\"Search teams, winners, or picks...\" aria-label=\"Search moneyline table\"/><div class=\"table-wrapper\"><table id=\"",
+        "</style></head><body><div class=\"page-wrapper\"><input id=\"table-search\" type=\"search\" placeholder=\"Search teams, winners, or picks...\" aria-label=\"Search moneyline table\"/>",
+        intro_html,
+        "<div class=\"table-wrapper\"><table id=\"",
         table_id,
         "\"><caption>",
         title,
