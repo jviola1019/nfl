@@ -309,6 +309,81 @@ if (!exists("clamp_probability", inherits = FALSE)) {
   }
 }
 
+if (!exists("resolve_home_probability", inherits = FALSE)) {
+  resolve_home_probability <- function(home_prob, home_ml = NA_real_, away_ml = NA_real_) {
+    home_prob <- suppressWarnings(as.numeric(home_prob))
+    ml_home <- coerce_numeric_safely(home_ml)
+    ml_away <- coerce_numeric_safely(away_ml)
+
+    needs_prob <- !is.finite(home_prob)
+    if (any(needs_prob, na.rm = TRUE)) {
+      fallback <- american_to_probability(ml_home)
+      fallback <- clamp_probability(fallback)
+      replace_mask <- needs_prob & is.finite(fallback)
+      if (any(replace_mask, na.rm = TRUE)) {
+        home_prob[replace_mask] <- fallback[replace_mask]
+      }
+    }
+
+    needs_prob <- !is.finite(home_prob)
+    if (any(needs_prob, na.rm = TRUE)) {
+      fallback <- american_to_probability(ml_away)
+      fallback <- clamp_probability(fallback)
+      if (length(fallback)) {
+        fallback <- 1 - fallback
+        replace_mask <- needs_prob & is.finite(fallback)
+        if (any(replace_mask, na.rm = TRUE)) {
+          home_prob[replace_mask] <- fallback[replace_mask]
+        }
+      }
+    }
+
+    clamp_probability(home_prob)
+  }
+}
+
+if (!exists("harmonize_home_spread", inherits = FALSE)) {
+  harmonize_home_spread <- function(spread, home_prob, tolerance = 5e-03) {
+    spread <- coerce_numeric_safely(spread)
+    home_prob <- suppressWarnings(as.numeric(home_prob))
+
+    mask <- is.finite(spread) & is.finite(home_prob)
+    if (!any(mask)) {
+      return(spread)
+    }
+
+    prob <- home_prob[mask]
+    spr <- spread[mask]
+    flip_mask <- (spr < 0 & prob < 0.5 - tolerance) | (spr > 0 & prob > 0.5 + tolerance)
+    if (any(flip_mask)) {
+      spr[flip_mask] <- -spr[flip_mask]
+      spread[mask] <- spr
+    }
+    spread
+  }
+}
+
+if (!exists("harmonize_home_margin", inherits = FALSE)) {
+  harmonize_home_margin <- function(margin, home_prob, tolerance = 5e-03) {
+    margin <- coerce_numeric_safely(margin)
+    home_prob <- suppressWarnings(as.numeric(home_prob))
+
+    mask <- is.finite(margin) & is.finite(home_prob)
+    if (!any(mask)) {
+      return(margin)
+    }
+
+    prob <- home_prob[mask]
+    mar <- margin[mask]
+    flip_mask <- (mar < 0 & prob > 0.5 + tolerance) | (mar > 0 & prob < 0.5 - tolerance)
+    if (any(flip_mask)) {
+      mar[flip_mask] <- -mar[flip_mask]
+      margin[mask] <- mar
+    }
+    margin
+  }
+}
+
 if (!exists("probability_to_american", inherits = FALSE)) {
   probability_to_american <- function(prob) {
     prob <- clamp_probability(prob)
@@ -806,15 +881,17 @@ if (!exists("build_moneyline_comparison_table", inherits = FALSE)) {
         ),
         blend_home_prob = clamp_probability(blend_home_prob),
         blend_away_prob = clamp_probability(1 - blend_home_prob),
-        market_home_prob = clamp_probability(market_home_prob),
+        market_home_prob = resolve_home_probability(market_home_prob, market_home_ml, market_away_ml),
         market_away_prob = clamp_probability(1 - market_home_prob),
         market_home_spread = coerce_numeric_safely(market_home_spread),
+        market_home_spread = harmonize_home_spread(market_home_spread, market_home_prob),
         market_total_line = coerce_numeric_safely(market_total_line),
         blend_median_margin = dplyr::if_else(
           is.na(blend_home_median) | is.na(blend_away_median),
           NA_real_,
           blend_home_median - blend_away_median
         ),
+        blend_median_margin = harmonize_home_margin(blend_median_margin, blend_home_prob),
         market_implied_margin = dplyr::if_else(
           is.na(market_home_spread),
           NA_real_,
@@ -1153,11 +1230,6 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
           blend_beats_market ~ "Yes",
           TRUE ~ "No"
         ),
-        `Market Winning?` = dplyr::case_when(
-          is.na(market_winning) ~ "N/A",
-          market_winning ~ "Yes",
-          TRUE ~ "No"
-        ),
         `Market Home Prob` = market_home_prob,
         `Blend Home Prob` = blend_home_prob,
         `Market Away Prob` = market_away_prob,
@@ -1202,11 +1274,17 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
         gt_tbl,
         c(
           "Blend Median Home Score", "Blend Median Away Score", "Blend Median Total",
-          "Blend Median Margin", "Market Home Spread", "Market Implied Margin", "Market Total"
+          "Market Total"
         ),
         gt::fmt_number,
         decimals = 1,
         drop_trailing_zeros = TRUE
+      )
+      gt_tbl <- gt_apply_if_columns(
+        gt_tbl,
+        c("Blend Median Margin", "Market Home Spread", "Market Implied Margin"),
+        gt::fmt,
+        fns = function(x) format_signed_spread(x)
       )
       gt_tbl <- gt_apply_if_columns(
         gt_tbl,
@@ -1225,7 +1303,7 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
         gt_tbl,
         c(
           "Season", "Week", "Blend Favorite", "Blend Recommendation",
-          "Blend Beat Market?", "Market Winning?"
+          "Blend Beat Market?"
         ),
         gt::cols_align,
         align = "center"
