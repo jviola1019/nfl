@@ -80,7 +80,34 @@ load_market_helpers <- local({
 load_market_helpers(strict = TRUE)
 
 if (!exists("shorten_market_note", inherits = TRUE)) {
-  shorten_market_note <- function(note) note
+  shorten_market_note <- function(note, max_chars = 72L) {
+    if (is.null(note) || !length(note)) {
+      return(note)
+    }
+
+    note_chr <- as.character(note)
+    is_missing <- is.na(note_chr)
+    note_chr[is_missing] <- NA_character_
+
+    to_process <- !is_missing & nzchar(trimws(note_chr))
+    if (!any(to_process)) {
+      return(note_chr)
+    }
+
+    cleaned <- stringr::str_squish(note_chr[to_process])
+    cleaned <- gsub("Final result:", "Result:", cleaned, fixed = TRUE)
+    cleaned <- gsub("Blend realized", "Blend", cleaned, fixed = TRUE)
+    cleaned <- gsub("Expected value", "EV", cleaned, fixed = TRUE)
+    cleaned <- gsub("Win probability", "Win prob", cleaned, fixed = TRUE)
+    cleaned <- gsub("Price comparison", "Price", cleaned, fixed = TRUE)
+    cleaned <- gsub("market result unavailable", "market n/a", cleaned, fixed = TRUE)
+    cleaned <- gsub(" units", "u", cleaned, fixed = TRUE)
+    cleaned <- gsub("\u00a0", " ", cleaned, fixed = TRUE)
+    cleaned <- gsub("\\s+", " ", cleaned)
+
+    note_chr[to_process] <- cleaned
+    note_chr
+  }
 }
 
 if (!exists("count_duplicate_join_rows", inherits = FALSE)) {
@@ -896,6 +923,19 @@ if (!exists("build_moneyline_comparison_table", inherits = FALSE)) {
           blend_home_median - blend_away_median
         ),
         blend_median_margin = harmonize_home_margin(blend_median_margin, blend_home_prob),
+        blend_spread_equiv = dplyr::if_else(
+          is.na(blend_median_margin),
+          NA_real_,
+          -blend_median_margin
+        ),
+        market_spread_win_prob = spread_to_win_probability(market_home_spread),
+        blend_spread_win_prob = spread_to_win_probability(blend_spread_equiv),
+        market_spread_win_prob_away = clamp_probability(1 - market_spread_win_prob),
+        blend_spread_win_prob_away = clamp_probability(1 - blend_spread_win_prob),
+        market_prob_spread_gap_home = market_home_prob - market_spread_win_prob,
+        market_prob_spread_gap_away = market_away_prob - market_spread_win_prob_away,
+        blend_prob_spread_gap_home = blend_home_prob - blend_spread_win_prob,
+        blend_prob_spread_gap_away = blend_away_prob - blend_spread_win_prob_away,
         market_implied_margin = dplyr::if_else(
           is.na(market_home_spread),
           NA_real_,
@@ -1071,7 +1111,7 @@ if (!exists("build_moneyline_comparison_table", inherits = FALSE)) {
             basis
           }
         ),
-        blend_beats_market_note = purrr::map_chr(
+        blend_beats_market_note_raw = purrr::map_chr(
           blend_vs_market_info,
           function(x) {
             detail <- x$detail
@@ -1081,7 +1121,6 @@ if (!exists("build_moneyline_comparison_table", inherits = FALSE)) {
             detail
           }
         ),
-        blend_beats_market_note = shorten_market_note(blend_beats_market_note),
         market_ev_units = dplyr::if_else(
           is.na(blend_ev_units),
           NA_real_,
@@ -1109,6 +1148,43 @@ if (!exists("build_moneyline_comparison_table", inherits = FALSE)) {
           is.na(blend_pick) | !nzchar(blend_pick) ~ "Bet moneyline",
           TRUE ~ paste("Bet", blend_pick, "moneyline")
         ),
+        blend_prob_pick_spread_prob = dplyr::case_when(
+          blend_pick_side == "home" ~ blend_spread_win_prob,
+          blend_pick_side == "away" ~ blend_spread_win_prob_away,
+          TRUE ~ NA_real_
+        ),
+        market_prob_pick_spread_prob = dplyr::case_when(
+          blend_pick_side == "home" ~ market_spread_win_prob,
+          blend_pick_side == "away" ~ market_spread_win_prob_away,
+          TRUE ~ NA_real_
+        ),
+        blend_prob_spread_gap_pick = dplyr::case_when(
+          blend_pick_side == "home" ~ blend_prob_spread_gap_home,
+          blend_pick_side == "away" ~ blend_prob_spread_gap_away,
+          TRUE ~ NA_real_
+        ),
+        market_prob_spread_gap_pick = dplyr::case_when(
+          blend_pick_side == "home" ~ market_prob_spread_gap_home,
+          blend_pick_side == "away" ~ market_prob_spread_gap_away,
+          TRUE ~ NA_real_
+        ),
+        probability_alignment_note = purrr::map2_chr(
+          market_prob_spread_gap_pick,
+          blend_prob_spread_gap_pick,
+          ~ build_probability_alignment_note(.x, .y)
+        ),
+        probability_alignment_note = dplyr::if_else(
+          is.na(blend_pick_side) | blend_recommendation %in% c("Pass", "No Play"),
+          NA_character_,
+          probability_alignment_note
+        ),
+        blend_beats_market_note = dplyr::case_when(
+          is.na(probability_alignment_note) ~ blend_beats_market_note_raw,
+          is.na(blend_beats_market_note_raw) ~ probability_alignment_note,
+          !nzchar(blend_beats_market_note_raw) ~ probability_alignment_note,
+          TRUE ~ paste(blend_beats_market_note_raw, probability_alignment_note, sep = " | ")
+        ),
+        blend_beats_market_note = shorten_market_note(blend_beats_market_note),
         blend_kelly_fraction = dplyr::case_when(
           is.na(blend_pick_side) ~ NA_real_,
           TRUE ~ {
@@ -1146,7 +1222,14 @@ if (!exists("build_moneyline_comparison_table", inherits = FALSE)) {
         market_beats_model = brier_market < brier_model
       ) %>%
       dplyr::mutate(blend_vs_market_info = NULL) %>%
-      dplyr::select(-blend_best_ev) %>%
+      dplyr::select(-dplyr::any_of(c(
+        "blend_best_ev",
+        "blend_spread_equiv",
+        "blend_prob_pick_spread_prob",
+        "market_prob_pick_spread_prob",
+        "probability_alignment_note",
+        "blend_beats_market_note_raw"
+      ))) %>%
       dplyr::arrange(season, week, game_date, matchup)
 
     combined
@@ -1286,6 +1369,10 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
         ),
         `Market Home Prob` = market_home_prob,
         `Blend Home Prob` = blend_home_prob,
+        `Market Spread Win%` = market_spread_win_prob,
+        `Blend Spread Win%` = blend_spread_win_prob,
+        `Market Prob Δ` = market_prob_spread_gap_pick,
+        `Blend Prob Δ` = blend_prob_spread_gap_pick,
         `Market Away Prob` = market_away_prob,
         `Blend Away Prob` = blend_away_prob,
         Winner = dplyr::coalesce(actual_winner, "TBD")
@@ -1319,6 +1406,8 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
         c(
           "Blend Edge",
           "Market Home Prob", "Blend Home Prob",
+          "Market Spread Win%", "Blend Spread Win%",
+          "Market Prob Δ", "Blend Prob Δ",
           "Market Away Prob", "Blend Away Prob"
         ),
         gt::fmt_percent,
@@ -1371,6 +1460,30 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
         gt::cols_align,
         align = "left"
       )
+      if ("Blend Beat Market Note" %in% display_cols) {
+        gt_tbl <- gt::cols_width(
+          gt_tbl,
+          `Blend Beat Market Note` ~ gt::px(260)
+        )
+        gt_tbl <- gt::text_transform(
+          gt_tbl,
+          locations = gt::cells_body(columns = "Blend Beat Market Note"),
+          fn = function(values) {
+            purrr::map(values, function(value) {
+              if (is.na(value) || value == "") {
+                gt::html("<div class=\"note-scroller\" style=\"max-height: calc(1.35em * 2); overflow: hidden; line-height: 1.35; padding-right: 0.35rem; white-space: normal;\" onmouseenter=\"this.style.overflowY='auto';\" onmouseleave=\"this.style.overflowY='hidden';\" onfocus=\"this.style.overflowY='auto';\" onblur=\"this.style.overflowY='hidden';\"></div>")
+              } else {
+                safe_value <- as.character(htmltools::htmlEscape(value))
+                gt::html(sprintf(
+                  "<div class=\"note-scroller\" style=\"max-height: calc(1.35em * 2); overflow: hidden; line-height: 1.35; padding-right: 0.35rem; white-space: normal;\" title=\"%s\" tabindex=\"0\" onmouseenter=\"this.style.overflowY='auto';\" onmouseleave=\"this.style.overflowY='hidden';\" onfocus=\"this.style.overflowY='auto';\" onblur=\"this.style.overflowY='hidden';\">%s</div>",
+                  safe_value,
+                  safe_value
+                ))
+              }
+            })
+          }
+        )
+      }
       gt_tbl <- gt_apply_labels(
         gt_tbl,
         c(
@@ -1381,7 +1494,11 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
           `Blend Median Margin` = "Blend Margin",
           `Market Home Spread` = "Market Home Spread",
           `Market Implied Margin` = "Market Margin",
-          `Market Total` = "Market Total"
+          `Market Total` = "Market Total",
+          `Market Spread Win%` = "Market Spread Win%",
+          `Blend Spread Win%` = "Blend Spread Win%",
+          `Market Prob Δ` = "Market Prob Δ (pp)",
+          `Blend Prob Δ` = "Blend Prob Δ (pp)"
         )
       )
       gt_tbl <- gt::tab_header(gt_tbl, title = title)
@@ -1463,6 +1580,12 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
         "td, th {padding: 10px 12px; border-bottom: 1px solid #1f2937; text-align: center;}\n",
         "td.text-left {text-align: left;}\n",
         "td.winner-cell {color: #fcd34d; font-weight: 600;}\n",
+        "td.note-cell {max-width: 260px; white-space: normal; overflow: hidden; vertical-align: top;}\n",
+        "td.note-cell .note-scroller {display: block; max-height: calc(1.35em * 2); overflow: hidden; line-height: 1.35; padding-right: 0.35rem;}\n",
+        "td.note-cell .note-scroller:hover {overflow-y: auto;}\n",
+        "td.note-cell .note-scroller::-webkit-scrollbar {width: 6px;}\n",
+        "td.note-cell .note-scroller::-webkit-scrollbar-thumb {background-color: rgba(148,163,184,0.45); border-radius: 6px;}\n",
+        "td.note-cell .note-scroller:hover::-webkit-scrollbar-thumb {background-color: rgba(96,165,250,0.65);}\n",
         "tr:nth-child(even) {background-color: #111c2f;}\n",
         "tr.blend-win {background-color: #14532d;}\n",
         "tr.blend-win td {color: #ecfdf5;}\n",
@@ -1529,14 +1652,31 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
                 if (col_name %in% left_align_cols) {
                   cell_classes <- c(cell_classes, "text-left")
                 }
-                if (identical(col_name, "Winner") && !is.na(value) && nzchar(value) && value != "TBD") {
-                  cell_classes <- c(cell_classes, "winner-cell")
+                if (identical(col_name, "Blend Beat Market Note")) {
+                  cell_classes <- c(cell_classes, "note-cell")
                 }
                 cell_value <- ifelse(is.na(value), "", value)
+                display_value <- cell_value
+                if (identical(col_name, "Blend Beat Market Note")) {
+                  display_value <- htmltools::tags$div(
+                    class = "note-scroller",
+                    style = "max-height: calc(1.35em * 2); overflow: hidden; line-height: 1.35; padding-right: 0.35rem; white-space: normal;",
+                    onmouseenter = "this.style.overflowY='auto';",
+                    onmouseleave = "this.style.overflowY='hidden';",
+                    onfocus = "this.style.overflowY='auto';",
+                    onblur = "this.style.overflowY='hidden';",
+                    tabindex = if (nzchar(cell_value)) "0" else NULL,
+                    title = if (nzchar(cell_value)) cell_value else NULL,
+                    cell_value
+                  )
+                }
+                if (identical(col_name, "Winner") && nzchar(cell_value) && cell_value != "TBD") {
+                  cell_classes <- c(cell_classes, "winner-cell")
+                }
                 if (length(cell_classes)) {
-                  htmltools::tags$td(class = paste(cell_classes, collapse = " "), cell_value)
+                  htmltools::tags$td(class = paste(cell_classes, collapse = " "), display_value)
                 } else {
-                  htmltools::tags$td(cell_value)
+                  htmltools::tags$td(display_value)
                 }
               })
             )
@@ -1614,14 +1754,31 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
               if (col_name %in% left_align_cols) {
                 cell_classes <- c(cell_classes, "text-left")
               }
-              if (identical(col_name, "Winner") && !is.null(value) && !is.na(value) && nzchar(value) && value != "TBD") {
-                cell_classes <- c(cell_classes, "winner-cell")
+              if (identical(col_name, "Blend Beat Market Note")) {
+                cell_classes <- c(cell_classes, "note-cell")
               }
               cell_value <- ifelse(is.na(value), "", value)
+              display_value <- cell_value
+              if (identical(col_name, "Blend Beat Market Note")) {
+                escaped_value <- as.character(htmltools::htmlEscape(cell_value))
+                title_attr <- if (nzchar(cell_value)) sprintf(" title=\\\"%s\\\"", escaped_value) else ""
+                interaction_attrs <- " onmouseenter=\\\"this.style.overflowY='auto';\\\" onmouseleave=\\\"this.style.overflowY='hidden';\\\" onfocus=\\\"this.style.overflowY='auto';\\\" onblur=\\\"this.style.overflowY='hidden';\\\""
+                tabindex_attr <- if (nzchar(cell_value)) " tabindex=\\\"0\\\"" else ""
+                display_value <- sprintf(
+                  "<div class=\\\"note-scroller\\\" style=\\\"max-height: calc(1.35em * 2); overflow: hidden; line-height: 1.35; padding-right: 0.35rem; white-space: normal;\\\"%s%s%s>%s</div>",
+                  title_attr,
+                  tabindex_attr,
+                  interaction_attrs,
+                  escaped_value
+                )
+              }
+              if (identical(col_name, "Winner") && nzchar(cell_value) && cell_value != "TBD") {
+                cell_classes <- c(cell_classes, "winner-cell")
+              }
               if (length(cell_classes)) {
-                sprintf("<td class=\"%s\">%s</td>", paste(cell_classes, collapse = " "), cell_value)
+                sprintf("<td class=\"%s\">%s</td>", paste(cell_classes, collapse = " "), display_value)
               } else {
-                sprintf("<td>%s</td>", cell_value)
+                sprintf("<td>%s</td>", display_value)
               }
             })
             sprintf("<tr%s>%s</tr>", row_class_attr, paste(cells, collapse = ""))
