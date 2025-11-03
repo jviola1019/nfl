@@ -1569,14 +1569,12 @@ build_moneyline_comparison_table <- function(market_comparison_result,
       ),
       market_spread_win_prob = spread_to_win_probability(market_home_spread),
       blend_spread_win_prob = spread_to_win_probability(blend_spread_equiv),
-      market_prob_spread_gap = market_home_prob - market_spread_win_prob,
-      blend_prob_spread_gap = blend_home_prob - blend_spread_win_prob,
-      probability_alignment_note = purrr::pmap_chr(
-        list(market_prob_spread_gap, blend_prob_spread_gap),
-        function(market_gap, blend_gap) {
-          build_probability_alignment_note(market_gap, blend_gap)
-        }
-      ),
+      market_spread_win_prob_away = clamp_probability(1 - market_spread_win_prob),
+      blend_spread_win_prob_away = clamp_probability(1 - blend_spread_win_prob),
+      market_prob_spread_gap_home = market_home_prob - market_spread_win_prob,
+      market_prob_spread_gap_away = market_away_prob - market_spread_win_prob_away,
+      blend_prob_spread_gap_home = blend_home_prob - blend_spread_win_prob,
+      blend_prob_spread_gap_away = blend_away_prob - blend_spread_win_prob_away,
       market_implied_margin = dplyr::if_else(
         is.na(market_home_spread),
         NA_real_,
@@ -1760,7 +1758,7 @@ build_moneyline_comparison_table <- function(market_comparison_result,
           basis
         }
       ),
-      blend_beats_market_note = purrr::map_chr(
+      blend_beats_market_note_raw = purrr::map_chr(
         blend_vs_market_info,
         function(x) {
           detail <- x$detail
@@ -1770,13 +1768,6 @@ build_moneyline_comparison_table <- function(market_comparison_result,
           detail
         }
       ),
-      blend_beats_market_note = dplyr::case_when(
-        is.na(probability_alignment_note) ~ blend_beats_market_note,
-        is.na(blend_beats_market_note) ~ probability_alignment_note,
-        !nzchar(blend_beats_market_note) ~ probability_alignment_note,
-        TRUE ~ paste(blend_beats_market_note, probability_alignment_note, sep = " | ")
-      ),
-      blend_beats_market_note = shorten_market_note(blend_beats_market_note),
       market_winning = {
         realized_market <- dplyr::case_when(
           is.na(market_actual_units) ~ NA,
@@ -1799,6 +1790,43 @@ build_moneyline_comparison_table <- function(market_comparison_result,
         is.na(blend_pick) | !nzchar(blend_pick) ~ "Bet moneyline",
         TRUE ~ paste("Bet", blend_pick, "moneyline")
       ),
+      blend_prob_pick_spread_prob = dplyr::case_when(
+        blend_pick_side == "home" ~ blend_spread_win_prob,
+        blend_pick_side == "away" ~ blend_spread_win_prob_away,
+        TRUE ~ NA_real_
+      ),
+      market_prob_pick_spread_prob = dplyr::case_when(
+        blend_pick_side == "home" ~ market_spread_win_prob,
+        blend_pick_side == "away" ~ market_spread_win_prob_away,
+        TRUE ~ NA_real_
+      ),
+      blend_prob_spread_gap_pick = dplyr::case_when(
+        blend_pick_side == "home" ~ blend_prob_spread_gap_home,
+        blend_pick_side == "away" ~ blend_prob_spread_gap_away,
+        TRUE ~ NA_real_
+      ),
+      market_prob_spread_gap_pick = dplyr::case_when(
+        blend_pick_side == "home" ~ market_prob_spread_gap_home,
+        blend_pick_side == "away" ~ market_prob_spread_gap_away,
+        TRUE ~ NA_real_
+      ),
+      probability_alignment_note = purrr::map2_chr(
+        market_prob_spread_gap_pick,
+        blend_prob_spread_gap_pick,
+        ~ build_probability_alignment_note(.x, .y)
+      ),
+      probability_alignment_note = dplyr::if_else(
+        is.na(blend_pick_side) | blend_recommendation %in% c("Pass", "No Play"),
+        NA_character_,
+        probability_alignment_note
+      ),
+      blend_beats_market_note = dplyr::case_when(
+        is.na(probability_alignment_note) ~ blend_beats_market_note_raw,
+        is.na(blend_beats_market_note_raw) ~ probability_alignment_note,
+        !nzchar(blend_beats_market_note_raw) ~ probability_alignment_note,
+        TRUE ~ paste(blend_beats_market_note_raw, probability_alignment_note, sep = " | ")
+      ),
+      blend_beats_market_note = shorten_market_note(blend_beats_market_note),
       blend_kelly_fraction = dplyr::case_when(
         is.na(blend_pick_side) ~ NA_real_,
         TRUE ~ {
@@ -1836,7 +1864,14 @@ build_moneyline_comparison_table <- function(market_comparison_result,
       market_beats_model = brier_market < brier_model,
       blend_vs_market_info = NULL
     ) %>%
-    dplyr::select(-dplyr::any_of(c("blend_best_ev", "blend_spread_equiv", "probability_alignment_note"))) %>%
+    dplyr::select(-dplyr::any_of(c(
+      "blend_best_ev",
+      "blend_spread_equiv",
+      "blend_prob_pick_spread_prob",
+      "market_prob_pick_spread_prob",
+      "probability_alignment_note",
+      "blend_beats_market_note_raw"
+    ))) %>%
     dplyr::arrange(season, week, game_date, matchup)
 
   combined
@@ -1981,8 +2016,8 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       `Market Home Prob` = market_home_prob,
       `Blend Spread Win%` = blend_spread_win_prob,
       `Market Spread Win%` = market_spread_win_prob,
-      `Blend Prob Δ` = blend_prob_spread_gap,
-      `Market Prob Δ` = market_prob_spread_gap,
+      `Blend Prob Δ` = blend_prob_spread_gap_pick,
+      `Market Prob Δ` = market_prob_spread_gap_pick,
       `Blend Away Prob` = blend_away_prob,
       `Market Away Prob` = market_away_prob,
       `Blend Home Moneyline (vig)` = blend_home_ml_vig,
@@ -2248,6 +2283,12 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         ".gt_table {border-radius: 18px; overflow: hidden; box-shadow: 0 28px 60px rgba(15,23,42,0.55);}\n",
         ".gt_table thead th {position: sticky; top: 0; z-index: 2; background: rgba(15,23,42,0.92); backdrop-filter: blur(6px);}\n",
         ".gt_table tbody tr:hover {background-color: rgba(37,99,235,0.18) !important;}\n",
+        ".gt_table td[headers='Blend Beat Market Note'] {max-width: 260px; vertical-align: top;}\n",
+        ".note-scroller {display: block; max-height: calc(1.35em * 2); overflow: hidden; white-space: normal; line-height: 1.35; padding-right: 0.35rem;}\n",
+        ".note-scroller:hover {overflow-y: auto;}\n",
+        ".note-scroller::-webkit-scrollbar {width: 6px;}\n",
+        ".note-scroller::-webkit-scrollbar-thumb {background-color: rgba(148,163,184,0.45); border-radius: 6px;}\n",
+        ".note-scroller:hover::-webkit-scrollbar-thumb {background-color: rgba(96,165,250,0.65);}\n",
         "#table-search {width: 100%; max-width: 420px; padding: 0.75rem 1rem; margin: 0 auto 1.5rem; border-radius: 999px; border: 1px solid rgba(148,163,184,0.35); background-color: rgba(15,23,42,0.85); color: #f8fafc; display: block; box-shadow: 0 12px 30px rgba(15,23,42,0.45);}\n",
         "#table-search:focus {outline: none; border-color: #60a5fa; box-shadow: 0 0 0 3px rgba(96,165,250,0.35);}\n",
         "@media (max-width: 768px) { .gt_table {font-size: 0.88rem;} .gt_table thead th {font-size: 0.7rem;} .report-intro {padding: 1.25rem;} }\n"
@@ -2389,13 +2430,27 @@ export_moneyline_comparison_html <- function(comparison_tbl,
                 cell_classes <- c(cell_classes, "note-cell")
               }
               cell_value <- ifelse(is.na(value), "", value)
+              display_value <- cell_value
+              if (identical(col_name, "Blend Beat Market Note")) {
+                display_value <- htmltools::tags$div(
+                  class = "note-scroller",
+                  style = "max-height: calc(1.35em * 2); overflow: hidden; line-height: 1.35; padding-right: 0.35rem; white-space: normal;",
+                  onmouseenter = "this.style.overflowY='auto';",
+                  onmouseleave = "this.style.overflowY='hidden';",
+                  onfocus = "this.style.overflowY='auto';",
+                  onblur = "this.style.overflowY='hidden';",
+                  tabindex = if (nzchar(cell_value)) "0" else NULL,
+                  title = if (nzchar(cell_value)) cell_value else NULL,
+                  cell_value
+                )
+              }
               if (identical(col_name, "Winner") && nzchar(cell_value) && cell_value != "TBD") {
                 cell_classes <- c(cell_classes, "winner-cell")
               }
               if (length(cell_classes)) {
-                htmltools::tags$td(class = paste(cell_classes, collapse = " "), cell_value)
+                htmltools::tags$td(class = paste(cell_classes, collapse = " "), display_value)
               } else {
-                htmltools::tags$td(cell_value)
+                htmltools::tags$td(display_value)
               }
             })
           )
@@ -2474,13 +2529,27 @@ export_moneyline_comparison_html <- function(comparison_tbl,
               cell_classes <- c(cell_classes, "note-cell")
             }
             cell_value <- ifelse(is.na(value), "", value)
+            display_value <- cell_value
+            if (identical(col_name, "Blend Beat Market Note")) {
+              escaped_value <- as.character(htmltools::htmlEscape(cell_value))
+              title_attr <- if (nzchar(cell_value)) sprintf(" title=\\\"%s\\\"", escaped_value) else ""
+              interaction_attrs <- " onmouseenter=\\\"this.style.overflowY='auto';\\\" onmouseleave=\\\"this.style.overflowY='hidden';\\\" onfocus=\\\"this.style.overflowY='auto';\\\" onblur=\\\"this.style.overflowY='hidden';\\\""
+              tabindex_attr <- if (nzchar(cell_value)) " tabindex=\\\"0\\\"" else ""
+              display_value <- sprintf(
+                "<div class=\\\"note-scroller\\\" style=\\\"max-height: calc(1.35em * 2); overflow: hidden; line-height: 1.35; padding-right: 0.35rem; white-space: normal;\\\"%s%s%s>%s</div>",
+                title_attr,
+                tabindex_attr,
+                interaction_attrs,
+                escaped_value
+              )
+            }
             if (identical(col_name, "Winner") && nzchar(cell_value) && cell_value != "TBD") {
               cell_classes <- c(cell_classes, "winner-cell")
             }
             if (length(cell_classes)) {
-              sprintf("<td class=\"%s\">%s</td>", paste(cell_classes, collapse = " "), cell_value)
+              sprintf("<td class=\"%s\">%s</td>", paste(cell_classes, collapse = " "), display_value)
             } else {
-              sprintf("<td>%s</td>", cell_value)
+              sprintf("<td>%s</td>", display_value)
             }
           })
           sprintf("<tr%s>%s</tr>", row_class_attr, paste(cells, collapse = ""))
