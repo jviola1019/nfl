@@ -770,6 +770,33 @@ assess_blend_vs_market <- function(
   )
 }
 
+shorten_market_note <- function(note) {
+  if (is.null(note) || !length(note)) {
+    return(note)
+  }
+
+  note_chr <- as.character(note)
+  is_na <- is.na(note_chr)
+  note_chr[is_na] <- NA_character_
+  to_process <- !is_na & nzchar(trimws(note_chr))
+
+  if (any(to_process)) {
+    cleaned <- trimws(note_chr[to_process])
+    cleaned <- gsub("Final result:", "Result:", cleaned, fixed = TRUE)
+    cleaned <- gsub("Blend realized", "Blend", cleaned, fixed = TRUE)
+    cleaned <- gsub("Expected value", "EV", cleaned, fixed = TRUE)
+    cleaned <- gsub("Win probability", "Win prob", cleaned, fixed = TRUE)
+    cleaned <- gsub("Price comparison", "Price", cleaned, fixed = TRUE)
+    cleaned <- gsub("market result unavailable", "market n/a", cleaned, fixed = TRUE)
+    cleaned <- gsub(" units", "u", cleaned, fixed = TRUE)
+    cleaned <- gsub("\u00a0", " ", cleaned, fixed = TRUE)
+    cleaned <- gsub("\\s+", " ", cleaned)
+    note_chr[to_process] <- cleaned
+  }
+
+  note_chr
+}
+
 devig_two_way_probabilities <- function(p_home_raw, p_away_raw) {
   p_home_raw <- coerce_numeric_safely(p_home_raw)
   p_away_raw <- coerce_numeric_safely(p_away_raw)
@@ -1743,6 +1770,7 @@ build_moneyline_comparison_table <- function(market_comparison_result,
         !nzchar(blend_beats_market_note) ~ probability_alignment_note,
         TRUE ~ paste(blend_beats_market_note, probability_alignment_note, sep = " | ")
       ),
+      blend_beats_market_note = shorten_market_note(blend_beats_market_note),
       market_winning = {
         realized_market <- dplyr::case_when(
           is.na(market_actual_units) ~ NA,
@@ -1761,8 +1789,9 @@ build_moneyline_comparison_table <- function(market_comparison_result,
       },
       blend_recommendation = dplyr::case_when(
         is.na(blend_ev_units) ~ "No Play",
-        blend_ev_units > 0 ~ "Bet",
-        TRUE ~ "Pass"
+        blend_ev_units <= 0 ~ "Pass",
+        is.na(blend_pick) | !nzchar(blend_pick) ~ "Bet moneyline",
+        TRUE ~ paste("Bet", blend_pick, "moneyline")
       ),
       blend_kelly_fraction = dplyr::case_when(
         is.na(blend_pick_side) ~ NA_real_,

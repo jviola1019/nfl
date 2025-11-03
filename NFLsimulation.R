@@ -79,6 +79,10 @@ load_market_helpers <- local({
 
 load_market_helpers(strict = TRUE)
 
+if (!exists("shorten_market_note", inherits = TRUE)) {
+  shorten_market_note <- function(note) note
+}
+
 if (!exists("count_duplicate_join_rows", inherits = FALSE)) {
   count_duplicate_join_rows <- function(df, keys) {
     if (is.null(df) || !inherits(df, "data.frame") || !nrow(df) || !length(keys)) {
@@ -1077,6 +1081,7 @@ if (!exists("build_moneyline_comparison_table", inherits = FALSE)) {
             detail
           }
         ),
+        blend_beats_market_note = shorten_market_note(blend_beats_market_note),
         market_ev_units = dplyr::if_else(
           is.na(blend_ev_units),
           NA_real_,
@@ -1099,9 +1104,10 @@ if (!exists("build_moneyline_comparison_table", inherits = FALSE)) {
           )
         },
         blend_recommendation = dplyr::case_when(
-          is.na(blend_ev_units) ~ "No play",
-          blend_ev_units > 0 ~ paste("Bet", blend_pick, "moneyline"),
-          TRUE ~ "Pass"
+          is.na(blend_ev_units) ~ "No Play",
+          blend_ev_units <= 0 ~ "Pass",
+          is.na(blend_pick) | !nzchar(blend_pick) ~ "Bet moneyline",
+          TRUE ~ paste("Bet", blend_pick, "moneyline")
         ),
         blend_kelly_fraction = dplyr::case_when(
           is.na(blend_pick_side) ~ NA_real_,
