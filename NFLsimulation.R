@@ -105,6 +105,11 @@ if (!exists("shorten_market_note", inherits = TRUE)) {
     cleaned <- gsub("\u00a0", " ", cleaned, fixed = TRUE)
     cleaned <- gsub("\\s+", " ", cleaned)
 
+    needs_trunc <- stringr::str_length(cleaned) > max_chars
+    if (any(needs_trunc)) {
+      cleaned[needs_trunc] <- stringr::str_trunc(cleaned[needs_trunc], max_chars, ellipsis = "…")
+    }
+
     note_chr[to_process] <- cleaned
     note_chr
   }
@@ -1465,24 +1470,6 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
           gt_tbl,
           `Blend Beat Market Note` ~ gt::px(260)
         )
-        gt_tbl <- gt::text_transform(
-          gt_tbl,
-          locations = gt::cells_body(columns = "Blend Beat Market Note"),
-          fn = function(values) {
-            purrr::map(values, function(value) {
-              if (is.na(value) || value == "") {
-                gt::html("<div class=\"note-scroller\" style=\"max-height: calc(1.35em * 2); overflow: hidden; line-height: 1.35; padding-right: 0.35rem; white-space: normal;\" onmouseenter=\"this.style.overflowY='auto';\" onmouseleave=\"this.style.overflowY='hidden';\" onfocus=\"this.style.overflowY='auto';\" onblur=\"this.style.overflowY='hidden';\"></div>")
-              } else {
-                safe_value <- as.character(htmltools::htmlEscape(value))
-                gt::html(sprintf(
-                  "<div class=\"note-scroller\" style=\"max-height: calc(1.35em * 2); overflow: hidden; line-height: 1.35; padding-right: 0.35rem; white-space: normal;\" title=\"%s\" tabindex=\"0\" onmouseenter=\"this.style.overflowY='auto';\" onmouseleave=\"this.style.overflowY='hidden';\" onfocus=\"this.style.overflowY='auto';\" onblur=\"this.style.overflowY='hidden';\">%s</div>",
-                  safe_value,
-                  safe_value
-                ))
-              }
-            })
-          }
-        )
       }
       gt_tbl <- gt_apply_labels(
         gt_tbl,
@@ -1580,12 +1567,7 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
         "td, th {padding: 10px 12px; border-bottom: 1px solid #1f2937; text-align: center;}\n",
         "td.text-left {text-align: left;}\n",
         "td.winner-cell {color: #fcd34d; font-weight: 600;}\n",
-        "td.note-cell {max-width: 260px; white-space: normal; overflow: hidden; vertical-align: top;}\n",
-        "td.note-cell .note-scroller {display: block; max-height: calc(1.35em * 2); overflow: hidden; line-height: 1.35; padding-right: 0.35rem;}\n",
-        "td.note-cell .note-scroller:hover {overflow-y: auto;}\n",
-        "td.note-cell .note-scroller::-webkit-scrollbar {width: 6px;}\n",
-        "td.note-cell .note-scroller::-webkit-scrollbar-thumb {background-color: rgba(148,163,184,0.45); border-radius: 6px;}\n",
-        "td.note-cell .note-scroller:hover::-webkit-scrollbar-thumb {background-color: rgba(96,165,250,0.65);}\n",
+        "td.note-cell {max-width: 260px; white-space: normal; word-wrap: break-word;}\n",
         "tr:nth-child(even) {background-color: #111c2f;}\n",
         "tr.blend-win {background-color: #14532d;}\n",
         "tr.blend-win td {color: #ecfdf5;}\n",
@@ -1654,6 +1636,9 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
                 }
                 if (identical(col_name, "Blend Beat Market Note")) {
                   cell_classes <- c(cell_classes, "note-cell")
+                }
+                if (identical(col_name, "Winner") && !is.na(value) && nzchar(value) && value != "TBD") {
+                  cell_classes <- c(cell_classes, "winner-cell")
                 }
                 cell_value <- ifelse(is.na(value), "", value)
                 display_value <- cell_value
@@ -1756,6 +1741,9 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
               }
               if (identical(col_name, "Blend Beat Market Note")) {
                 cell_classes <- c(cell_classes, "note-cell")
+              }
+              if (identical(col_name, "Winner") && !is.null(value) && !is.na(value) && nzchar(value) && value != "TBD") {
+                cell_classes <- c(cell_classes, "winner-cell")
               }
               cell_value <- ifelse(is.na(value), "", value)
               display_value <- cell_value
@@ -2115,7 +2103,7 @@ SEED        <- 471
 set.seed(SEED)
 
 # ----- Priors / blending knobs -----
-GLMM_BLEND_W <- 0.40   # weight on GLMM priors vs your pace-based baseline (0..1)
+GLMM_BLEND_W <- 0.45   # weight on GLMM priors vs your pace-based baseline (0..1)
 
 # Meta-model and calibration controls for the market/model blend
 BLEND_META_MODEL    <- getOption("nfl_sim.blend_model",    default = "glmnet")
@@ -2124,11 +2112,11 @@ CALIBRATION_METHOD  <- getOption("nfl_sim.calibration",    default = "isotonic")
 
 # SoS weighting knobs
 USE_SOS            <- TRUE     # turn on/off SoS weighting
-SOS_STRENGTH       <- 0.35     # 0=no effect; 1=full strength; try 0.4-0.8
+SOS_STRENGTH       <- 0.45     # 0=no effect; 1=full strength; try 0.4-0.8
 
 # Recency weighting for recent form (exponential decay)
 USE_RECENCY_DECAY  <- TRUE
-RECENCY_HALFLIFE   <- 5        # games; bigger = flatter weights
+RECENCY_HALFLIFE   <- 4        # games; bigger = flatter weights
 
 # Outside-factor base knobs (league-wide defaults, can be overridden per game)
 REST_SHORT_PENALTY <- -0.7     # <=6 days rest

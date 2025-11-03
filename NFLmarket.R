@@ -792,6 +792,11 @@ shorten_market_note <- function(note, max_chars = 72L) {
     cleaned <- gsub("\u00a0", " ", cleaned, fixed = TRUE)
     cleaned <- gsub("\\s+", " ", cleaned)
 
+    needs_trunc <- stringr::str_length(cleaned) > max_chars
+    if (any(needs_trunc)) {
+      cleaned[needs_trunc] <- stringr::str_trunc(cleaned[needs_trunc], max_chars, ellipsis = "…")
+    }
+
     note_chr[to_process] <- cleaned
   }
 
@@ -2097,24 +2102,6 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         gt_tbl,
         `Blend Beat Market Note` ~ gt::px(260)
       )
-      gt_tbl <- gt::text_transform(
-        gt_tbl,
-        locations = gt::cells_body(columns = "Blend Beat Market Note"),
-        fn = function(values) {
-          purrr::map(values, function(value) {
-            if (is.na(value) || value == "") {
-              gt::html("<div class=\"note-scroller\" style=\"max-height: calc(1.35em * 2); overflow: hidden; line-height: 1.35; padding-right: 0.35rem; white-space: normal;\" onmouseenter=\"this.style.overflowY='auto';\" onmouseleave=\"this.style.overflowY='hidden';\" onfocus=\"this.style.overflowY='auto';\" onblur=\"this.style.overflowY='hidden';\"></div>")
-            } else {
-              safe_value <- as.character(htmltools::htmlEscape(value))
-              gt::html(sprintf(
-                "<div class=\"note-scroller\" style=\"max-height: calc(1.35em * 2); overflow: hidden; line-height: 1.35; padding-right: 0.35rem; white-space: normal;\" title=\"%s\" tabindex=\"0\" onmouseenter=\"this.style.overflowY='auto';\" onmouseleave=\"this.style.overflowY='hidden';\" onfocus=\"this.style.overflowY='auto';\" onblur=\"this.style.overflowY='hidden';\">%s</div>",
-                safe_value,
-                safe_value
-              ))
-            }
-          })
-        }
-      )
     }
     gt_tbl <- gt_apply_if_columns(
       gt_tbl,
@@ -2359,12 +2346,7 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       "thead th {background-color: rgba(17,28,47,0.95); color: #f8fafc; text-transform: uppercase; letter-spacing: 0.08em; position: sticky; top: 0; z-index: 2;}\n",
       "td, th {padding: 12px 14px; border-bottom: 1px solid rgba(30,41,59,0.75); text-align: center;}\n",
       "td.text-left {text-align: left;}\n",
-      "td.note-cell {max-width: 260px; white-space: normal; overflow: hidden; vertical-align: top;}\n",
-      "td.note-cell .note-scroller {display: block; max-height: calc(1.35em * 2); overflow: hidden; line-height: 1.35; padding-right: 0.35rem;}\n",
-      "td.note-cell .note-scroller:hover {overflow-y: auto;}\n",
-      "td.note-cell .note-scroller::-webkit-scrollbar {width: 6px;}\n",
-      "td.note-cell .note-scroller::-webkit-scrollbar-thumb {background-color: rgba(148,163,184,0.45); border-radius: 6px;}\n",
-      "td.note-cell .note-scroller:hover::-webkit-scrollbar-thumb {background-color: rgba(96,165,250,0.65);}\n",
+      "td.note-cell {max-width: 260px; white-space: normal; word-wrap: break-word;}\n",
       "tr:nth-child(even) {background-color: rgba(15,23,42,0.65);}\n",
       "tr.blend-win {background: linear-gradient(135deg,rgba(22,101,52,0.75),rgba(21,128,61,0.6));}\n",
       "tr.blend-win td {color: #ecfdf5;}\n",
