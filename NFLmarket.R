@@ -770,7 +770,7 @@ assess_blend_vs_market <- function(
   )
 }
 
-shorten_market_note <- function(note) {
+shorten_market_note <- function(note, max_chars = 72L) {
   if (is.null(note) || !length(note)) {
     return(note)
   }
@@ -781,7 +781,7 @@ shorten_market_note <- function(note) {
   to_process <- !is_na & nzchar(trimws(note_chr))
 
   if (any(to_process)) {
-    cleaned <- trimws(note_chr[to_process])
+    cleaned <- stringr::str_squish(note_chr[to_process])
     cleaned <- gsub("Final result:", "Result:", cleaned, fixed = TRUE)
     cleaned <- gsub("Blend realized", "Blend", cleaned, fixed = TRUE)
     cleaned <- gsub("Expected value", "EV", cleaned, fixed = TRUE)
@@ -791,6 +791,12 @@ shorten_market_note <- function(note) {
     cleaned <- gsub(" units", "u", cleaned, fixed = TRUE)
     cleaned <- gsub("\u00a0", " ", cleaned, fixed = TRUE)
     cleaned <- gsub("\\s+", " ", cleaned)
+
+    needs_trunc <- stringr::str_length(cleaned) > max_chars
+    if (any(needs_trunc)) {
+      cleaned[needs_trunc] <- stringr::str_trunc(cleaned[needs_trunc], max_chars, ellipsis = "…")
+    }
+
     note_chr[to_process] <- cleaned
   }
 
@@ -2056,6 +2062,12 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       gt::cols_align,
       align = "left"
     )
+    if ("Blend Beat Market Note" %in% display_cols) {
+      gt_tbl <- gt::cols_width(
+        gt_tbl,
+        `Blend Beat Market Note` ~ gt::px(260)
+      )
+    }
     gt_tbl <- gt_apply_if_columns(
       gt_tbl,
       c("Season", "Week", "Blend Beat Market?"),
@@ -2293,6 +2305,7 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       "thead th {background-color: rgba(17,28,47,0.95); color: #f8fafc; text-transform: uppercase; letter-spacing: 0.08em; position: sticky; top: 0; z-index: 2;}\n",
       "td, th {padding: 12px 14px; border-bottom: 1px solid rgba(30,41,59,0.75); text-align: center;}\n",
       "td.text-left {text-align: left;}\n",
+      "td.note-cell {max-width: 260px; white-space: normal; word-wrap: break-word;}\n",
       "tr:nth-child(even) {background-color: rgba(15,23,42,0.65);}\n",
       "tr.blend-win {background: linear-gradient(135deg,rgba(22,101,52,0.75),rgba(21,128,61,0.6));}\n",
       "tr.blend-win td {color: #ecfdf5;}\n",
@@ -2371,6 +2384,9 @@ export_moneyline_comparison_html <- function(comparison_tbl,
               }
               if (col_name %in% left_align_cols) {
                 cell_classes <- c(cell_classes, "text-left")
+              }
+              if (identical(col_name, "Blend Beat Market Note")) {
+                cell_classes <- c(cell_classes, "note-cell")
               }
               cell_value <- ifelse(is.na(value), "", value)
               if (identical(col_name, "Winner") && nzchar(cell_value) && cell_value != "TBD") {
@@ -2453,6 +2469,9 @@ export_moneyline_comparison_html <- function(comparison_tbl,
             }
             if (col_name %in% left_align_cols) {
               cell_classes <- c(cell_classes, "text-left")
+            }
+            if (identical(col_name, "Blend Beat Market Note")) {
+              cell_classes <- c(cell_classes, "note-cell")
             }
             cell_value <- ifelse(is.na(value), "", value)
             if (identical(col_name, "Winner") && nzchar(cell_value) && cell_value != "TBD") {
