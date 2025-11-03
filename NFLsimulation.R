@@ -2003,7 +2003,7 @@ SEED        <- 471
 set.seed(SEED)
 
 # ----- Priors / blending knobs -----
-GLMM_BLEND_W <- 0.40   # weight on GLMM priors vs your pace-based baseline (0..1)
+GLMM_BLEND_W <- 0.45   # weight on GLMM priors vs your pace-based baseline (0..1)
 
 # Meta-model and calibration controls for the market/model blend
 BLEND_META_MODEL    <- getOption("nfl_sim.blend_model",    default = "glmnet")
@@ -2012,11 +2012,11 @@ CALIBRATION_METHOD  <- getOption("nfl_sim.calibration",    default = "isotonic")
 
 # SoS weighting knobs
 USE_SOS            <- TRUE     # turn on/off SoS weighting
-SOS_STRENGTH       <- 0.35     # 0=no effect; 1=full strength; try 0.4-0.8
+SOS_STRENGTH       <- 0.45     # 0=no effect; 1=full strength; try 0.4-0.8
 
 # Recency weighting for recent form (exponential decay)
 USE_RECENCY_DECAY  <- TRUE
-RECENCY_HALFLIFE   <- 5        # games; bigger = flatter weights
+RECENCY_HALFLIFE   <- 4        # games; bigger = flatter weights
 
 # Outside-factor base knobs (league-wide defaults, can be overridden per game)
 REST_SHORT_PENALTY <- -0.7     # <=6 days rest
