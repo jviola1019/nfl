@@ -1229,7 +1229,6 @@ if (!exists("build_moneyline_comparison_table", inherits = FALSE)) {
         model_ev_units = blend_ev_units_home,
         market_beats_model = brier_market < brier_model
       ) %>%
-      dplyr::mutate(blend_vs_market_info = NULL) %>%
       dplyr::select(-dplyr::any_of(c(
         "blend_best_ev",
         "blend_spread_equiv",

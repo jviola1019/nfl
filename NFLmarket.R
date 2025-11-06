@@ -1722,51 +1722,27 @@ build_moneyline_comparison_table <- function(market_comparison_result,
         TRUE ~ NA_real_
       ),
       market_ev_units = expected_value_units(market_prob_pick, market_moneyline),
-      blend_vs_market_info = purrr::pmap(
-        list(
-          blend_actual_units,
-          market_actual_units,
-          blend_ev_units,
-          market_ev_units,
-          blend_prob_pick,
-          market_prob_pick,
-          blend_pick,
-          blend_moneyline,
-          market_moneyline,
-          blend_edge_moneyline
-        ),
-        assess_blend_vs_market
+      blend_beats_market = {
+        eps <- sqrt(.Machine$double.eps)
+        dplyr::case_when(
+          is.na(blend_edge_prob) ~ NA,
+          blend_edge_prob > eps ~ TRUE,
+          blend_edge_prob < -eps ~ FALSE,
+          TRUE ~ NA
+        )
+      },
+      blend_beats_market_basis = dplyr::case_when(
+        is.na(blend_beats_market) ~ NA_character_,
+        TRUE ~ "Win probability"
       ),
-      blend_beats_market = vapply(
-        blend_vs_market_info,
-        function(x) {
-          res <- x$result
-          if (is.null(res)) {
-            return(NA)
-          }
-          res
-        },
-        logical(1)
-      ),
-      blend_beats_market_basis = purrr::map_chr(
-        blend_vs_market_info,
-        function(x) {
-          basis <- x$basis
-          if (is.null(basis) || is.na(basis)) {
-            return(NA_character_)
-          }
-          basis
-        }
-      ),
-      blend_beats_market_note_raw = purrr::map_chr(
-        blend_vs_market_info,
-        function(x) {
-          detail <- x$detail
-          if (is.null(detail) || is.na(detail)) {
-            return(NA_character_)
-          }
-          detail
-        }
+      blend_beats_market_note_raw = dplyr::case_when(
+        is.na(blend_beats_market) ~ NA_character_,
+        TRUE ~ sprintf(
+          "Win probability: blend %.1f%% vs market %.1f%% (Δ %+0.1fpp).",
+          100 * blend_prob_pick,
+          100 * market_prob_pick,
+          100 * blend_edge_prob
+        )
       ),
       market_winning = {
         realized_market <- dplyr::case_when(
@@ -1861,8 +1837,7 @@ build_moneyline_comparison_table <- function(market_comparison_result,
       model_away_ml_vig = blend_away_ml_vig,
       model_edge_prob = blend_edge_prob_home,
       model_ev_units = blend_ev_units_home,
-      market_beats_model = brier_market < brier_model,
-      blend_vs_market_info = NULL
+      market_beats_model = brier_market < brier_model
     ) %>%
     dplyr::select(-dplyr::any_of(c(
       "blend_best_ev",
