@@ -1722,51 +1722,27 @@ build_moneyline_comparison_table <- function(market_comparison_result,
         TRUE ~ NA_real_
       ),
       market_ev_units = expected_value_units(market_prob_pick, market_moneyline),
-      blend_vs_market_info = purrr::pmap(
-        list(
-          blend_actual_units,
-          market_actual_units,
-          blend_ev_units,
-          market_ev_units,
-          blend_prob_pick,
-          market_prob_pick,
-          blend_pick,
-          blend_moneyline,
-          market_moneyline,
-          blend_edge_moneyline
-        ),
-        assess_blend_vs_market
+      blend_beats_market = {
+        eps <- sqrt(.Machine$double.eps)
+        dplyr::case_when(
+          is.na(blend_edge_prob) ~ NA,
+          blend_edge_prob > eps ~ TRUE,
+          blend_edge_prob < -eps ~ FALSE,
+          TRUE ~ NA
+        )
+      },
+      blend_beats_market_basis = dplyr::case_when(
+        is.na(blend_beats_market) ~ NA_character_,
+        TRUE ~ "Win probability"
       ),
-      blend_beats_market = vapply(
-        blend_vs_market_info,
-        function(x) {
-          res <- x$result
-          if (is.null(res)) {
-            return(NA)
-          }
-          res
-        },
-        logical(1)
-      ),
-      blend_beats_market_basis = purrr::map_chr(
-        blend_vs_market_info,
-        function(x) {
-          basis <- x$basis
-          if (is.null(basis) || is.na(basis)) {
-            return(NA_character_)
-          }
-          basis
-        }
-      ),
-      blend_beats_market_note_raw = purrr::map_chr(
-        blend_vs_market_info,
-        function(x) {
-          detail <- x$detail
-          if (is.null(detail) || is.na(detail)) {
-            return(NA_character_)
-          }
-          detail
-        }
+      blend_beats_market_note_raw = dplyr::case_when(
+        is.na(blend_beats_market) ~ NA_character_,
+        TRUE ~ sprintf(
+          "Win probability: blend %.1f%% vs market %.1f%% (Δ %+0.1fpp).",
+          100 * blend_prob_pick,
+          100 * market_prob_pick,
+          100 * blend_edge_prob
+        )
       ),
       market_winning = {
         realized_market <- dplyr::case_when(
@@ -1861,8 +1837,7 @@ build_moneyline_comparison_table <- function(market_comparison_result,
       model_away_ml_vig = blend_away_ml_vig,
       model_edge_prob = blend_edge_prob_home,
       model_ev_units = blend_ev_units_home,
-      market_beats_model = brier_market < brier_model,
-      blend_vs_market_info = NULL
+      market_beats_model = brier_market < brier_model
     ) %>%
     dplyr::select(-dplyr::any_of(c(
       "blend_best_ev",
@@ -1973,10 +1948,10 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     "<h2>How to read this report</h2>",
     "<p>Each row compares the blended model to the active moneyline market.</p>",
     "<ul>",
-    "<li><strong>Blend Beat Market?</strong> shows whether the blend outperforms the market using the listed basis.</li>",
+    "<li><strong>Blend Recommendation</strong> summarises the suggested action based on expected value.</li>",
+    "<li><strong>Blend Beat Market?</strong> shows whether the blend outperformed the market using the listed basis.</li>",
     "<li><strong>Basis</strong> tells you if the edge comes from final results, expected value, win probability, or a better price. Upcoming games rely on the pregame math.</li>",
-    "<li><strong>Note</strong> summarizes the comparison so you can see how the edge was determined.</li>",
-    "<li><strong>&Delta; columns</strong> flag any gap between the listed win percentage and the spread-implied win percentage.</li>",
+    "<li><strong>&#916; columns</strong> flag gaps between the listed win percentage and the spread-implied win percentage.</li>",
     "<li>Spread columns are presented from the home team's perspective; plus signs identify underdogs.</li>",
     "</ul>",
     "</section>"
@@ -1998,7 +1973,6 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       `Blend Pick` = blend_pick,
       `Blend Recommendation` = blend_recommendation,
       `Blend Beat Market Basis` = blend_beats_market_basis,
-      `Blend Beat Market Note` = blend_beats_market_note,
       `Blend Stake (Units)` = blend_confidence,
       `Blend Edge` = blend_edge_prob,
       `Blend EV Units` = blend_ev_units,
@@ -2091,18 +2065,11 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       gt_tbl,
       c(
         "Matchup", "Winner", "Blend Favorite", "Market Favorite",
-        "Blend Pick", "Blend Recommendation", "Blend Beat Market Basis",
-        "Blend Beat Market Note"
+        "Blend Pick", "Blend Recommendation", "Blend Beat Market Basis"
       ),
       gt::cols_align,
       align = "left"
     )
-    if ("Blend Beat Market Note" %in% display_cols) {
-      gt_tbl <- gt::cols_width(
-        gt_tbl,
-        `Blend Beat Market Note` ~ gt::px(260)
-      )
-    }
     gt_tbl <- gt_apply_if_columns(
       gt_tbl,
       c("Season", "Week", "Blend Beat Market?"),
@@ -2283,12 +2250,6 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         ".gt_table {border-radius: 18px; overflow: hidden; box-shadow: 0 28px 60px rgba(15,23,42,0.55);}\n",
         ".gt_table thead th {position: sticky; top: 0; z-index: 2; background: rgba(15,23,42,0.92); backdrop-filter: blur(6px);}\n",
         ".gt_table tbody tr:hover {background-color: rgba(37,99,235,0.18) !important;}\n",
-        ".gt_table td[headers='Blend Beat Market Note'] {max-width: 260px; vertical-align: top;}\n",
-        ".note-scroller {display: block; max-height: calc(1.35em * 2); overflow: hidden; white-space: normal; line-height: 1.35; padding-right: 0.35rem;}\n",
-        ".note-scroller:hover {overflow-y: auto;}\n",
-        ".note-scroller::-webkit-scrollbar {width: 6px;}\n",
-        ".note-scroller::-webkit-scrollbar-thumb {background-color: rgba(148,163,184,0.45); border-radius: 6px;}\n",
-        ".note-scroller:hover::-webkit-scrollbar-thumb {background-color: rgba(96,165,250,0.65);}\n",
         "#table-search {width: 100%; max-width: 420px; padding: 0.75rem 1rem; margin: 0 auto 1.5rem; border-radius: 999px; border: 1px solid rgba(148,163,184,0.35); background-color: rgba(15,23,42,0.85); color: #f8fafc; display: block; box-shadow: 0 12px 30px rgba(15,23,42,0.45);}\n",
         "#table-search:focus {outline: none; border-color: #60a5fa; box-shadow: 0 0 0 3px rgba(96,165,250,0.35);}\n",
         "@media (max-width: 768px) { .gt_table {font-size: 0.88rem;} .gt_table thead th {font-size: 0.7rem;} .report-intro {padding: 1.25rem;} }\n"
@@ -2382,7 +2343,6 @@ export_moneyline_comparison_html <- function(comparison_tbl,
           format(round(`Blend Stake (Units)`, 3), nsmall = 3)
         ),
         `Blend Beat Market Basis` = dplyr::coalesce(`Blend Beat Market Basis`, ""),
-        `Blend Beat Market Note` = dplyr::coalesce(`Blend Beat Market Note`, ""),
         Date = suppressWarnings(format(as.Date(Date), "%b %d, %Y")),
         Date = dplyr::if_else(is.na(Date) | Date == "NA", "", Date),
         `Blend Favorite` = dplyr::if_else(is.na(`Blend Favorite`), "", `Blend Favorite`),
@@ -2398,8 +2358,7 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     if (requireNamespace("htmltools", quietly = TRUE)) {
       left_align_cols <- c(
         "Matchup", "Winner", "Blend Favorite", "Market Favorite",
-        "Blend Pick", "Blend Recommendation", "Blend Beat Market Basis",
-        "Blend Beat Market Note"
+        "Blend Pick", "Blend Recommendation", "Blend Beat Market Basis"
       )
       rows <- purrr::map(
         seq_len(nrow(formatted_tbl)),
@@ -2426,24 +2385,8 @@ export_moneyline_comparison_html <- function(comparison_tbl,
               if (col_name %in% left_align_cols) {
                 cell_classes <- c(cell_classes, "text-left")
               }
-              if (identical(col_name, "Blend Beat Market Note")) {
-                cell_classes <- c(cell_classes, "note-cell")
-              }
               cell_value <- ifelse(is.na(value), "", value)
               display_value <- cell_value
-              if (identical(col_name, "Blend Beat Market Note")) {
-                display_value <- htmltools::tags$div(
-                  class = "note-scroller",
-                  style = "max-height: calc(1.35em * 2); overflow: hidden; line-height: 1.35; padding-right: 0.35rem; white-space: normal;",
-                  onmouseenter = "this.style.overflowY='auto';",
-                  onmouseleave = "this.style.overflowY='hidden';",
-                  onfocus = "this.style.overflowY='auto';",
-                  onblur = "this.style.overflowY='hidden';",
-                  tabindex = if (nzchar(cell_value)) "0" else NULL,
-                  title = if (nzchar(cell_value)) cell_value else NULL,
-                  cell_value
-                )
-              }
               if (identical(col_name, "Winner") && nzchar(cell_value) && cell_value != "TBD") {
                 cell_classes <- c(cell_classes, "winner-cell")
               }
@@ -2498,8 +2441,7 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       header <- paste(names(formatted_tbl), collapse = "</th><th>")
       left_align_cols <- c(
         "Matchup", "Winner", "Blend Favorite", "Market Favorite",
-        "Blend Pick", "Blend Recommendation", "Blend Beat Market Basis",
-        "Blend Beat Market Note"
+        "Blend Pick", "Blend Recommendation", "Blend Beat Market Basis"
       )
       body <- purrr::map_chr(
         seq_len(nrow(formatted_tbl)),
@@ -2525,24 +2467,8 @@ export_moneyline_comparison_html <- function(comparison_tbl,
             if (col_name %in% left_align_cols) {
               cell_classes <- c(cell_classes, "text-left")
             }
-            if (identical(col_name, "Blend Beat Market Note")) {
-              cell_classes <- c(cell_classes, "note-cell")
-            }
             cell_value <- ifelse(is.na(value), "", value)
             display_value <- cell_value
-            if (identical(col_name, "Blend Beat Market Note")) {
-              escaped_value <- as.character(htmltools::htmlEscape(cell_value))
-              title_attr <- if (nzchar(cell_value)) sprintf(" title=\\\"%s\\\"", escaped_value) else ""
-              interaction_attrs <- " onmouseenter=\\\"this.style.overflowY='auto';\\\" onmouseleave=\\\"this.style.overflowY='hidden';\\\" onfocus=\\\"this.style.overflowY='auto';\\\" onblur=\\\"this.style.overflowY='hidden';\\\""
-              tabindex_attr <- if (nzchar(cell_value)) " tabindex=\\\"0\\\"" else ""
-              display_value <- sprintf(
-                "<div class=\\\"note-scroller\\\" style=\\\"max-height: calc(1.35em * 2); overflow: hidden; line-height: 1.35; padding-right: 0.35rem; white-space: normal;\\\"%s%s%s>%s</div>",
-                title_attr,
-                tabindex_attr,
-                interaction_attrs,
-                escaped_value
-              )
-            }
             if (identical(col_name, "Winner") && nzchar(cell_value) && cell_value != "TBD") {
               cell_classes <- c(cell_classes, "winner-cell")
             }
