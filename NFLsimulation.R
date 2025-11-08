@@ -346,7 +346,10 @@ if (!exists("clamp_probability", inherits = FALSE)) {
 }
 
 if (!exists("resolve_home_probability", inherits = FALSE)) {
-  resolve_home_probability <- function(home_prob, home_ml = NA_real_, away_ml = NA_real_) {
+  resolve_home_probability <- function(home_prob,
+                                       home_ml = NA_real_,
+                                       away_ml = NA_real_,
+                                       tolerance = 5e-03) {
     home_prob <- suppressWarnings(as.numeric(home_prob))
     ml_home <- coerce_numeric_safely(home_ml)
     ml_away <- coerce_numeric_safely(away_ml)
@@ -374,7 +377,26 @@ if (!exists("resolve_home_probability", inherits = FALSE)) {
       }
     }
 
-    clamp_probability(home_prob)
+    prob <- clamp_probability(home_prob)
+
+    ml_prob <- american_to_probability(ml_home)
+    ml_prob <- clamp_probability(ml_prob)
+    reconcile_mask <- is.finite(prob) & is.finite(ml_prob) & abs(prob - ml_prob) > tolerance
+    if (any(reconcile_mask, na.rm = TRUE)) {
+      prob[reconcile_mask] <- ml_prob[reconcile_mask]
+    }
+
+    ml_prob_away <- american_to_probability(ml_away)
+    ml_prob_away <- clamp_probability(ml_prob_away)
+    if (length(ml_prob_away)) {
+      ml_prob_from_away <- clamp_probability(1 - ml_prob_away)
+      reconcile_mask <- is.finite(prob) & is.finite(ml_prob_from_away) & abs(prob - ml_prob_from_away) > tolerance
+      if (any(reconcile_mask, na.rm = TRUE)) {
+        prob[reconcile_mask] <- ml_prob_from_away[reconcile_mask]
+      }
+    }
+
+    prob
   }
 }
 
@@ -1044,8 +1066,16 @@ if (!exists("build_moneyline_comparison_table", inherits = FALSE)) {
           ),
           market_moneyline
         ),
-        blend_prob_fav = blend_prob_pick,
-        market_prob_fav = market_prob_pick,
+        blend_prob_fav = dplyr::case_when(
+          is.na(blend_home_prob) & is.na(blend_away_prob) ~ NA_real_,
+          blend_home_prob >= blend_away_prob ~ blend_home_prob,
+          TRUE ~ blend_away_prob
+        ),
+        market_prob_fav = dplyr::case_when(
+          is.na(market_home_prob) & is.na(market_away_prob) ~ NA_real_,
+          market_home_prob >= market_away_prob ~ market_home_prob,
+          TRUE ~ market_away_prob
+        ),
         market_pick_side = dplyr::case_when(
           is.na(market_home_prob) ~ NA_character_,
           market_home_prob >= market_away_prob ~ "home",
@@ -1334,6 +1364,17 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
       }
       out
     }
+
+    format_probability_leader <- function(team, prob) {
+      team <- as.character(team)
+      prob <- suppressWarnings(as.numeric(prob))
+      out <- rep(NA_character_, length(prob))
+      valid <- !is.na(prob) & is.finite(prob) & !is.na(team) & nzchar(team)
+      if (any(valid)) {
+        out[valid] <- sprintf("%s %.1f%%", team[valid], round(prob[valid] * 100, 1))
+      }
+      out
+    }
   
     intro_html <- paste0(
       "<section class=\"report-intro\">",
@@ -1356,6 +1397,9 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
         Date = game_date,
         Matchup = matchup,
         `Blend Favorite` = blend_favorite,
+        `Market Favorite` = market_pick,
+        `Blend Prob` = format_probability_leader(blend_favorite, blend_prob_fav),
+        `Market Prob` = format_probability_leader(`Market Favorite`, market_prob_fav),
         `Blend Recommendation` = blend_recommendation,
         `Blend Stake (Units)` = blend_confidence,
         `Blend Beat Market Basis` = blend_beats_market_basis,
@@ -1454,7 +1498,7 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
       gt_tbl <- gt_apply_if_columns(
         gt_tbl,
         c(
-          "Season", "Week", "Blend Favorite", "Blend Recommendation",
+          "Season", "Week", "Blend Favorite", "Market Favorite", "Blend Recommendation",
           "Blend Beat Market?"
         ),
         gt::cols_align,
@@ -1463,7 +1507,8 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
       gt_tbl <- gt_apply_if_columns(
         gt_tbl,
         c(
-          "Matchup", "Winner", "Blend Favorite", "Blend Recommendation",
+          "Matchup", "Winner", "Blend Favorite", "Market Favorite",
+          "Blend Prob", "Market Prob", "Blend Recommendation",
           "Blend Beat Market Basis"
         ),
         gt::cols_align,
@@ -1596,14 +1641,25 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
           dplyr::across(
             dplyr::all_of(moneyline_cols),
             format_moneyline_strings
-          )
+          ),
+          `Blend Favorite` = dplyr::if_else(is.na(`Blend Favorite`), "", `Blend Favorite`),
+          `Market Favorite` = dplyr::if_else(is.na(`Market Favorite`), "", `Market Favorite`),
+          `Blend Prob` = dplyr::if_else(is.na(`Blend Prob`), "", `Blend Prob`),
+          `Market Prob` = dplyr::if_else(is.na(`Market Prob`), "", `Market Prob`),
+          `Blend Recommendation` = dplyr::if_else(
+            is.na(`Blend Recommendation`),
+            "",
+            `Blend Recommendation`
+          ),
+          Winner = dplyr::coalesce(Winner, "")
         )
   
       table_id <- "simulation-moneyline-table"
 
       if (requireNamespace("htmltools", quietly = TRUE)) {
         left_align_cols <- c(
-          "Matchup", "Winner", "Blend Favorite", "Blend Recommendation",
+          "Matchup", "Winner", "Blend Favorite", "Market Favorite",
+          "Blend Prob", "Market Prob", "Blend Recommendation",
           "Blend Beat Market Basis"
         )
         rows <- purrr::map(
