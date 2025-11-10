@@ -548,11 +548,11 @@ harmonize_home_margin <- function(margin, home_prob, tolerance = 5e-03) {
   margin
 }
 
-spread_to_win_probability <- function(spread, sigma = 13.86) {
+spread_to_win_probability <- function(spread, sigma = 13.86) {  # 13.86 = Historical NFL margin standard deviation
   spread <- coerce_numeric_safely(spread)
   sigma <- coerce_numeric_safely(sigma)
   if (!length(sigma) || !is.finite(sigma[[1L]]) || sigma[[1L]] <= 0) {
-    sigma <- 13.86
+    sigma <- 13.86  # Historical NFL margin standard deviation
   } else {
     sigma <- sigma[[1L]]
   }
@@ -629,7 +629,8 @@ expected_value_units <- function(prob, odds) {
   dec <- american_to_decimal(odds)
   b <- dec - 1
   out <- prob * b - (1 - prob)
-  invalid <- is.na(prob) | is.na(dec) | !is.finite(dec) | b <= 0
+  # Check for invalid values including near-zero b to avoid numerical instability
+  invalid <- is.na(prob) | is.na(dec) | !is.finite(dec) | b <= 0 | abs(b) < 1e-6
   out[invalid] <- NA_real_
   out
 }
@@ -1837,7 +1838,8 @@ build_moneyline_comparison_table <- function(market_comparison_result,
           dec <- american_to_decimal(market_moneyline)
           b <- dec - 1
           stake <- (blend_prob_pick * b - (1 - blend_prob_pick)) / b
-          invalid <- is.na(dec) | !is.finite(dec) | b <= 0 | is.na(stake)
+          # Check for invalid values including near-zero b to avoid numerical instability
+          invalid <- is.na(dec) | !is.finite(dec) | b <= 0 | abs(b) < 1e-6 | is.na(stake)
           stake[invalid] <- NA_real_
           stake
         }

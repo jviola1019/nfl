@@ -176,7 +176,12 @@ compare_to_market <- function(res,
     }
     x[idx]
   }
-  american_to_prob <- function(odds) ifelse(odds < 0, (-odds)/((-odds)+100), 100/(odds+100))
+  american_to_prob <- function(odds) {
+    ifelse(
+      is.na(odds) | odds == 0, NA_real_,
+      ifelse(odds < 0, (-odds)/((-odds)+100), 100/(odds+100))
+    )
+  }
   devig_2way <- function(p_home_raw, p_away_raw){
     den <- p_home_raw + p_away_raw
     tibble::tibble(
@@ -455,7 +460,7 @@ compare_to_market <- function(res,
         message("compare_to_market(): no market information available after fallbacks; skipping.")
         return(invisible(NULL))
       }
-      SD_MARGIN <- 13.86
+      SD_MARGIN <- 13.86  # Historical NFL margin standard deviation
       mkt_tbl <- sched_eval %>%
         dplyr::transmute(game_id, season, week, home_spread = suppressWarnings(as.numeric(.data[[spread_col]]))) %>%
         dplyr::filter(is.finite(home_spread)) %>%
