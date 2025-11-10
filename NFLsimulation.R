@@ -5191,7 +5191,7 @@ spread_total_map <- fit_spread_total_to_prob(sched %>% dplyr::filter(game_type %
 map_spread_total_prob <- function(sp, tot) {
   sp <- suppressWarnings(as.numeric(sp)); tot <- suppressWarnings(as.numeric(tot))
   if (is.null(spread_total_map)) {
-    # fallback to your simple map or normal-approx default
+    # fallback to your simple map or normal-approx default (13.86 = Historical NFL margin standard deviation)
     if (is.null(spread_map)) pnorm(-sp/13.86) else
       .clp(as.numeric(predict(spread_map, newdata = data.frame(spread = sp), type = "response")))
   } else {
@@ -5206,7 +5206,7 @@ spread_map <- fit_spread_to_prob(sched %>% dplyr::filter(game_type %in% c("REG",
 map_spread_prob <- function(sp) {
   sp <- as.numeric(sp)
   if (is.null(spread_map)) {
-    # fallback if we couldn't fit a model
+    # fallback if we couldn't fit a model (13.86 = Historical NFL margin standard deviation)
     pnorm(-sp/13.86)
   } else {
     .clp(as.numeric(predict(spread_map, newdata = data.frame(spread = sp), type = "response")))
