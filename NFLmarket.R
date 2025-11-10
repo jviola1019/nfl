@@ -30,6 +30,8 @@ if (!exists("PREDICTION_JOIN_KEYS", inherits = FALSE)) {
 # General-purpose helpers -------------------------------------------------------
 # ------------------------------------------------------------------------------
 
+# NOTE: This helper is also defined in NFLbrier_logloss.R (lines 14-27)
+# Intentionally duplicated to avoid external dependencies
 first_non_missing_typed <- function(x) {
   if (!length(x)) {
     return(x)
@@ -1182,6 +1184,8 @@ extract_game_level_scores <- function(market_comparison_result) {
     return(tibble::tibble())
   }
 
+  # NOTE: This helper is also defined in NFLsimulation.R (lines ~495-507)
+  # Intentionally duplicated as a local helper to avoid external dependencies
   coalesce_numeric_cols <- function(df, cols) {
     cols <- intersect(cols, names(df))
     if (!length(cols)) {
