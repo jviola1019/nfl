@@ -492,6 +492,8 @@ if (!exists("extract_game_level_scores", inherits = FALSE)) {
       return(tibble::tibble())
     }
 
+    # NOTE: This helper is also defined in NFLmarket.R (lines ~1185-1197)
+    # Intentionally duplicated as a local helper to avoid external dependencies
     coalesce_numeric_cols <- function(df, cols) {
       cols <- intersect(cols, names(df))
       if (!length(cols)) {
@@ -5073,7 +5075,12 @@ score_weeks <- function(start_season, end_season, weeks = NULL, trials = 40000L)
 .clp <- function(x, eps=1e-12) pmin(pmax(x, eps), 1-eps)
 .lgt <- function(p) log(p/(1-p))
 .inv <- function(z) 1/(1+exp(-z))
-american_to_prob <- function(odds) ifelse(odds < 0, (-odds)/((-odds)+100), 100/(odds+100))
+american_to_probability <- function(odds) {
+  ifelse(
+    is.na(odds) | odds == 0, NA_real_,
+    ifelse(odds < 0, (-odds)/((-odds)+100), 100/(odds+100))
+  )
+}
 
 align_blend_with_margin <- function(p_blend,
                                     margin_mean,
@@ -5220,7 +5227,12 @@ market_probs_from_sched <- function(sched_df) {
     nm <- intersect(cands, names(df))
     if (length(nm)) nm[1] else NA_character_
   }
-  american_to_prob <- function(odds) ifelse(odds < 0, (-odds)/((-odds) + 100), 100/(odds + 100))
+  american_to_probability <- function(odds) {
+    ifelse(
+      is.na(odds) | odds == 0, NA_real_,
+      ifelse(odds < 0, (-odds)/((-odds) + 100), 100/(odds + 100))
+    )
+  }
 
   base <- sched_df %>%
     dplyr::filter(!is.na(game_id)) %>%
@@ -5251,8 +5263,8 @@ market_probs_from_sched <- function(sched_df) {
     ml_tbl <- sched_df %>%
       dplyr::transmute(
         game_id, season, week,
-        p_home_raw = american_to_prob(suppressWarnings(as.numeric(.data[[ml_home]]))),
-        p_away_raw = american_to_prob(suppressWarnings(as.numeric(.data[[ml_away]])))
+        p_home_raw = american_to_probability(suppressWarnings(as.numeric(.data[[ml_home]]))),
+        p_away_raw = american_to_probability(suppressWarnings(as.numeric(.data[[ml_away]])))
       ) %>%
       dplyr::mutate(
         den = p_home_raw + p_away_raw,
@@ -5715,8 +5727,8 @@ blend_design <- function(df) {
 
   d_sp <- if (!is.na(sp_open) && !is.na(sp_close)) suppressWarnings(as.numeric(df[[sp_close]]) - as.numeric(df[[sp_open]])) else NA_real_
   d_ml <- if (!is.na(mlh_open) && !is.na(mlh_close)) {
-    ph_o <- american_to_prob(suppressWarnings(as.numeric(df[[mlh_open]])))
-    ph_c <- american_to_prob(suppressWarnings(as.numeric(df[[mlh_close]])))
+    ph_o <- american_to_probability(suppressWarnings(as.numeric(df[[mlh_open]])))
+    ph_c <- american_to_probability(suppressWarnings(as.numeric(df[[mlh_close]])))
     (ph_c - ph_o)
   } else NA_real_
 

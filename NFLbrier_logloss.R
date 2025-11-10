@@ -11,6 +11,8 @@ if (!exists("PREDICTION_JOIN_KEYS", inherits = FALSE)) {
 }
 
 if (!exists("first_non_missing_typed", inherits = FALSE)) {
+  # NOTE: This helper is also defined in NFLmarket.R (lines 33-46)
+  # Intentionally duplicated to avoid external dependencies
   first_non_missing_typed <- function(x) {
     if (!length(x)) {
       return(x)
@@ -176,7 +178,7 @@ compare_to_market <- function(res,
     }
     x[idx]
   }
-  american_to_prob <- function(odds) {
+  american_to_probability <- function(odds) {
     ifelse(
       is.na(odds) | odds == 0, NA_real_,
       ifelse(odds < 0, (-odds)/((-odds)+100), 100/(odds+100))
@@ -448,8 +450,8 @@ compare_to_market <- function(res,
         ) %>%
         dplyr::filter(is.finite(home_ml), is.finite(away_ml)) %>%
         dplyr::mutate(
-          p_home_raw = american_to_prob(home_ml),
-          p_away_raw = american_to_prob(away_ml)
+          p_home_raw = american_to_probability(home_ml),
+          p_away_raw = american_to_probability(away_ml)
         ) %>%
         dplyr::bind_cols(devig_2way(.$p_home_raw, .$p_away_raw)) %>%
         dplyr::select(game_id, season, week, p_home_mkt_2w)
