@@ -2126,7 +2126,7 @@ SEED        <- 471
 set.seed(SEED)
 
 # ----- Priors / blending knobs -----
-GLMM_BLEND_W <- 0.45   # weight on GLMM priors vs your pace-based baseline (0..1)
+GLMM_BLEND_W <- 0.38   # weight on GLMM priors vs pace-based baseline (tuned for Brier/log-loss)
 
 # Meta-model and calibration controls for the market/model blend
 BLEND_META_MODEL    <- getOption("nfl_sim.blend_model",    default = "glmnet")
@@ -2139,17 +2139,21 @@ SOS_STRENGTH       <- 0.45     # 0=no effect; 1=full strength; try 0.4-0.8
 
 # Recency weighting for recent form (exponential decay)
 USE_RECENCY_DECAY  <- TRUE
-RECENCY_HALFLIFE   <- 4        # games; bigger = flatter weights
+RECENCY_HALFLIFE   <- 3        # games; tuned to favor recent form for better reactivity
 
 # Outside-factor base knobs (league-wide defaults, can be overridden per game)
-REST_SHORT_PENALTY <- -0.7     # <=6 days rest
+REST_SHORT_PENALTY <- -0.85    # <=6 days rest (strengthened for fatigued teams)
 REST_LONG_BONUS    <- +0.5     # >=9 days rest (non-bye)
 BYE_BONUS          <- +1.0     # coming off a bye
 DEN_ALTITUDE_BONUS <- +0.6     # small bump for DEN home HFA flavor
 
+# Division/Conference game adjustments (based on higher stakes and familiarity)
+DIVISION_GAME_ADJUST   <- -0.4    # Division games tend to be closer/lower scoring
+CONFERENCE_GAME_ADJUST <- -0.2    # Conference games slightly more competitive
+
 # Pace/environment (light-touch, additive points to totals split evenly)
 DOME_BONUS_TOTAL   <- +0.8
-OUTDOOR_WIND_PEN   <- -1.0     # apply if you set wind flag on a game
+OUTDOOR_WIND_PEN   <- -1.2     # apply if you set wind flag (tuned for weather impact)
 COLD_TEMP_PEN      <- -0.6     # apply if you set cold flag on a game
 RAIN_SNOW_PEN      <- -0.8
 
@@ -2190,7 +2194,11 @@ FRONT7_AVAIL_POINT_PER_FLAG    <- 0.50
   "SECONDARY_AVAIL_POINT_PER_FLAG", SECONDARY_AVAIL_POINT_PER_FLAG, "0.35 to 0.6", "Totals, log loss",
   "Raise to bump overs when secondaries are depleted; reduce if the market already prices in those matchups and the model overstates shootout risk.",
   "FRONT7_AVAIL_POINT_PER_FLAG", FRONT7_AVAIL_POINT_PER_FLAG, "0.35 to 0.65", "Totals, ret_total",
-  "Controls front-seven injury effects. Increase when run-stopping issues aren't reflected; decrease if defensive depth masks absences."
+  "Controls front-seven injury effects. Increase when run-stopping issues aren't reflected; decrease if defensive depth masks absences.",
+  "DIVISION_GAME_ADJUST", DIVISION_GAME_ADJUST, "-0.6 to -0.2", "Win rate, Totals, Brier",
+  "Negative values reduce totals in division games due to familiarity and defensive preparation. Strengthen when division games consistently go under; ease when competitiveness drives scoring.",
+  "CONFERENCE_GAME_ADJUST", CONFERENCE_GAME_ADJUST, "-0.4 to 0.0", "Win rate, Brier",
+  "Accounts for conference game competitiveness. More negative when same-conference matchups are tighter than expected; neutral when effect is minimal."
 )
 
 show_tuning_help <- function(metric = NULL) {
@@ -2263,6 +2271,16 @@ venue_col <- dplyr::case_when(
 )
 sched <- sched |>
   mutate(venue = if (!is.na(venue_col)) as.character(.data[[venue_col]]) else NA_character_)
+
+# --- Load team division/conference data for division game indicators
+team_info <- tryCatch({
+  nflreadr::load_teams() %>%
+    dplyr::select(team_abbr, team_conf, team_division) %>%
+    dplyr::rename(team = team_abbr)
+}, error = function(e) {
+  warning("Could not load team division/conference data: ", conditionMessage(e))
+  tibble::tibble(team = character(), team_conf = character(), team_division = character())
+})
 
 # Helper to pick the first existing column among candidates
 pick_col <- function(df, candidates, label){
@@ -2373,6 +2391,23 @@ week_slate <- week_slate %>%
       dplyr::select(game_id, kickoff_et, kickoff_utc, kickoff_et_hour, kickoff_time_raw, kickoff_tz_raw, kickoff_display_et),
     by = "game_id"
   )
+
+# Add division/conference indicators
+if (nrow(team_info) > 0) {
+  week_slate <- week_slate %>%
+    dplyr::left_join(team_info %>% dplyr::rename(home_division = team_division, home_conf = team_conf),
+                     by = c("home_team" = "team")) %>%
+    dplyr::left_join(team_info %>% dplyr::rename(away_division = team_division, away_conf = team_conf),
+                     by = c("away_team" = "team")) %>%
+    dplyr::mutate(
+      division_game = !is.na(home_division) & !is.na(away_division) & home_division == away_division,
+      conference_game = !is.na(home_conf) & !is.na(away_conf) & home_conf == away_conf
+    ) %>%
+    dplyr::select(-home_division, -away_division, -home_conf, -away_conf)
+} else {
+  week_slate <- week_slate %>%
+    dplyr::mutate(division_game = FALSE, conference_game = FALSE)
+}
 
 sched <- sched %>%
   mutate(
@@ -3708,6 +3743,14 @@ games_ready <- games_ready %>%
     mu_away = pmax(mu_away + coalesce(travel_mu_adj_away, 0), 0)
   )
 
+# Apply division/conference game adjustments to totals (split evenly between teams)
+games_ready <- games_ready %>%
+  mutate(
+    div_conf_adj = ifelse(coalesce(division_game, FALSE), DIVISION_GAME_ADJUST / 2,
+                          ifelse(coalesce(conference_game, FALSE), CONFERENCE_GAME_ADJUST / 2, 0)),
+    mu_home = pmax(mu_home + div_conf_adj, 0),
+    mu_away = pmax(mu_away + div_conf_adj, 0)
+  )
 
 # --- Manual HFA (team-specific; use your 5-year shrinked/capped estimate) ---
 # If you already built a per-team HFA table elsewhere, join it here as `home_hfa_pts`.
@@ -5437,6 +5480,23 @@ ctx <- sched %>%
   ) %>%
   dplyr::left_join(rest_features, by = "game_id")
 
+# Add division/conference indicators to historical context
+if (nrow(team_info) > 0) {
+  ctx <- ctx %>%
+    dplyr::left_join(team_info %>% dplyr::rename(home_division = team_division, home_conf = team_conf),
+                     by = c("home_team" = "team")) %>%
+    dplyr::left_join(team_info %>% dplyr::rename(away_division = team_division, away_conf = team_conf),
+                     by = c("away_team" = "team")) %>%
+    dplyr::mutate(
+      division_game = as.integer(!is.na(home_division) & !is.na(away_division) & home_division == away_division),
+      conference_game = as.integer(!is.na(home_conf) & !is.na(away_conf) & home_conf == away_conf)
+    ) %>%
+    dplyr::select(-home_division, -away_division, -home_conf, -away_conf)
+} else {
+  ctx <- ctx %>%
+    dplyr::mutate(division_game = 0L, conference_game = 0L)
+}
+
 if (nrow(inj_hist_features)) {
   inj_home <- inj_hist_features %>%
     dplyr::rename(home_team = team) %>%
@@ -5769,7 +5829,8 @@ blend_design <- function(df) {
     "home_secondary_avail_pen", "away_secondary_avail_pen", "home_front7_avail_pen", "away_front7_avail_pen",
     "off_epa_edge", "def_epa_edge", "sr_edge", "net_epa_edge",
     "pass_epa_edge", "rush_epa_edge", "pass_sr_edge", "rush_sr_edge", "pressure_rate_diff",
-    "off_epa_edge", "def_epa_edge", "sr_edge", "net_epa_edge"
+    "off_epa_edge", "def_epa_edge", "sr_edge", "net_epa_edge",
+    "division_game", "conference_game"
   ), names(df))
 
   for (col in optional_cols) {
@@ -5818,13 +5879,16 @@ make_calibrator <- function(method, p, y, weights = NULL) {
     method <- "isotonic"
   }
 
-  # default isotonic regression calibrator
+  # default isotonic regression calibrator with adaptive boundaries
   tb <- tibble::tibble(p = .clp(p), y = y) %>%
     dplyr::mutate(bin = pmin(pmax(floor(p * 100), 0), 100)) %>%
     dplyr::group_by(bin) %>%
     dplyr::summarise(x = mean(p), y = mean(y), .groups = "drop") %>%
     dplyr::arrange(x)
-  iso <- stats::isoreg(c(0, tb$x, 1), c(0.01, tb$y, 0.99))
+  # Adaptive boundaries: cushion 5% beyond observed range for better extrapolation
+  y_min <- max(0.01, min(tb$y, na.rm = TRUE) * 0.95)
+  y_max <- min(0.99, max(tb$y, na.rm = TRUE) * 1.05)
+  iso <- stats::isoreg(c(0, tb$x, 1), c(y_min, tb$y, y_max))
   xs  <- iso$x[!duplicated(iso$x)]
   ys  <- iso$yf[!duplicated(iso$x)]
   function(newp) {
@@ -6007,13 +6071,16 @@ if (nrow(train_deploy) >= 500) {
   cv <- cv.glmnet(mm$x, mm$y, family = "binomial", alpha = 0.25, weights = w, nfolds = 10)
   fit_deploy <- list(cv = cv, feat = colnames(mm$x))
 
-  # isotonic on the blend scores (train side)
+  # isotonic on the blend scores (train side) with adaptive boundaries
   p_tr <- as.numeric(predict(cv, newx = mm$x, s = "lambda.min", type = "response"))
   tb <- tibble::tibble(p = .clp(p_tr), y = mm$y) %>%
     dplyr::mutate(bin = pmin(pmax(floor(p*100),0),100)) %>%
     dplyr::group_by(bin) %>% dplyr::summarise(x = mean(p), y = mean(y), .groups="drop") %>%
     dplyr::arrange(x)
-  iso <- stats::isoreg(c(0, tb$x, 1), c(0.01, tb$y, 0.99))
+  # Adaptive boundaries based on actual outcome range (more robust than hardcoded values)
+  y_min <- max(0.01, min(tb$y, na.rm = TRUE) * 0.95)  # 5% cushion below min
+  y_max <- min(0.99, max(tb$y, na.rm = TRUE) * 1.05)  # 5% cushion above max
+  iso <- stats::isoreg(c(0, tb$x, 1), c(y_min, tb$y, y_max))
   xs  <- iso$x[!duplicated(iso$x)]
   ys  <- iso$yf[!duplicated(iso$x)]
   map_blend <- function(p){ p <- .clp(p); .clp(stats::approx(xs, ys, xout = p, rule = 2)$y) }
