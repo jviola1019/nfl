@@ -2038,9 +2038,16 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     "<li><strong>Win probability</strong> — Blend assigns higher win % to its pick vs market's pick</li>",
     "<li><strong>Moneyline price</strong> — Blend offers better pricing for the same pick</li>",
     "</ul></li>",
-    "<li><span class=\"metric-icon\">📈</span> <strong>Blend Edge:</strong> Probability difference between blend's pick and market's pick (can be negative!).</li>",
-    "<li><span class=\"metric-icon\">💰</span> <strong>Blend EV Units:</strong> Expected profit per $1 wagered on the blend's recommendation.</li>",
-    "<li><span class=\"metric-icon\">🏈</span> <strong>Spread convention:</strong> All spreads shown from home team's perspective. Plus (+) = underdog, minus (−) = favorite.</li>",
+    "<li><span class=\"metric-icon\">📈</span> <strong>Blend Edge (pp):</strong> Probability difference (in percentage points) between blend's assessment and market's. Positive = blend more confident than market. <em>Color coded: green (positive edge), red (negative edge).</em></li>",
+    "<li><span class=\"metric-icon\">💰</span> <strong>Blend EV (Units):</strong> Expected profit per $1 wagered on the blend's recommendation. <em>Color coded: green (profitable), red (unprofitable).</em></li>",
+    "<li><span class=\"metric-icon\">🎯</span> <strong>Probabilities (Blend/Market Home Win %):</strong> Win probability for the home team according to blend model vs market. <em>Color intensity shows confidence level.</em></li>",
+    "<li><span class=\"metric-icon\">🏈</span> <strong>Spreads:</strong> All spreads shown from home team's perspective:",
+    "<ul class=\"basis-list\">",
+    "<li><strong>Market Home Spread</strong> — Betting line from sportsbooks (+ = underdog, − = favorite)</li>",
+    "<li><strong>Blend Median Margin</strong> — Blend's predicted point differential (negative spread equivalent)</li>",
+    "<li><em>Color coded: red (home underdog), green (home favorite)</em></li>",
+    "</ul></li>",
+    "<li><span class=\"metric-icon\">💵</span> <strong>Moneylines:</strong> American odds format (e.g., +150 = win $150 on $100 bet, -150 = bet $150 to win $100).</li>",
     "</ul>",
     "</div>",
 
@@ -2156,10 +2163,88 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       gt::cols_align,
       align = "center"
     )
-    gt_tbl <- gt::tab_header(gt_tbl, title = title)
+
+    # Add visual data bars for probability columns
+    if (all(c("Blend Home Win %", "Market Home Win %") %in% display_cols)) {
+      gt_tbl <- tryCatch({
+        gt::data_color(
+          gt_tbl,
+          columns = c("Blend Home Win %", "Market Home Win %"),
+          colors = scales::col_numeric(
+            palette = c("#1e3a8a", "#2563eb", "#3b82f6", "#60a5fa", "#93c5fd"),
+            domain = c(0, 1),
+            na.color = "#374151"
+          )
+        )
+      }, error = function(e) gt_tbl)
+    }
+
+    # Add color coding for EV column (green for positive, red for negative)
+    if ("Blend EV (Units)" %in% display_cols) {
+      gt_tbl <- tryCatch({
+        gt::data_color(
+          gt_tbl,
+          columns = "Blend EV (Units)",
+          colors = scales::col_numeric(
+            palette = c("#991B1B", "#dc2626", "#1f2937", "#15803d", "#166534"),
+            domain = c(-0.2, 0.2),
+            na.color = "#374151"
+          )
+        )
+      }, error = function(e) gt_tbl)
+    }
+
+    # Add color coding for Edge column (green for positive, red for negative)
+    if ("Blend Edge (pp)" %in% display_cols) {
+      gt_tbl <- tryCatch({
+        gt::data_color(
+          gt_tbl,
+          columns = "Blend Edge (pp)",
+          colors = scales::col_numeric(
+            palette = c("#991B1B", "#dc2626", "#1f2937", "#15803d", "#166534"),
+            domain = c(-0.15, 0.15),
+            na.color = "#374151"
+          )
+        )
+      }, error = function(e) gt_tbl)
+    }
+
+    # Add color coding for spread columns
+    if (all(c("Market Home Spread", "Blend Median Margin") %in% display_cols)) {
+      gt_tbl <- tryCatch({
+        gt::data_color(
+          gt_tbl,
+          columns = c("Market Home Spread", "Blend Median Margin"),
+          colors = scales::col_numeric(
+            palette = c("#dc2626", "#f87171", "#1f2937", "#4ade80", "#22c55e"),
+            domain = c(-14, 14),
+            na.color = "#374151"
+          )
+        )
+      }, error = function(e) gt_tbl)
+    }
+    gt_tbl <- gt::tab_header(
+      gt_tbl,
+      title = title,
+      subtitle = "🎯 Spreads • 📊 Probabilities • 💰 Expected Value • 📈 Edge Analysis"
+    )
+
+    # Add column spanners for better organization
+    gt_tbl <- tryCatch({
+      if ("tab_spanner" %in% getNamespaceExports("gt")) {
+        gt_tbl <- gt::tab_spanner(gt_tbl, label = "📅 Game Info", columns = c("Season", "Week", "Date", "Matchup"))
+        if ("Winner" %in% display_cols) {
+          gt_tbl <- gt::tab_spanner(gt_tbl, label = "🏆 Result", columns = "Winner")
+        }
+        gt_tbl <- gt::tab_spanner(gt_tbl, label = "🎯 Blend Analysis", columns = dplyr::matches("^Blend"))
+        gt_tbl <- gt::tab_spanner(gt_tbl, label = "📊 Market Data", columns = dplyr::matches("^Market"))
+      }
+      gt_tbl
+    }, error = function(e) gt_tbl)
+
     gt_tbl <- gt::tab_source_note(
       gt_tbl,
-      source_note = "Δ columns compare posted win percentages against the spread-implied win probability."
+      source_note = "📌 Color coding: Probabilities (blue gradient), EV/Edge (green=positive, red=negative), Spreads (green=home favorite, red=home underdog)"
     )
     gt_tbl <- gt::tab_options(
       gt_tbl,
@@ -2273,8 +2358,11 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     if ("opt_css" %in% getNamespaceExports("gt")) {
       custom_css <- paste(
         ".gt_table { border-radius: 18px; overflow: hidden; box-shadow: 0 28px 60px rgba(15, 23, 42, 0.55); background-color: rgba(15, 23, 42, 0.9); }",
-        ".gt_table thead th { position: sticky; top: 0; z-index: 2; backdrop-filter: blur(6px); background-color: rgba(15, 23, 42, 0.92); }",
-        ".gt_table tbody tr:hover { background-color: rgba(37, 99, 235, 0.18); transition: background-color 180ms ease-in-out; }",
+        ".gt_table thead th { position: sticky; top: 0; z-index: 2; backdrop-filter: blur(6px); background-color: rgba(15, 23, 42, 0.92); font-size: 0.85rem; padding: 12px 8px; border-bottom: 2px solid rgba(59, 130, 246, 0.3); }",
+        ".gt_table tbody tr:hover { background-color: rgba(37, 99, 235, 0.18); transition: background-color 180ms ease-in-out; transform: scale(1.005); }",
+        ".gt_table tbody td { padding: 10px 8px; font-size: 0.9rem; border-bottom: 1px solid rgba(30, 41, 59, 0.5); }",
+        ".gt_table tbody td[style*='background'] { font-weight: 600; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3); }",
+        "@media (max-width: 768px) { .gt_table thead th { font-size: 0.7rem; padding: 8px 4px; } .gt_table tbody td { font-size: 0.8rem; padding: 8px 4px; } }",
         sep = "\n"
       )
       gt_tbl <- tryCatch(
