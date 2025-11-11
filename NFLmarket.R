@@ -1755,27 +1755,35 @@ build_moneyline_comparison_table <- function(market_comparison_result,
         TRUE ~ NA_real_
       ),
       market_ev_units = expected_value_units(market_prob_pick, market_moneyline),
-      blend_beats_market = {
-        eps <- sqrt(.Machine$double.eps)
-        dplyr::case_when(
-          is.na(blend_edge_prob) ~ NA,
-          blend_edge_prob > eps ~ TRUE,
-          blend_edge_prob < -eps ~ FALSE,
-          TRUE ~ NA
-        )
-      },
-      blend_beats_market_basis = dplyr::case_when(
-        is.na(blend_beats_market) ~ NA_character_,
-        TRUE ~ "Win probability"
+      blend_beats_market_assessment = purrr::pmap(
+        list(
+          blend_actual_units = blend_actual_units,
+          market_actual_units = market_actual_units,
+          blend_ev_units = blend_ev_units,
+          market_ev_units = market_ev_units,
+          blend_prob_pick = blend_prob_pick,
+          market_prob_pick = market_prob_pick,
+          blend_pick_label = blend_pick,
+          blend_moneyline = blend_moneyline,
+          market_moneyline = market_moneyline,
+          blend_edge_moneyline = blend_edge_moneyline
+        ),
+        assess_blend_vs_market
       ),
-      blend_beats_market_note_raw = dplyr::case_when(
-        is.na(blend_beats_market) ~ NA_character_,
-        TRUE ~ sprintf(
-          "Win probability: blend %.1f%% vs market %.1f%% (Δ %+0.1fpp).",
-          100 * blend_prob_pick,
-          100 * market_prob_pick,
-          100 * blend_edge_prob
-        )
+      blend_beats_market = purrr::map_lgl(
+        blend_beats_market_assessment,
+        ~ {
+          res <- .x$result
+          if (is.na(res)) NA else as.logical(res)
+        }
+      ),
+      blend_beats_market_basis = purrr::map_chr(
+        blend_beats_market_assessment,
+        ~ .x$basis
+      ),
+      blend_beats_market_note_raw = purrr::map_chr(
+        blend_beats_market_assessment,
+        ~ .x$detail
       ),
       market_winning = {
         realized_market <- dplyr::case_when(
@@ -1990,15 +1998,61 @@ export_moneyline_comparison_html <- function(comparison_tbl,
 
   intro_html <- paste0(
     "<section class=\"report-intro\">",
-    "<h2>How to read this report</h2>",
-    "<p>Each row compares the blended model to the active moneyline market.</p>",
-    "<ul>",
-    "<li><strong>Blend Recommendation</strong> summarises the suggested action based on expected value.</li>",
-    "<li><strong>Blend Beat Market?</strong> shows whether the blend outperformed the market using the listed basis.</li>",
-    "<li><strong>Basis</strong> tells you if the edge comes from final results, expected value, win probability, or a better price. Upcoming games rely on the pregame math.</li>",
-    "<li><strong>&#916; columns</strong> flag gaps between the listed win percentage and the spread-implied win percentage.</li>",
-    "<li>Spread columns are presented from the home team's perspective; plus signs identify underdogs.</li>",
+    "<h2>📊 NFL Blend vs Market Analysis Report</h2>",
+    "<p class=\"report-subtitle\">Comprehensive comparison of blended model predictions against betting market consensus</p>",
+
+    "<div class=\"intro-section\">",
+    "<h3>🎯 Understanding the Blend</h3>",
+    "<p>This report compares a <strong>blended probabilistic model</strong> (combining multiple prediction sources) against the <strong>betting market consensus</strong> (derived from moneylines and spreads). Each row represents one NFL game with detailed analytics.</p>",
+    "</div>",
+
+    "<div class=\"intro-section critical-concept\">",
+    "<h3>⚡ CRITICAL: What Does \"Blend Beat Market?\" Mean?</h3>",
+    "<p class=\"emphasis\">This is <strong>NOT</strong> about which team is favored to win!</p>",
+    "<p>\"Blend Beat Market?\" compares <strong>which assessment is better</strong>, not which team wins. Examples:</p>",
+    "<ul class=\"examples-list\">",
+    "<li><strong>Scenario 1:</strong> Both favor Team A, but Market has Team A at 78% and Blend has 75%<br/>",
+    "→ <span class=\"result-no\">Market beats Blend</span> (market is more confident in the correct side)</li>",
+    "<li><strong>Scenario 2:</strong> Market favors Team A at 60%, Blend favors Team B at 55%, Team B wins<br/>",
+    "→ <span class=\"result-yes\">Blend beats Market</span> (blend picked the actual winner)</li>",
+    "<li><strong>Scenario 3:</strong> Blend has higher EV (+0.15 units) than Market (-0.05 units) on same side<br/>",
+    "→ <span class=\"result-yes\">Blend beats Market</span> (better expected value)</li>",
     "</ul>",
+    "<p class=\"key-point\">🔑 <strong>Key Point:</strong> A favorite can lose to the market if the market assigns an even <em>higher</em> probability to that same favorite!</p>",
+    "</div>",
+
+    "<div class=\"intro-section\">",
+    "<h3>📈 Key Metrics Explained</h3>",
+    "<ul class=\"metrics-list\">",
+    "<li><span class=\"metric-icon\">💡</span> <strong>Blend Pick:</strong> The team the blended model favors to win.</li>",
+    "<li><span class=\"metric-icon\">🎲</span> <strong>Blend Recommendation:</strong> Suggested betting action based on positive expected value (EV > 0).</li>",
+    "<li><span class=\"metric-icon\">✅</span> <strong>Blend Beat Market?:</strong> Did the blend's assessment outperform the market's?",
+    "<ul class=\"basis-list\">",
+    "<li>For completed games: Compares <em>actual money won/lost</em> by each side's pick</li>",
+    "<li>For upcoming games: Compares <em>expected value, win probability, or pricing</em></li>",
+    "</ul></li>",
+    "<li><span class=\"metric-icon\">📊</span> <strong>Basis:</strong> How we determined the winner:",
+    "<ul class=\"basis-list\">",
+    "<li><strong>Final score</strong> — Most reliable: actual results determine which assessment was better</li>",
+    "<li><strong>Expected value</strong> — Blend has higher EV on its pick vs market's pick</li>",
+    "<li><strong>Win probability</strong> — Blend assigns higher win % to its pick vs market's pick</li>",
+    "<li><strong>Moneyline price</strong> — Blend offers better pricing for the same pick</li>",
+    "</ul></li>",
+    "<li><span class=\"metric-icon\">📈</span> <strong>Blend Edge:</strong> Probability difference between blend's pick and market's pick (can be negative!).</li>",
+    "<li><span class=\"metric-icon\">💰</span> <strong>Blend EV Units:</strong> Expected profit per $1 wagered on the blend's recommendation.</li>",
+    "<li><span class=\"metric-icon\">🏈</span> <strong>Spread convention:</strong> All spreads shown from home team's perspective. Plus (+) = underdog, minus (−) = favorite.</li>",
+    "</ul>",
+    "</div>",
+
+    "<div class=\"intro-section\">",
+    "<h3>🎨 Color Coding</h3>",
+    "<ul class=\"color-guide\">",
+    "<li><span class=\"color-box\" style=\"background:#166534;\"></span> <strong>Green:</strong> Blend beats market (better assessment)</li>",
+    "<li><span class=\"color-box\" style=\"background:#991B1B;\"></span> <strong>Red:</strong> Market beats blend (market's assessment was better)</li>",
+    "<li><span class=\"color-box\" style=\"background:#1D4ED8;\"></span> <strong>Blue:</strong> Recommended bet action</li>",
+    "<li><span class=\"color-box\" style=\"background:#94a3b8;\"></span> <strong>Gray:</strong> N/A or insufficient data</li>",
+    "</ul>",
+    "</div>",
     "</section>"
   )
 
@@ -2009,36 +2063,22 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       Date = game_date,
       Matchup = matchup,
       Winner = dplyr::coalesce(actual_winner, "TBD"),
-      `Blend Favorite` = blend_favorite,
-      `Market Favorite` = market_pick,
-      `Blend Prob` = format_probability_leader(blend_favorite, blend_prob_fav),
-      `Market Prob` = format_probability_leader(`Market Favorite`, market_prob_fav),
       `Blend Pick` = blend_pick,
       `Blend Recommendation` = blend_recommendation,
-      `Blend Beat Market Basis` = blend_beats_market_basis,
-      `Blend Stake (Units)` = blend_confidence,
-      `Blend Edge` = blend_edge_prob,
-      `Blend EV Units` = blend_ev_units,
-      `Market EV Units` = market_ev_units,
-      `Blend Median Margin` = blend_median_margin,
-      `Market Home Spread` = market_home_spread,
-      `Market Implied Margin` = market_implied_margin,
-      `Market Total` = market_total,
       `Blend Beat Market?` = dplyr::case_when(
         is.na(blend_beats_market) ~ "N/A",
         blend_beats_market ~ "Yes",
         TRUE ~ "No"
       ),
-      `Blend Home Prob` = blend_home_prob,
-      `Market Home Prob` = market_home_prob,
-      `Blend Spread Win%` = blend_spread_win_prob,
-      `Market Spread Win%` = market_spread_win_prob,
-      `Blend Prob Δ` = blend_prob_spread_gap_pick,
-      `Market Prob Δ` = market_prob_spread_gap_pick,
-      `Blend Away Prob` = blend_away_prob,
-      `Market Away Prob` = market_away_prob,
-      `Blend Home Moneyline (vig)` = blend_home_ml_vig,
-      `Blend Away Moneyline (vig)` = blend_away_ml_vig,
+      `Blend Beat Market Basis` = blend_beats_market_basis,
+      `Blend Stake (Units)` = blend_confidence,
+      `Blend Edge (pp)` = blend_edge_prob,
+      `Blend EV (Units)` = blend_ev_units,
+      `Blend Home Win %` = blend_home_prob,
+      `Market Home Win %` = market_home_prob,
+      `Blend Median Margin` = blend_median_margin,
+      `Market Home Spread` = market_home_spread,
+      `Market Total` = market_total,
       `Market Home Moneyline` = market_home_ml,
       `Market Away Moneyline` = market_away_ml
     )
@@ -2069,18 +2109,15 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     gt_tbl <- gt_apply_if_columns(
       gt_tbl,
       c(
-        "Blend Edge",
-        "Market Home Prob", "Blend Home Prob",
-        "Market Spread Win%", "Blend Spread Win%",
-        "Market Prob Δ", "Blend Prob Δ",
-        "Market Away Prob", "Blend Away Prob"
+        "Blend Edge (pp)",
+        "Blend Home Win %", "Market Home Win %"
       ),
       gt::fmt_percent,
       decimals = 1
     )
     gt_tbl <- gt_apply_if_columns(
       gt_tbl,
-      c("Blend Median Margin", "Market Home Spread", "Market Implied Margin"),
+      c("Blend Median Margin", "Market Home Spread"),
       gt::fmt,
       fns = function(x) format_signed_spread(x)
     )
@@ -2093,22 +2130,21 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     )
     gt_tbl <- gt_apply_if_columns(
       gt_tbl,
-      c("Blend EV Units", "Market EV Units", "Blend Stake (Units)"),
+      c("Blend EV (Units)", "Blend Stake (Units)"),
       gt::fmt_number,
       decimals = 3,
       drop_trailing_zeros = FALSE
     )
     gt_tbl <- gt_apply_if_columns(
       gt_tbl,
-      moneyline_cols,
+      c("Market Home Moneyline", "Market Away Moneyline"),
       gt::fmt,
       fns = function(x) format_moneyline_strings(x)
     )
     gt_tbl <- gt_apply_if_columns(
       gt_tbl,
       c(
-        "Matchup", "Winner", "Blend Favorite", "Market Favorite",
-        "Blend Prob", "Market Prob",
+        "Matchup", "Winner",
         "Blend Pick", "Blend Recommendation", "Blend Beat Market Basis"
       ),
       gt::cols_align,
@@ -2119,23 +2155,6 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       c("Season", "Week", "Blend Beat Market?"),
       gt::cols_align,
       align = "center"
-    )
-    gt_tbl <- gt_apply_labels(
-      gt_tbl,
-      c(
-        `Blend Edge` = "Blend Edge (pp)",
-        `Blend EV Units` = "Blend EV (units)",
-        `Market EV Units` = "Market EV (units)",
-        `Blend Stake (Units)` = "Blend Stake",
-        `Blend Median Margin` = "Blend Margin",
-        `Market Home Spread` = "Market Home Spread",
-        `Market Implied Margin` = "Market Margin",
-        `Market Total` = "Market Total",
-        `Market Spread Win%` = "Market Spread Win%",
-        `Blend Spread Win%` = "Blend Spread Win%",
-        `Market Prob Δ` = "Market Prob Δ (pp)",
-        `Blend Prob Δ` = "Blend Prob Δ (pp)"
-      )
     )
     gt_tbl <- gt::tab_header(gt_tbl, title = title)
     gt_tbl <- gt::tab_source_note(
