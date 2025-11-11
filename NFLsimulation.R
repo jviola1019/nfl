@@ -2119,7 +2119,7 @@ margin_probs_from_summary <- function(margin_mean, margin_sd, tie_prob) {
 
 # ------------------------ USER CONTROLS ---------------------------------------
 SEASON      <- year(Sys.Date())
-WEEK_TO_SIM <- 9               # <-- single switch for the week
+WEEK_TO_SIM <- 11               # <-- single switch for the week
 N_TRIALS    <- 100000
 N_RECENT    <- 6               # last N games for "form"
 SEED        <- 471
