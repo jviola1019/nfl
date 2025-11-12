@@ -2424,8 +2424,10 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       }
 
       css_block_gt <- paste0(
-        "body {font-family: 'Inter','Source Sans Pro','Helvetica Neue',Arial,sans-serif; background: radial-gradient(circle at top,#172554 0%,#020617 70%); color: #e2e8f0; margin: 0;}\n",
-        ".page-wrapper {max-width: 1200px; margin: 0 auto; padding: 3rem 1.5rem 4rem;}\n",
+        "body {font-family: 'Inter','Source Sans Pro','Helvetica Neue',Arial,sans-serif; background: radial-gradient(circle at top,#172554 0%,#020617 70%); color: #e2e8f0; margin: 0; padding-top: 85px;}\n",
+        ".search-container {position: fixed; top: 0; left: 0; right: 0; z-index: 1000; background: linear-gradient(135deg, rgba(2, 6, 23, 0.98), rgba(15, 23, 42, 0.95)); backdrop-filter: blur(10px); border-bottom: 2px solid rgba(59, 130, 246, 0.4); padding: 1.25rem 0; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);}\n",
+        ".search-inner {max-width: 1200px; margin: 0 auto; padding: 0 1.5rem;}\n",
+        ".page-wrapper {max-width: 1200px; margin: 0 auto; padding: 1rem 1.5rem 4rem;}\n",
         ".table-wrapper {overflow-x: auto; border-radius: 18px;}\n",
         ".report-intro {max-width: 960px; margin: 0 auto 2rem; background: linear-gradient(135deg,rgba(15,23,42,0.95),rgba(30,41,59,0.95)); padding: 1.5rem 1.75rem; border-radius: 18px; border: 1px solid rgba(148,163,184,0.25); box-shadow: 0 24px 56px rgba(15,23,42,0.55);}\n",
         ".report-intro h2 {margin: 0 0 0.75rem; font-size: 1.3rem; color: #f8fafc; letter-spacing: 0.02em;}\n",
@@ -2433,26 +2435,32 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         ".report-intro ul {margin: 0; padding-left: 1.25rem; color: #e2e8f0; line-height: 1.5;}\n",
         ".report-intro li {margin-bottom: 0.4rem;}\n",
         ".gt_table {border-radius: 18px; overflow: hidden; box-shadow: 0 28px 60px rgba(15,23,42,0.55);}\n",
-        ".gt_table thead th {position: sticky; top: 0; z-index: 2; background: rgba(15,23,42,0.92); backdrop-filter: blur(6px);}\n",
+        ".gt_table thead th {position: sticky; top: 85px; z-index: 100; background: rgba(15,23,42,0.92); backdrop-filter: blur(6px);}\n",
         ".gt_table tbody tr:hover {background-color: rgba(37,99,235,0.18) !important;}\n",
-        "#table-search {width: 100%; max-width: 420px; padding: 0.75rem 1rem; margin: 0 auto 1.5rem; border-radius: 999px; border: 1px solid rgba(148,163,184,0.35); background-color: rgba(15,23,42,0.85); color: #f8fafc; display: block; box-shadow: 0 12px 30px rgba(15,23,42,0.45);}\n",
-        "#table-search:focus {outline: none; border-color: #60a5fa; box-shadow: 0 0 0 3px rgba(96,165,250,0.35);}\n",
-        "@media (max-width: 768px) { .gt_table {font-size: 0.88rem;} .gt_table thead th {font-size: 0.7rem;} .report-intro {padding: 1.25rem;} }\n"
+        "#table-search {width: 100%; max-width: 500px; padding: 0.85rem 1.25rem; margin: 0 auto; border-radius: 999px; border: 1px solid rgba(59, 130, 246, 0.4); background-color: rgba(15,23,42,0.9); color: #f8fafc; display: block; box-shadow: 0 4px 12px rgba(59, 130, 246, 0.2); transition: all 0.2s ease; font-size: 1rem;}\n",
+        "#table-search:focus {outline: none; border-color: #60a5fa; box-shadow: 0 0 0 3px rgba(96,165,250,0.4), 0 8px 20px rgba(59, 130, 246, 0.3); transform: translateY(-1px);}\n",
+        "#table-search::placeholder {color: rgba(148, 163, 184, 0.7);}\n",
+        "@media (max-width: 768px) { body {padding-top: 75px;} .gt_table {font-size: 0.88rem;} .gt_table thead th {font-size: 0.7rem; top: 75px;} .report-intro {padding: 1.25rem;} #table-search {font-size: 0.9rem; padding: 0.75rem 1rem;} }\n"
       )
 
-      search_box <- htmltools::tags$input(
-        id = "table-search",
-        type = "search",
-        class = "table-search",
-        placeholder = "Search teams, wagers, or math checks...",
-        `aria-label` = "Search moneyline table"
+      search_box <- htmltools::tags$div(
+        class = "search-container",
+        htmltools::tags$div(
+          class = "search-inner",
+          htmltools::tags$input(
+            id = "table-search",
+            type = "search",
+            class = "table-search",
+            placeholder = "🔍 Search teams, picks, or betting data...",
+            `aria-label` = "Search moneyline table"
+          )
+        )
       )
 
       intro_block <- htmltools::HTML(intro_html)
 
-      wrapper <- htmltools::tags$div(
+      content_wrapper <- htmltools::tags$div(
         class = "page-wrapper",
-        search_box,
         intro_block,
         htmltools::tags$div(
           class = "table-wrapper",
@@ -2469,7 +2477,7 @@ export_moneyline_comparison_html <- function(comparison_tbl,
 
       doc <- htmltools::tags$html(
         htmltools::tags$head(htmltools::tags$style(css_block_gt)),
-        htmltools::tags$body(wrapper, script_block)
+        htmltools::tags$body(search_box, content_wrapper, script_block)
       )
 
       htmltools::save_html(doc, file = file)
