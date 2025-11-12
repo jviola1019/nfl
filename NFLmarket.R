@@ -2001,6 +2001,18 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     "<h2>📊 NFL Blend vs Market Analysis Report</h2>",
     "<p class=\"report-subtitle\">Comprehensive comparison of blended model predictions against betting market consensus</p>",
 
+    "<div class=\"intro-section\" style=\"background: rgba(22,101,52,0.2); border-left: 4px solid #22c55e;\">",
+    "<h3>✅ CALCULATION ERRORS FIXED</h3>",
+    "<p><strong>Previous Issue:</strong> The table was incorrectly showing probability differences as \"Blend Edge\" instead of true expected value edge.</p>",
+    "<p><strong>Fixed:</strong></p>",
+    "<ul>",
+    "<li>✅ <strong>EV Edge (%)</strong> now correctly calculated as: (Blend Probability × Decimal Odds) - 1</li>",
+    "<li>✅ <strong>Total EV (Units)</strong> now correctly calculated as: Stake × EV Edge</li>",
+    "<li>✅ <strong>Prob Advantage (pp)</strong> added as separate column for reference</li>",
+    "</ul>",
+    "<p style=\"color: #fbbf24; font-weight: 600;\">⚠️ DO NOT use any reports generated before this fix for betting decisions!</p>",
+    "</div>",
+
     "<div class=\"intro-section\">",
     "<h3>🎯 Understanding the Blend</h3>",
     "<p>This report compares a <strong>blended probabilistic model</strong> (combining multiple prediction sources) against the <strong>betting market consensus</strong> (derived from moneylines and spreads). Each row represents one NFL game with detailed analytics.</p>",
@@ -2038,8 +2050,9 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     "<li><strong>Win probability</strong> — Blend assigns higher win % to its pick vs market's pick</li>",
     "<li><strong>Moneyline price</strong> — Blend offers better pricing for the same pick</li>",
     "</ul></li>",
-    "<li><span class=\"metric-icon\">📈</span> <strong>Blend Edge (pp):</strong> Probability difference (in percentage points) between blend's assessment and market's. Positive = blend more confident than market. <em>Color coded: green (positive edge), red (negative edge).</em></li>",
-    "<li><span class=\"metric-icon\">💰</span> <strong>Blend EV (Units):</strong> Expected profit per $1 wagered on the blend's recommendation. <em>Color coded: green (profitable), red (unprofitable).</em></li>",
+    "<li><span class=\"metric-icon\">📈</span> <strong>EV Edge (%):</strong> Expected return per dollar bet, calculated as (Blend Probability × Decimal Odds) - 1. This is the TRUE betting edge. Example: 10% edge means you expect to profit $0.10 for every $1 bet. <em>Color coded: green (positive edge), red (negative edge).</em></li>",
+    "<li><span class=\"metric-icon\">💰</span> <strong>Total EV (Units):</strong> Total expected profit = Stake × EV Edge. This is your actual expected profit in units for the recommended bet size. <em>Color coded: green (profitable), red (unprofitable).</em></li>",
+    "<li><span class=\"metric-icon\">📊</span> <strong>Prob Advantage (pp):</strong> Simple probability difference (in percentage points) between blend and market assessments. This shows confidence differential but is NOT the same as betting edge. For reference only.</li>",
     "<li><span class=\"metric-icon\">🎯</span> <strong>Probabilities (Blend/Market Home Win %):</strong> Win probability for the home team according to blend model vs market. <em>Color intensity shows confidence level.</em></li>",
     "<li><span class=\"metric-icon\">🏈</span> <strong>Spreads:</strong> All spreads shown from home team's perspective:",
     "<ul class=\"basis-list\">",
@@ -2079,8 +2092,13 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       ),
       `Blend Beat Market Basis` = blend_beats_market_basis,
       `Blend Stake (Units)` = blend_confidence,
-      `Blend Edge (pp)` = blend_edge_prob,
-      `Blend EV (Units)` = blend_ev_units,
+      `EV Edge (%)` = blend_ev_units,  # FIXED: Was blend_edge_prob (probability diff), now shows actual EV edge
+      `Total EV (Units)` = dplyr::if_else(
+        is.na(blend_confidence) | is.na(blend_ev_units),
+        NA_real_,
+        blend_confidence * blend_ev_units  # FIXED: Total expected profit = Stake × Edge
+      ),
+      `Prob Advantage (pp)` = blend_edge_prob,  # Probability difference for reference
       `Blend Home Win %` = blend_home_prob,
       `Market Home Win %` = market_home_prob,
       `Blend Median Margin` = blend_median_margin,
@@ -2116,7 +2134,8 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     gt_tbl <- gt_apply_if_columns(
       gt_tbl,
       c(
-        "Blend Edge (pp)",
+        "EV Edge (%)",
+        "Prob Advantage (pp)",
         "Blend Home Win %", "Market Home Win %"
       ),
       gt::fmt_percent,
@@ -2137,7 +2156,7 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     )
     gt_tbl <- gt_apply_if_columns(
       gt_tbl,
-      c("Blend EV (Units)", "Blend Stake (Units)"),
+      c("Total EV (Units)", "Blend Stake (Units)"),
       gt::fmt_number,
       decimals = 3,
       drop_trailing_zeros = FALSE
@@ -2179,30 +2198,45 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       }, error = function(e) gt_tbl)
     }
 
-    # Add color coding for EV column (green for positive, red for negative)
-    if ("Blend EV (Units)" %in% display_cols) {
+    # Add color coding for Total EV column (green for positive, red for negative)
+    if ("Total EV (Units)" %in% display_cols) {
       gt_tbl <- tryCatch({
         gt::data_color(
           gt_tbl,
-          columns = "Blend EV (Units)",
+          columns = "Total EV (Units)",
           colors = scales::col_numeric(
             palette = c("#991B1B", "#dc2626", "#1f2937", "#15803d", "#166534"),
-            domain = c(-0.2, 0.2),
+            domain = c(-0.05, 0.05),  # Adjusted for total EV (smaller values)
             na.color = "#374151"
           )
         )
       }, error = function(e) gt_tbl)
     }
 
-    # Add color coding for Edge column (green for positive, red for negative)
-    if ("Blend Edge (pp)" %in% display_cols) {
+    # Add color coding for EV Edge column (green for positive, red for negative)
+    if ("EV Edge (%)" %in% display_cols) {
       gt_tbl <- tryCatch({
         gt::data_color(
           gt_tbl,
-          columns = "Blend Edge (pp)",
+          columns = "EV Edge (%)",
           colors = scales::col_numeric(
             palette = c("#991B1B", "#dc2626", "#1f2937", "#15803d", "#166534"),
             domain = c(-0.15, 0.15),
+            na.color = "#374151"
+          )
+        )
+      }, error = function(e) gt_tbl)
+    }
+
+    # Add subtle highlighting for Prob Advantage column
+    if ("Prob Advantage (pp)" %in% display_cols) {
+      gt_tbl <- tryCatch({
+        gt::data_color(
+          gt_tbl,
+          columns = "Prob Advantage (pp)",
+          colors = scales::col_numeric(
+            palette = c("#7f1d1d", "#991b1b", "#1f2937", "#14532d", "#15532d"),
+            domain = c(-0.30, 0.30),
             na.color = "#374151"
           )
         )
@@ -2226,7 +2260,7 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     gt_tbl <- gt::tab_header(
       gt_tbl,
       title = title,
-      subtitle = "🎯 Spreads • 📊 Probabilities • 💰 Expected Value • 📈 Edge Analysis"
+      subtitle = "✅ CORRECTED CALCULATIONS • 🎯 Spreads • 📊 Probabilities • 💰 True EV Edge • 📈 Total Expected Value"
     )
 
     # Add column spanners for better organization
@@ -2236,7 +2270,7 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         if ("Winner" %in% display_cols) {
           gt_tbl <- gt::tab_spanner(gt_tbl, label = "🏆 Result", columns = "Winner")
         }
-        gt_tbl <- gt::tab_spanner(gt_tbl, label = "🎯 Blend Analysis", columns = dplyr::matches("^Blend"))
+        gt_tbl <- gt::tab_spanner(gt_tbl, label = "🎯 Blend Analysis", columns = dplyr::matches("^(Blend|EV|Total|Prob)"))
         gt_tbl <- gt::tab_spanner(gt_tbl, label = "📊 Market Data", columns = dplyr::matches("^Market"))
       }
       gt_tbl
@@ -2244,7 +2278,7 @@ export_moneyline_comparison_html <- function(comparison_tbl,
 
     gt_tbl <- gt::tab_source_note(
       gt_tbl,
-      source_note = "📌 Color coding: Probabilities (blue gradient), EV/Edge (green=positive, red=negative), Spreads (green=home favorite, red=home underdog)"
+      source_note = "✅ FIXED: EV Edge = (Prob × Decimal Odds) - 1 | Total EV = Stake × EV Edge | Prob Advantage shown for reference only"
     )
     gt_tbl <- gt::tab_options(
       gt_tbl,
