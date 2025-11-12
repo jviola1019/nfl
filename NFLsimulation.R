@@ -1188,6 +1188,24 @@ if (!exists("build_moneyline_comparison_table", inherits = FALSE)) {
           is.na(blend_pick) | !nzchar(blend_pick) ~ "Bet moneyline",
           TRUE ~ paste("Bet", blend_pick, "moneyline")
         ),
+        # FIXED: Override blend_beats_market for Pass/No Play recommendations
+        # Passing on negative EV is CORRECT behavior, not a "loss" to the market
+        blend_beats_market = dplyr::case_when(
+          blend_recommendation %in% c("Pass", "No Play") ~ NA,
+          TRUE ~ blend_beats_market
+        ),
+        blend_beats_market_basis = dplyr::case_when(
+          blend_recommendation %in% c("Pass", "No Play") ~ NA_character_,
+          TRUE ~ blend_beats_market_basis
+        ),
+        # Add explanatory note for Pass recommendations with negative EV
+        blend_beats_market_note_raw = dplyr::case_when(
+          blend_recommendation == "Pass" & is.finite(blend_ev_units) & blend_ev_units < 0 ~
+            sprintf("Pass: correctly avoided %.1f%% negative EV", abs(blend_ev_units * 100)),
+          blend_recommendation == "No Play" ~
+            "No Play: insufficient data",
+          TRUE ~ blend_beats_market_note_raw
+        ),
         blend_prob_pick_spread_prob = dplyr::case_when(
           blend_pick_side == "home" ~ blend_spread_win_prob,
           blend_pick_side == "away" ~ blend_spread_win_prob_away,
@@ -1434,7 +1452,7 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
       "</ul></li>",
       "<li><span class=\"metric-icon\">📈</span> <strong>EV Edge (%):</strong> Expected return per dollar bet, calculated as (Blend Probability × Decimal Odds) - 1. This is the TRUE betting edge. Example: 10% edge means you expect to profit $0.10 for every $1 bet. <em>Color coded: green (positive edge), red (negative edge).</em></li>",
       "<li><span class=\"metric-icon\">💰</span> <strong>Total EV (Units):</strong> Total expected profit = Stake × EV Edge. This is your actual expected profit in units for the recommended bet size. <em>Color coded: green (profitable), red (unprofitable).</em></li>",
-      "<li><span class=\"metric-icon\">📊</span> <strong>Prob Advantage (pp):</strong> Simple probability difference (in percentage points) between blend and market assessments. This shows confidence differential but is NOT the same as betting edge. For reference only.</li>",
+      "<li><span class=\"metric-icon\">📊</span> <strong>Prob Advantage (pp):</strong> Simple probability difference (in percentage points) between blend and market assessments. <strong>IMPORTANT:</strong> This is NOT the same as EV Edge! Prob Advantage doesn't account for odds/pricing, while EV Edge does. Two games can have similar EV Edge (13.5%) but very different Prob Advantage (4.6% vs 8.0%) because of different odds. Use EV Edge for betting decisions, not Prob Advantage.</li>",
       "<li><span class=\"metric-icon\">🎯</span> <strong>Probabilities (Blend/Market Home Win %):</strong> Win probability for the home team according to blend model vs market. <em>Color intensity shows confidence level.</em></li>",
       "<li><span class=\"metric-icon\">🏈</span> <strong>Spreads:</strong> All spreads shown from home team's perspective:",
       "<ul class=\"basis-list\">",
