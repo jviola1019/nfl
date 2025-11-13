@@ -2163,11 +2163,13 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     gt_tbl <- gt::gt(display_tbl)
     gt_tbl <- gt_apply_if_columns(
       gt_tbl,
-      c(
-        "EV Edge (%)",
-        "Prob Advantage (pp)",
-        "Blend Home Win %", "Market Home Win %"
-      ),
+      c("EV Edge (%)", "Prob Advantage (pp)"),
+      gt::fmt_percent,
+      decimals = 2
+    )
+    gt_tbl <- gt_apply_if_columns(
+      gt_tbl,
+      c("Blend Home Win %", "Market Home Win %"),
       gt::fmt_percent,
       decimals = 1
     )
@@ -2213,80 +2215,32 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       align = "center"
     )
 
-    # Add visual data bars for probability columns
-    if (all(c("Blend Home Win %", "Market Home Win %") %in% display_cols)) {
-      gt_tbl <- tryCatch({
-        gt::data_color(
-          gt_tbl,
-          columns = c("Blend Home Win %", "Market Home Win %"),
-          colors = scales::col_numeric(
-            palette = c("#1e3a8a", "#2563eb", "#3b82f6", "#60a5fa", "#93c5fd"),
-            domain = c(0, 1),
-            na.color = "#374151"
-          )
-        )
-      }, error = function(e) gt_tbl)
+    # Helper function to apply color coding safely
+    apply_color <- function(gt_tbl, columns, palette, domain) {
+      cols_exist <- if (length(columns) == 1) {
+        columns %in% display_cols
+      } else {
+        all(columns %in% display_cols)
+      }
+      if (!cols_exist) return(gt_tbl)
+      tryCatch(
+        gt::data_color(gt_tbl, columns = columns,
+          colors = scales::col_numeric(palette = palette, domain = domain, na.color = "#374151")),
+        error = function(e) gt_tbl
+      )
     }
 
-    # Add color coding for Total EV column (green for positive, red for negative)
-    if ("Total EV (Units)" %in% display_cols) {
-      gt_tbl <- tryCatch({
-        gt::data_color(
-          gt_tbl,
-          columns = "Total EV (Units)",
-          colors = scales::col_numeric(
-            palette = c("#991B1B", "#dc2626", "#1f2937", "#15803d", "#166534"),
-            domain = c(-0.05, 0.05),  # Adjusted for total EV (smaller values)
-            na.color = "#374151"
-          )
-        )
-      }, error = function(e) gt_tbl)
-    }
-
-    # Add color coding for EV Edge column (green for positive, red for negative)
-    if ("EV Edge (%)" %in% display_cols) {
-      gt_tbl <- tryCatch({
-        gt::data_color(
-          gt_tbl,
-          columns = "EV Edge (%)",
-          colors = scales::col_numeric(
-            palette = c("#991B1B", "#dc2626", "#1f2937", "#15803d", "#166534"),
-            domain = c(-0.15, 0.15),
-            na.color = "#374151"
-          )
-        )
-      }, error = function(e) gt_tbl)
-    }
-
-    # Add subtle highlighting for Prob Advantage column
-    if ("Prob Advantage (pp)" %in% display_cols) {
-      gt_tbl <- tryCatch({
-        gt::data_color(
-          gt_tbl,
-          columns = "Prob Advantage (pp)",
-          colors = scales::col_numeric(
-            palette = c("#7f1d1d", "#991b1b", "#1f2937", "#14532d", "#15532d"),
-            domain = c(-0.30, 0.30),
-            na.color = "#374151"
-          )
-        )
-      }, error = function(e) gt_tbl)
-    }
-
-    # Add color coding for spread columns
-    if (all(c("Market Home Spread", "Blend Median Margin") %in% display_cols)) {
-      gt_tbl <- tryCatch({
-        gt::data_color(
-          gt_tbl,
-          columns = c("Market Home Spread", "Blend Median Margin"),
-          colors = scales::col_numeric(
-            palette = c("#dc2626", "#f87171", "#1f2937", "#4ade80", "#22c55e"),
-            domain = c(-14, 14),
-            na.color = "#374151"
-          )
-        )
-      }, error = function(e) gt_tbl)
-    }
+    # Apply color coding for all metric columns
+    gt_tbl <- apply_color(gt_tbl, c("Blend Home Win %", "Market Home Win %"),
+      c("#1e3a8a", "#2563eb", "#3b82f6", "#60a5fa", "#93c5fd"), c(0, 1))
+    gt_tbl <- apply_color(gt_tbl, "Total EV (Units)",
+      c("#991B1B", "#dc2626", "#1f2937", "#15803d", "#166534"), c(-0.05, 0.05))
+    gt_tbl <- apply_color(gt_tbl, "EV Edge (%)",
+      c("#991B1B", "#dc2626", "#1f2937", "#15803d", "#166534"), c(-0.15, 0.15))
+    gt_tbl <- apply_color(gt_tbl, "Prob Advantage (pp)",
+      c("#7f1d1d", "#991b1b", "#1f2937", "#14532d", "#15532d"), c(-0.30, 0.30))
+    gt_tbl <- apply_color(gt_tbl, c("Market Home Spread", "Blend Median Margin"),
+      c("#dc2626", "#f87171", "#1f2937", "#4ade80", "#22c55e"), c(-14, 14))
     gt_tbl <- gt::tab_header(
       gt_tbl,
       title = title,
