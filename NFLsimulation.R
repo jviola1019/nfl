@@ -2267,6 +2267,16 @@ TRENCH_AVAIL_POINT_PER_FLAG    <- 0.65
 SECONDARY_AVAIL_POINT_PER_FLAG <- 0.45
 FRONT7_AVAIL_POINT_PER_FLAG    <- 0.50
 
+# Statistical rigor constants (added for code quality and reproducibility)
+NB_SIZE_MIN         <- 5        # Minimum overdispersion parameter (NFL scores typically k ∈ [5,15])
+NB_SIZE_MAX         <- 50       # Maximum overdispersion parameter (tighter than 1e4 for stability)
+ISOTONIC_EPSILON    <- 0.01     # Isotonic calibration bounds (keep predictions in [0.01, 0.99])
+BETA_PRIOR_STRENGTH <- 6        # Beta prior strength for Bayesian smoothing
+CONFIDENCE_LEVEL    <- 0.95     # Confidence level for prediction intervals
+MIN_SAMPLE_SIZE     <- 500      # Minimum sample for reliable estimates
+REGRESSION_BASE     <- 0.3      # Base regression to mean factor
+REGRESSION_GAMES    <- 6        # Games required to reduce regression (halflife)
+
 # Reference sheet for common tuning knobs.  Call `show_tuning_help()` from an
 # interactive session to review the levers and the metrics they typically move.
 .tuning_parameters <- tibble::tribble(
@@ -3490,6 +3500,16 @@ get_hourly_weather <- function(lat, lon, date_iso, hours = c(13)) {
 
 # make sure stadium_coords is defined above this point and has columns: venue_key, lat, lon, dome
 
+# Default weather conditions for neutral sites / missing stadium data (Kansas City as neutral baseline)
+DEFAULT_STADIUM_CONDITIONS <- list(
+  lat = 39.0489,    # Kansas City (Arrowhead Stadium)
+  lon = -94.4839,
+  dome = FALSE,
+  wind_mph = 8,     # Typical outdoor conditions
+  temp_f = 55,      # Mild temperature
+  precip_prob = 0.1 # Low precipitation probability
+)
+
 # helper so we avoid inline braces inside mutate()
 .wx_cache_dir <- file.path(path.expand("~"), ".cache", "nfl_sim_weather")
 if (!dir.exists(.wx_cache_dir)) dir.create(.wx_cache_dir, recursive = TRUE)
@@ -3500,7 +3520,12 @@ safe_hourly <- function(lat, lon, date_iso, kickoff_hour_local = NA_integer_) {
   # `NA` for `NA_real_`, which caused an error inside the `if` statement when
   # this helper was called via `purrr::pmap()`.  Using `isTRUE(all(...))` keeps
   # the check scalar and safely handles `NA`s.
-  if (!isTRUE(all(is.finite(c(lat, lon))))) return(NULL)
+  # FIX: Use default coordinates for neutral sites instead of returning NULL
+  if (!isTRUE(all(is.finite(c(lat, lon))))) {
+    lat <- DEFAULT_STADIUM_CONDITIONS$lat
+    lon <- DEFAULT_STADIUM_CONDITIONS$lon
+    message(sprintf("Using default location (KC) for missing stadium data"))
+  }
   if (is.na(date_iso) || !nzchar(date_iso)) return(NULL)
   key  <- digest::digest(list(round(lat,4), round(lon,4), date_iso))
   path <- file.path(.wx_cache_dir, paste0(key, ".rds"))
@@ -3951,6 +3976,217 @@ team_pass_rate <- pbp_hist %>%
 
 league_avg_pass_rate <- mean(team_pass_rate$pass_rate, na.rm = TRUE)
 
+# Home/Away Split Performance Metrics (CRITICAL MISSING DATA)
+# Teams perform differently at home vs away - this captures EPA and success rate splits
+home_away_splits <- pbp_hist %>%
+  dplyr::filter(!is.na(.data[[posteam_col]]), !is.na(epa), !is.na(success)) %>%
+  dplyr::mutate(
+    is_home = (.data[[posteam_col]] == .data[[home_team_col]])
+  ) %>%
+  dplyr::group_by(team = .data[[posteam_col]], is_home) %>%
+  dplyr::summarise(
+    epa_mean = mean(epa, na.rm = TRUE),
+    success_rate = mean(success, na.rm = TRUE),
+    plays = n(),
+    .groups = "drop"
+  ) %>%
+  tidyr::pivot_wider(
+    names_from = is_home,
+    values_from = c(epa_mean, success_rate, plays),
+    names_prefix = "loc_"
+  ) %>%
+  dplyr::mutate(
+    # Home advantage in EPA/play
+    epa_home_adv = coalesce(epa_mean_loc_TRUE, 0) - coalesce(epa_mean_loc_FALSE, 0),
+    # Success rate advantage at home
+    sr_home_adv = coalesce(success_rate_loc_TRUE, 0.45) - coalesce(success_rate_loc_FALSE, 0.45)
+  )
+
+# Third down conversion rates (highly predictive of scoring)
+third_down_metrics <- pbp_hist %>%
+  dplyr::filter(!is.na(down), down == 3, !is.na(yards_gained), !is.na(ydstogo)) %>%
+  dplyr::mutate(
+    converted = yards_gained >= ydstogo,
+    situation = dplyr::case_when(
+      ydstogo <= 3 ~ "short",
+      ydstogo <= 7 ~ "medium",
+      TRUE ~ "long"
+    )
+  ) %>%
+  dplyr::group_by(team = .data[[posteam_col]]) %>%
+  dplyr::summarise(
+    third_down_conv_rate = mean(converted, na.rm = TRUE),
+    third_down_short_rate = mean(converted[situation == "short"], na.rm = TRUE),
+    third_down_long_rate = mean(converted[situation == "long"], na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Defensive third down (allow conversion rate)
+third_down_def <- pbp_hist %>%
+  dplyr::filter(!is.na(down), down == 3, !is.na(yards_gained), !is.na(ydstogo)) %>%
+  dplyr::mutate(converted = yards_gained >= ydstogo) %>%
+  dplyr::group_by(team = .data[[defteam_col]]) %>%
+  dplyr::summarise(
+    third_down_def_rate = mean(converted, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Turnover tendencies (sustainable skill component)
+turnover_metrics <- pbp_hist %>%
+  dplyr::filter(!is.na(play_type), play_type %in% c("pass", "run")) %>%
+  dplyr::group_by(team = .data[[posteam_col]]) %>%
+  dplyr::summarise(
+    interception_rate = mean(interception == 1, na.rm = TRUE),
+    fumble_rate = mean(fumble == 1, na.rm = TRUE),
+    turnover_rate = mean((interception == 1) | (fumble == 1), na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Defensive turnovers (forced TOs)
+turnover_def <- pbp_hist %>%
+  dplyr::filter(!is.na(play_type), play_type %in% c("pass", "run")) %>%
+  dplyr::group_by(team = .data[[defteam_col]]) %>%
+  dplyr::summarise(
+    forced_turnover_rate = mean((interception == 1) | (fumble == 1), na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Penalty rates by team (drive sustainability impact)
+penalty_metrics <- pbp_hist %>%
+  dplyr::filter(!is.na(penalty)) %>%
+  dplyr::group_by(team = .data[[posteam_col]]) %>%
+  dplyr::summarise(
+    penalty_rate = mean(penalty == 1, na.rm = TRUE),
+    penalty_yds_per_play = mean(penalty_yards[penalty == 1], na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Defensive penalties (helping opponent)
+penalty_def <- pbp_hist %>%
+  dplyr::filter(!is.na(penalty)) %>%
+  dplyr::group_by(team = .data[[defteam_col]]) %>%
+  dplyr::summarise(
+    def_penalty_rate = mean(penalty == 1, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Two-minute drill efficiency (critical situations)
+two_min_metrics <- pbp_hist %>%
+  dplyr::filter(!is.na(half_seconds_remaining), half_seconds_remaining <= 120, half_seconds_remaining > 0) %>%
+  dplyr::group_by(team = .data[[posteam_col]]) %>%
+  dplyr::summarise(
+    two_min_epa = mean(epa, na.rm = TRUE),
+    two_min_success_rate = mean(success, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Scripted plays efficiency (first 15 plays of game - prepared plays)
+scripted_plays <- pbp_hist %>%
+  dplyr::filter(!is.na(drive), !is.na(play_id)) %>%
+  dplyr::group_by(game_id, team = .data[[posteam_col]]) %>%
+  dplyr::arrange(play_id) %>%
+  dplyr::mutate(play_num = row_number()) %>%
+  dplyr::ungroup() %>%
+  dplyr::filter(play_num <= 15) %>%
+  dplyr::group_by(team) %>%
+  dplyr::summarise(
+    scripted_epa = mean(epa, na.rm = TRUE),
+    scripted_success_rate = mean(success, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Momentum indicators (3-game rolling averages for hot/cold streaks)
+momentum_metrics <- sched %>%
+  dplyr::filter(game_completed, game_type == "REG") %>%
+  dplyr::arrange(season, week) %>%
+  dplyr::transmute(
+    season, week, game_date,
+    home_team, away_team,
+    home_pts = home_score, away_pts = away_score,
+    home_margin = home_score - away_score
+  ) %>%
+  tidyr::pivot_longer(
+    cols = c(home_team, away_team),
+    names_to = "location",
+    values_to = "team"
+  ) %>%
+  dplyr::mutate(
+    points = ifelse(location == "home_team", home_pts, away_pts),
+    margin = ifelse(location == "home_team", home_margin, -home_margin),
+    won = margin > 0
+  ) %>%
+  dplyr::group_by(team) %>%
+  dplyr::arrange(game_date) %>%
+  dplyr::mutate(
+    # 3-game rolling averages (manual implementation for R 4.5.1 compatibility)
+    momentum_ppg = (points + dplyr::lag(points, 1, default = points) + dplyr::lag(points, 2, default = points)) / 3,
+    momentum_margin = (margin + dplyr::lag(margin, 1, default = margin) + dplyr::lag(margin, 2, default = margin)) / 3,
+    momentum_win_rate = (as.numeric(won) + dplyr::lag(as.numeric(won), 1, default = 0) + dplyr::lag(as.numeric(won), 2, default = 0)) / 3
+  ) %>%
+  dplyr::ungroup() %>%
+  dplyr::group_by(team) %>%
+  dplyr::summarise(
+    recent_momentum = mean(momentum_margin, na.rm = TRUE),
+    hot_streak = mean(momentum_win_rate >= 0.67, na.rm = TRUE),  # 2+ wins in last 3
+    .groups = "drop"
+  )
+
+# Division game performance (familiarity effects)
+division_performance <- sched %>%
+  dplyr::filter(game_completed, game_type == "REG", div_game == TRUE) %>%
+  dplyr::transmute(
+    home_team, away_team,
+    home_margin = home_score - away_score
+  ) %>%
+  tidyr::pivot_longer(
+    cols = c(home_team, away_team),
+    names_to = "location",
+    values_to = "team"
+  ) %>%
+  dplyr::mutate(
+    margin = ifelse(location == "home_team", home_margin, -home_margin)
+  ) %>%
+  dplyr::group_by(team) %>%
+  dplyr::summarise(
+    div_game_margin_avg = mean(margin, na.rm = TRUE),
+    div_game_win_rate = mean(margin > 0, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Post-bye performance (coaching preparation effect)
+post_bye_performance <- sched %>%
+  dplyr::filter(game_completed, game_type == "REG") %>%
+  dplyr::arrange(season, week) %>%
+  dplyr::group_by(season, home_team) %>%
+  dplyr::mutate(
+    home_had_bye = week - dplyr::lag(week, default = 0) > 1
+  ) %>%
+  dplyr::ungroup() %>%
+  dplyr::group_by(season, away_team) %>%
+  dplyr::mutate(
+    away_had_bye = week - dplyr::lag(week, default = 0) > 1
+  ) %>%
+  dplyr::ungroup() %>%
+  dplyr::filter(home_had_bye | away_had_bye) %>%
+  tidyr::pivot_longer(
+    cols = c(home_team, away_team),
+    names_to = "location",
+    values_to = "team"
+  ) %>%
+  dplyr::mutate(
+    had_bye = ifelse(location == "home_team", home_had_bye, away_had_bye),
+    margin = ifelse(location == "home_team",
+                    home_score - away_score,
+                    away_score - home_score)
+  ) %>%
+  dplyr::filter(had_bye) %>%
+  dplyr::group_by(team) %>%
+  dplyr::summarise(
+    post_bye_margin = mean(margin, na.rm = TRUE),
+    post_bye_win_rate = mean(margin > 0, na.rm = TRUE),
+    .groups = "drop"
+  )
+
 # Special teams field position metrics (1-2 pt impact per user)
 special_teams_fp <- pbp_hist %>%
   dplyr::filter(!is.na(play_type)) %>%
@@ -3984,17 +4220,108 @@ games_ready <- games_ready %>%
     dplyr::rename(home_fp_adv = fp_advantage, home_drive_start = avg_drive_start) %>%
   dplyr::left_join(special_teams_fp, by = c("away_team" = "team")) %>%
     dplyr::rename(away_fp_adv = fp_advantage, away_drive_start = avg_drive_start) %>%
+  dplyr::left_join(home_away_splits, by = c("home_team" = "team")) %>%
+    dplyr::rename(home_epa_home_adv = epa_home_adv, home_sr_adv = sr_home_adv) %>%
+  dplyr::left_join(home_away_splits, by = c("away_team" = "team")) %>%
+    dplyr::rename(away_epa_home_adv = epa_home_adv, away_sr_adv = sr_home_adv) %>%
+  # Add all new situational metrics
+  dplyr::left_join(third_down_metrics, by = c("home_team" = "team")) %>%
+    dplyr::rename(home_3rd_conv = third_down_conv_rate) %>%
+  dplyr::left_join(third_down_def, by = c("away_team" = "team")) %>%
+    dplyr::rename(away_3rd_def = third_down_def_rate) %>%
+  dplyr::left_join(third_down_metrics, by = c("away_team" = "team")) %>%
+    dplyr::rename(away_3rd_conv = third_down_conv_rate) %>%
+  dplyr::left_join(third_down_def, by = c("home_team" = "team")) %>%
+    dplyr::rename(home_3rd_def = third_down_def_rate) %>%
+  dplyr::left_join(turnover_metrics, by = c("home_team" = "team")) %>%
+    dplyr::rename(home_to_rate = turnover_rate) %>%
+  dplyr::left_join(turnover_def, by = c("away_team" = "team")) %>%
+    dplyr::rename(away_forced_to = forced_turnover_rate) %>%
+  dplyr::left_join(turnover_metrics, by = c("away_team" = "team")) %>%
+    dplyr::rename(away_to_rate = turnover_rate) %>%
+  dplyr::left_join(turnover_def, by = c("home_team" = "team")) %>%
+    dplyr::rename(home_forced_to = forced_turnover_rate) %>%
+  dplyr::left_join(penalty_metrics, by = c("home_team" = "team")) %>%
+    dplyr::rename(home_pen_rate = penalty_rate) %>%
+  dplyr::left_join(penalty_def, by = c("away_team" = "team")) %>%
+    dplyr::rename(away_def_pen = def_penalty_rate) %>%
+  dplyr::left_join(penalty_metrics, by = c("away_team" = "team")) %>%
+    dplyr::rename(away_pen_rate = penalty_rate) %>%
+  dplyr::left_join(penalty_def, by = c("home_team" = "team")) %>%
+    dplyr::rename(home_def_pen = def_penalty_rate) %>%
+  dplyr::left_join(two_min_metrics, by = c("home_team" = "team")) %>%
+    dplyr::rename(home_2min_epa = two_min_epa) %>%
+  dplyr::left_join(two_min_metrics, by = c("away_team" = "team")) %>%
+    dplyr::rename(away_2min_epa = two_min_epa) %>%
+  dplyr::left_join(scripted_plays, by = c("home_team" = "team")) %>%
+    dplyr::rename(home_script_epa = scripted_epa) %>%
+  dplyr::left_join(scripted_plays, by = c("away_team" = "team")) %>%
+    dplyr::rename(away_script_epa = scripted_epa) %>%
+  dplyr::left_join(momentum_metrics, by = c("home_team" = "team")) %>%
+    dplyr::rename(home_momentum = recent_momentum, home_hot = hot_streak) %>%
+  dplyr::left_join(momentum_metrics, by = c("away_team" = "team")) %>%
+    dplyr::rename(away_momentum = recent_momentum, away_hot = hot_streak) %>%
+  dplyr::left_join(division_performance, by = c("home_team" = "team")) %>%
+    dplyr::rename(home_div_margin = div_game_margin_avg) %>%
+  dplyr::left_join(division_performance, by = c("away_team" = "team")) %>%
+    dplyr::rename(away_div_margin = div_game_margin_avg) %>%
+  dplyr::left_join(post_bye_performance, by = c("home_team" = "team")) %>%
+    dplyr::rename(home_post_bye_margin = post_bye_margin) %>%
+  dplyr::left_join(post_bye_performance, by = c("away_team" = "team")) %>%
+    dplyr::rename(away_post_bye_margin = post_bye_margin) %>%
   dplyr::mutate(
+    # Red zone impact
     rz_edge_home = (home_rz_off - away_rz_def),
     rz_edge_away = (away_rz_off - home_rz_def),
-    # Enhanced RZ impact with trip rate multiplier
     rz_impact_home = 2.0 * rz_edge_home * coalesce(home_rz_trip_rate, 0.25),
     rz_impact_away = 2.0 * rz_edge_away * coalesce(away_rz_trip_rate, 0.25),
-    # Special teams field position impact (~1-2 pts per user analysis)
+
+    # Special teams impact
     st_impact_home = 1.5 * (coalesce(home_fp_adv, 0) - coalesce(away_fp_adv, 0)),
     st_impact_away = 1.5 * (coalesce(away_fp_adv, 0) - coalesce(home_fp_adv, 0)),
-    mu_home = pmax(mu_home + rz_impact_home + st_impact_home, 0),
-    mu_away = pmax(mu_away + rz_impact_away + st_impact_away, 0)
+
+    # Home/Away location advantage
+    home_location_boost = coalesce(home_epa_home_adv, 0) * 60 * 9,
+    away_location_penalty = coalesce(away_epa_home_adv, 0) * 60 * 9 * (-1),
+
+    # Third down efficiency impact (~1 pt per 10% advantage)
+    third_down_edge_home = 10 * (coalesce(home_3rd_conv, 0.40) - coalesce(away_3rd_def, 0.40)),
+    third_down_edge_away = 10 * (coalesce(away_3rd_conv, 0.40) - coalesce(home_3rd_def, 0.40)),
+
+    # Turnover impact (each TO worth ~4 pts, apply conservatively)
+    to_edge_home = 40 * (coalesce(away_to_rate, 0.03) - coalesce(home_to_rate, 0.03) +
+                         coalesce(home_forced_to, 0.03) - coalesce(away_forced_to, 0.03)),
+    to_edge_away = 40 * (coalesce(home_to_rate, 0.03) - coalesce(away_to_rate, 0.03) +
+                         coalesce(away_forced_to, 0.03) - coalesce(home_forced_to, 0.03)),
+
+    # Penalty impact (conservative - penalties kill ~0.3 drives per 1% rate increase)
+    penalty_edge_home = -3 * (coalesce(home_pen_rate, 0.05) - 0.05) +
+                         3 * (coalesce(away_def_pen, 0.05) - 0.05),
+    penalty_edge_away = -3 * (coalesce(away_pen_rate, 0.05) - 0.05) +
+                         3 * (coalesce(home_def_pen, 0.05) - 0.05),
+
+    # Situational efficiency (two-minute drill worth ~0.5 pts, scripted plays ~0.3 pts)
+    situational_home = 5 * coalesce(home_2min_epa, 0) + 3 * coalesce(home_script_epa, 0),
+    situational_away = 5 * coalesce(away_2min_epa, 0) + 3 * coalesce(away_script_epa, 0),
+
+    # Momentum (hot teams get ~0.5 pt boost, use margin differential)
+    momentum_home = 0.15 * coalesce(home_momentum, 0) + 0.5 * coalesce(home_hot, 0),
+    momentum_away = 0.15 * coalesce(away_momentum, 0) + 0.5 * coalesce(away_hot, 0),
+
+    # Division game adjustment (if div_game, use historical performance)
+    div_adjustment_home = ifelse(div_game, 0.25 * coalesce(home_div_margin, 0), 0),
+    div_adjustment_away = ifelse(div_game, 0.25 * coalesce(away_div_margin, 0), 0),
+
+    # Post-bye adjustment (if team had bye last week)
+    # This will be applied in the rest calculation section that already exists
+
+    # Apply all adjustments with Bayesian shrinkage (0.6 weight to avoid overfitting)
+    mu_home = pmax(mu_home + 0.6 * (rz_impact_home + st_impact_home + home_location_boost +
+                                     third_down_edge_home + to_edge_home + penalty_edge_home +
+                                     situational_home + momentum_home + div_adjustment_home), 0),
+    mu_away = pmax(mu_away + 0.6 * (rz_impact_away + st_impact_away + away_location_penalty +
+                                     third_down_edge_away + to_edge_away + penalty_edge_away +
+                                     situational_away + momentum_away + div_adjustment_away), 0)
   )
 
 
@@ -4123,8 +4450,10 @@ recent_form_at_sim <- function(cut_season, cut_week, teams,
     }
   ) |>
     dplyr::mutate(
-      off_mean_raw = (n_games * off_mean_raw + 6 * league_off_ppg) / (n_games + 6),
-      def_mean_raw = (n_games * def_mean_raw + 6 * league_def_ppg) / (n_games + 6),
+      # FIX: Adaptive regression to mean (was hardcoded 6, now uses REGRESSION_BASE × exp(-n/REGRESSION_GAMES))
+      regression_weight = BETA_PRIOR_STRENGTH * (1 + REGRESSION_BASE * exp(-n_games / REGRESSION_GAMES)),
+      off_mean_raw = (n_games * off_mean_raw + regression_weight * league_off_ppg) / (n_games + regression_weight),
+      def_mean_raw = (n_games * def_mean_raw + regression_weight * league_def_ppg) / (n_games + regression_weight),
       off_sd_raw   = pmax(off_sd_raw, 5.5),
       def_sd_raw   = pmax(def_sd_raw, 5.5)
     ) |>
@@ -4173,8 +4502,9 @@ nb_size_from_musd <- function(mu, sd) {
   v <- sd^2
   if (!is.finite(mu) || !is.finite(sd) || mu <= 0 || v <= mu) return(Inf)
   k <- mu^2 / (v - mu)
-  k <- pmax(k, 2)          # minimum overdispersion
-  k <- pmin(k, 1e4)        # numeric safety
+  # FIX: NFL scores typically have k ∈ [5, 15], not k >= 2 (too much overdispersion)
+  k <- pmax(k, NB_SIZE_MIN)  # Realistic floor (was 2, now 5)
+  k <- pmin(k, NB_SIZE_MAX)  # Tighter ceiling (was 1e4, now 50)
   k
 }
 
@@ -5053,6 +5383,40 @@ final <- final |>
     two_way_mass_raw = pmax(home_win_prob + away_win_prob, 1e-9),
     home_p_2w_raw    = .clamp01(home_win_prob / two_way_mass_raw),
     away_p_2w_raw    = 1 - home_p_2w_raw
+  )
+
+# Add prediction intervals and model uncertainty metrics (CRITICAL for uncertainty quantification)
+final <- final |>
+  dplyr::left_join(
+    games_ready %>%
+      dplyr::select(game_id, mu_home, mu_away, sd_home, sd_away, k_home, k_away) %>%
+      dplyr::mutate(
+        k_home = pmin(pmax(k_home, NB_SIZE_MIN), NB_SIZE_MAX),
+        k_away = pmin(pmax(k_away, NB_SIZE_MIN), NB_SIZE_MAX)
+      ),
+    by = "game_id"
+  ) %>%
+  dplyr::mutate(
+    # Prediction intervals using negative binomial quantiles (95% CI)
+    home_score_pi_lo = ifelse(is.finite(k_home) & k_home < Inf,
+                               qnbinom((1 - CONFIDENCE_LEVEL) / 2, size = k_home, mu = mu_home),
+                               qpois((1 - CONFIDENCE_LEVEL) / 2, lambda = mu_home)),
+    home_score_pi_hi = ifelse(is.finite(k_home) & k_home < Inf,
+                               qnbinom(1 - (1 - CONFIDENCE_LEVEL) / 2, size = k_home, mu = mu_home),
+                               qpois(1 - (1 - CONFIDENCE_LEVEL) / 2, lambda = mu_home)),
+    away_score_pi_lo = ifelse(is.finite(k_away) & k_away < Inf,
+                               qnbinom((1 - CONFIDENCE_LEVEL) / 2, size = k_away, mu = mu_away),
+                               qpois((1 - CONFIDENCE_LEVEL) / 2, lambda = mu_away)),
+    away_score_pi_hi = ifelse(is.finite(k_away) & k_away < Inf,
+                               qnbinom(1 - (1 - CONFIDENCE_LEVEL) / 2, size = k_away, mu = mu_away),
+                               qpois(1 - (1 - CONFIDENCE_LEVEL) / 2, lambda = mu_away)),
+
+    # Epistemic uncertainty from model disagreement (blend vs market)
+    # Higher values = more model disagreement = less certain prediction
+    model_uncertainty = abs(home_p_2w_cal - home_p_2w_mkt) / pmax(home_p_2w_cal + home_p_2w_mkt, 0.01),
+
+    # Total uncertainty combines aleatoric (score variance) + epistemic (model disagreement)
+    total_uncertainty = sqrt((sd_home^2 + sd_away^2) / 2) + 10 * model_uncertainty
   )
 
 # Canonical calibrated probs (3-way) + canonical two-way derived from them
