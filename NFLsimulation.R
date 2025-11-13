@@ -4002,6 +4002,191 @@ home_away_splits <- pbp_hist %>%
     sr_home_adv = coalesce(success_rate_loc_TRUE, 0.45) - coalesce(success_rate_loc_FALSE, 0.45)
   )
 
+# Third down conversion rates (highly predictive of scoring)
+third_down_metrics <- pbp_hist %>%
+  dplyr::filter(!is.na(down), down == 3, !is.na(yards_gained), !is.na(ydstogo)) %>%
+  dplyr::mutate(
+    converted = yards_gained >= ydstogo,
+    situation = dplyr::case_when(
+      ydstogo <= 3 ~ "short",
+      ydstogo <= 7 ~ "medium",
+      TRUE ~ "long"
+    )
+  ) %>%
+  dplyr::group_by(team = .data[[posteam_col]]) %>%
+  dplyr::summarise(
+    third_down_conv_rate = mean(converted, na.rm = TRUE),
+    third_down_short_rate = mean(converted[situation == "short"], na.rm = TRUE),
+    third_down_long_rate = mean(converted[situation == "long"], na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Defensive third down (allow conversion rate)
+third_down_def <- pbp_hist %>%
+  dplyr::filter(!is.na(down), down == 3, !is.na(yards_gained), !is.na(ydstogo)) %>%
+  dplyr::mutate(converted = yards_gained >= ydstogo) %>%
+  dplyr::group_by(team = .data[[defteam_col]]) %>%
+  dplyr::summarise(
+    third_down_def_rate = mean(converted, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Turnover tendencies (sustainable skill component)
+turnover_metrics <- pbp_hist %>%
+  dplyr::filter(!is.na(play_type), play_type %in% c("pass", "run")) %>%
+  dplyr::group_by(team = .data[[posteam_col]]) %>%
+  dplyr::summarise(
+    interception_rate = mean(interception == 1, na.rm = TRUE),
+    fumble_rate = mean(fumble == 1, na.rm = TRUE),
+    turnover_rate = mean((interception == 1) | (fumble == 1), na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Defensive turnovers (forced TOs)
+turnover_def <- pbp_hist %>%
+  dplyr::filter(!is.na(play_type), play_type %in% c("pass", "run")) %>%
+  dplyr::group_by(team = .data[[defteam_col]]) %>%
+  dplyr::summarise(
+    forced_turnover_rate = mean((interception == 1) | (fumble == 1), na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Penalty rates by team (drive sustainability impact)
+penalty_metrics <- pbp_hist %>%
+  dplyr::filter(!is.na(penalty)) %>%
+  dplyr::group_by(team = .data[[posteam_col]]) %>%
+  dplyr::summarise(
+    penalty_rate = mean(penalty == 1, na.rm = TRUE),
+    penalty_yds_per_play = mean(penalty_yards[penalty == 1], na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Defensive penalties (helping opponent)
+penalty_def <- pbp_hist %>%
+  dplyr::filter(!is.na(penalty)) %>%
+  dplyr::group_by(team = .data[[defteam_col]]) %>%
+  dplyr::summarise(
+    def_penalty_rate = mean(penalty == 1, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Two-minute drill efficiency (critical situations)
+two_min_metrics <- pbp_hist %>%
+  dplyr::filter(!is.na(half_seconds_remaining), half_seconds_remaining <= 120, half_seconds_remaining > 0) %>%
+  dplyr::group_by(team = .data[[posteam_col]]) %>%
+  dplyr::summarise(
+    two_min_epa = mean(epa, na.rm = TRUE),
+    two_min_success_rate = mean(success, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Scripted plays efficiency (first 15 plays of game - prepared plays)
+scripted_plays <- pbp_hist %>%
+  dplyr::filter(!is.na(drive), !is.na(play_id)) %>%
+  dplyr::group_by(game_id, team = .data[[posteam_col]]) %>%
+  dplyr::arrange(play_id) %>%
+  dplyr::mutate(play_num = row_number()) %>%
+  dplyr::ungroup() %>%
+  dplyr::filter(play_num <= 15) %>%
+  dplyr::group_by(team) %>%
+  dplyr::summarise(
+    scripted_epa = mean(epa, na.rm = TRUE),
+    scripted_success_rate = mean(success, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Momentum indicators (3-game rolling averages for hot/cold streaks)
+momentum_metrics <- sched %>%
+  dplyr::filter(game_completed, game_type == "REG") %>%
+  dplyr::arrange(season, week) %>%
+  dplyr::transmute(
+    season, week, game_date,
+    home_team, away_team,
+    home_pts = home_score, away_pts = away_score,
+    home_margin = home_score - away_score
+  ) %>%
+  tidyr::pivot_longer(
+    cols = c(home_team, away_team),
+    names_to = "location",
+    values_to = "team"
+  ) %>%
+  dplyr::mutate(
+    points = ifelse(location == "home_team", home_pts, away_pts),
+    margin = ifelse(location == "home_team", home_margin, -home_margin),
+    won = margin > 0
+  ) %>%
+  dplyr::group_by(team) %>%
+  dplyr::arrange(game_date) %>%
+  dplyr::mutate(
+    # 3-game rolling averages (manual implementation for R 4.5.1 compatibility)
+    momentum_ppg = (points + dplyr::lag(points, 1, default = points) + dplyr::lag(points, 2, default = points)) / 3,
+    momentum_margin = (margin + dplyr::lag(margin, 1, default = margin) + dplyr::lag(margin, 2, default = margin)) / 3,
+    momentum_win_rate = (as.numeric(won) + dplyr::lag(as.numeric(won), 1, default = 0) + dplyr::lag(as.numeric(won), 2, default = 0)) / 3
+  ) %>%
+  dplyr::ungroup() %>%
+  dplyr::group_by(team) %>%
+  dplyr::summarise(
+    recent_momentum = mean(momentum_margin, na.rm = TRUE),
+    hot_streak = mean(momentum_win_rate >= 0.67, na.rm = TRUE),  # 2+ wins in last 3
+    .groups = "drop"
+  )
+
+# Division game performance (familiarity effects)
+division_performance <- sched %>%
+  dplyr::filter(game_completed, game_type == "REG", div_game == TRUE) %>%
+  dplyr::transmute(
+    home_team, away_team,
+    home_margin = home_score - away_score
+  ) %>%
+  tidyr::pivot_longer(
+    cols = c(home_team, away_team),
+    names_to = "location",
+    values_to = "team"
+  ) %>%
+  dplyr::mutate(
+    margin = ifelse(location == "home_team", home_margin, -home_margin)
+  ) %>%
+  dplyr::group_by(team) %>%
+  dplyr::summarise(
+    div_game_margin_avg = mean(margin, na.rm = TRUE),
+    div_game_win_rate = mean(margin > 0, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Post-bye performance (coaching preparation effect)
+post_bye_performance <- sched %>%
+  dplyr::filter(game_completed, game_type == "REG") %>%
+  dplyr::arrange(season, week) %>%
+  dplyr::group_by(season, home_team) %>%
+  dplyr::mutate(
+    home_had_bye = week - dplyr::lag(week, default = 0) > 1
+  ) %>%
+  dplyr::ungroup() %>%
+  dplyr::group_by(season, away_team) %>%
+  dplyr::mutate(
+    away_had_bye = week - dplyr::lag(week, default = 0) > 1
+  ) %>%
+  dplyr::ungroup() %>%
+  dplyr::filter(home_had_bye | away_had_bye) %>%
+  tidyr::pivot_longer(
+    cols = c(home_team, away_team),
+    names_to = "location",
+    values_to = "team"
+  ) %>%
+  dplyr::mutate(
+    had_bye = ifelse(location == "home_team", home_had_bye, away_had_bye),
+    margin = ifelse(location == "home_team",
+                    home_score - away_score,
+                    away_score - home_score)
+  ) %>%
+  dplyr::filter(had_bye) %>%
+  dplyr::group_by(team) %>%
+  dplyr::summarise(
+    post_bye_margin = mean(margin, na.rm = TRUE),
+    post_bye_win_rate = mean(margin > 0, na.rm = TRUE),
+    .groups = "drop"
+  )
+
 # Special teams field position metrics (1-2 pt impact per user)
 special_teams_fp <- pbp_hist %>%
   dplyr::filter(!is.na(play_type)) %>%
@@ -4039,20 +4224,104 @@ games_ready <- games_ready %>%
     dplyr::rename(home_epa_home_adv = epa_home_adv, home_sr_adv = sr_home_adv) %>%
   dplyr::left_join(home_away_splits, by = c("away_team" = "team")) %>%
     dplyr::rename(away_epa_home_adv = epa_home_adv, away_sr_adv = sr_home_adv) %>%
+  # Add all new situational metrics
+  dplyr::left_join(third_down_metrics, by = c("home_team" = "team")) %>%
+    dplyr::rename(home_3rd_conv = third_down_conv_rate) %>%
+  dplyr::left_join(third_down_def, by = c("away_team" = "team")) %>%
+    dplyr::rename(away_3rd_def = third_down_def_rate) %>%
+  dplyr::left_join(third_down_metrics, by = c("away_team" = "team")) %>%
+    dplyr::rename(away_3rd_conv = third_down_conv_rate) %>%
+  dplyr::left_join(third_down_def, by = c("home_team" = "team")) %>%
+    dplyr::rename(home_3rd_def = third_down_def_rate) %>%
+  dplyr::left_join(turnover_metrics, by = c("home_team" = "team")) %>%
+    dplyr::rename(home_to_rate = turnover_rate) %>%
+  dplyr::left_join(turnover_def, by = c("away_team" = "team")) %>%
+    dplyr::rename(away_forced_to = forced_turnover_rate) %>%
+  dplyr::left_join(turnover_metrics, by = c("away_team" = "team")) %>%
+    dplyr::rename(away_to_rate = turnover_rate) %>%
+  dplyr::left_join(turnover_def, by = c("home_team" = "team")) %>%
+    dplyr::rename(home_forced_to = forced_turnover_rate) %>%
+  dplyr::left_join(penalty_metrics, by = c("home_team" = "team")) %>%
+    dplyr::rename(home_pen_rate = penalty_rate) %>%
+  dplyr::left_join(penalty_def, by = c("away_team" = "team")) %>%
+    dplyr::rename(away_def_pen = def_penalty_rate) %>%
+  dplyr::left_join(penalty_metrics, by = c("away_team" = "team")) %>%
+    dplyr::rename(away_pen_rate = penalty_rate) %>%
+  dplyr::left_join(penalty_def, by = c("home_team" = "team")) %>%
+    dplyr::rename(home_def_pen = def_penalty_rate) %>%
+  dplyr::left_join(two_min_metrics, by = c("home_team" = "team")) %>%
+    dplyr::rename(home_2min_epa = two_min_epa) %>%
+  dplyr::left_join(two_min_metrics, by = c("away_team" = "team")) %>%
+    dplyr::rename(away_2min_epa = two_min_epa) %>%
+  dplyr::left_join(scripted_plays, by = c("home_team" = "team")) %>%
+    dplyr::rename(home_script_epa = scripted_epa) %>%
+  dplyr::left_join(scripted_plays, by = c("away_team" = "team")) %>%
+    dplyr::rename(away_script_epa = scripted_epa) %>%
+  dplyr::left_join(momentum_metrics, by = c("home_team" = "team")) %>%
+    dplyr::rename(home_momentum = recent_momentum, home_hot = hot_streak) %>%
+  dplyr::left_join(momentum_metrics, by = c("away_team" = "team")) %>%
+    dplyr::rename(away_momentum = recent_momentum, away_hot = hot_streak) %>%
+  dplyr::left_join(division_performance, by = c("home_team" = "team")) %>%
+    dplyr::rename(home_div_margin = div_game_margin_avg) %>%
+  dplyr::left_join(division_performance, by = c("away_team" = "team")) %>%
+    dplyr::rename(away_div_margin = div_game_margin_avg) %>%
+  dplyr::left_join(post_bye_performance, by = c("home_team" = "team")) %>%
+    dplyr::rename(home_post_bye_margin = post_bye_margin) %>%
+  dplyr::left_join(post_bye_performance, by = c("away_team" = "team")) %>%
+    dplyr::rename(away_post_bye_margin = post_bye_margin) %>%
   dplyr::mutate(
+    # Red zone impact
     rz_edge_home = (home_rz_off - away_rz_def),
     rz_edge_away = (away_rz_off - home_rz_def),
-    # Enhanced RZ impact with trip rate multiplier
     rz_impact_home = 2.0 * rz_edge_home * coalesce(home_rz_trip_rate, 0.25),
     rz_impact_away = 2.0 * rz_edge_away * coalesce(away_rz_trip_rate, 0.25),
-    # Special teams field position impact (~1-2 pts per user analysis)
+
+    # Special teams impact
     st_impact_home = 1.5 * (coalesce(home_fp_adv, 0) - coalesce(away_fp_adv, 0)),
     st_impact_away = 1.5 * (coalesce(away_fp_adv, 0) - coalesce(home_fp_adv, 0)),
-    # Home/Away EPA advantage: EPA/play × ~60 plays/game × 9 pts/EPA ≈ 0.5-1.5 pts/game
+
+    # Home/Away location advantage
     home_location_boost = coalesce(home_epa_home_adv, 0) * 60 * 9,
-    away_location_penalty = coalesce(away_epa_home_adv, 0) * 60 * 9 * (-1),  # Away team loses their home advantage
-    mu_home = pmax(mu_home + rz_impact_home + st_impact_home + home_location_boost, 0),
-    mu_away = pmax(mu_away + rz_impact_away + st_impact_away + away_location_penalty, 0)
+    away_location_penalty = coalesce(away_epa_home_adv, 0) * 60 * 9 * (-1),
+
+    # Third down efficiency impact (~1 pt per 10% advantage)
+    third_down_edge_home = 10 * (coalesce(home_3rd_conv, 0.40) - coalesce(away_3rd_def, 0.40)),
+    third_down_edge_away = 10 * (coalesce(away_3rd_conv, 0.40) - coalesce(home_3rd_def, 0.40)),
+
+    # Turnover impact (each TO worth ~4 pts, apply conservatively)
+    to_edge_home = 40 * (coalesce(away_to_rate, 0.03) - coalesce(home_to_rate, 0.03) +
+                         coalesce(home_forced_to, 0.03) - coalesce(away_forced_to, 0.03)),
+    to_edge_away = 40 * (coalesce(home_to_rate, 0.03) - coalesce(away_to_rate, 0.03) +
+                         coalesce(away_forced_to, 0.03) - coalesce(home_forced_to, 0.03)),
+
+    # Penalty impact (conservative - penalties kill ~0.3 drives per 1% rate increase)
+    penalty_edge_home = -3 * (coalesce(home_pen_rate, 0.05) - 0.05) +
+                         3 * (coalesce(away_def_pen, 0.05) - 0.05),
+    penalty_edge_away = -3 * (coalesce(away_pen_rate, 0.05) - 0.05) +
+                         3 * (coalesce(home_def_pen, 0.05) - 0.05),
+
+    # Situational efficiency (two-minute drill worth ~0.5 pts, scripted plays ~0.3 pts)
+    situational_home = 5 * coalesce(home_2min_epa, 0) + 3 * coalesce(home_script_epa, 0),
+    situational_away = 5 * coalesce(away_2min_epa, 0) + 3 * coalesce(away_script_epa, 0),
+
+    # Momentum (hot teams get ~0.5 pt boost, use margin differential)
+    momentum_home = 0.15 * coalesce(home_momentum, 0) + 0.5 * coalesce(home_hot, 0),
+    momentum_away = 0.15 * coalesce(away_momentum, 0) + 0.5 * coalesce(away_hot, 0),
+
+    # Division game adjustment (if div_game, use historical performance)
+    div_adjustment_home = ifelse(div_game, 0.25 * coalesce(home_div_margin, 0), 0),
+    div_adjustment_away = ifelse(div_game, 0.25 * coalesce(away_div_margin, 0), 0),
+
+    # Post-bye adjustment (if team had bye last week)
+    # This will be applied in the rest calculation section that already exists
+
+    # Apply all adjustments with Bayesian shrinkage (0.6 weight to avoid overfitting)
+    mu_home = pmax(mu_home + 0.6 * (rz_impact_home + st_impact_home + home_location_boost +
+                                     third_down_edge_home + to_edge_home + penalty_edge_home +
+                                     situational_home + momentum_home + div_adjustment_home), 0),
+    mu_away = pmax(mu_away + 0.6 * (rz_impact_away + st_impact_away + away_location_penalty +
+                                     third_down_edge_away + to_edge_away + penalty_edge_away +
+                                     situational_away + momentum_away + div_adjustment_away), 0)
   )
 
 
