@@ -5549,6 +5549,103 @@ final <- final |>
     total_uncertainty = sqrt((sd_home^2 + sd_away^2) / 2) + 10 * model_uncertainty
   )
 
+# ═══════════════════════════════════════════════════════════════════════════════════
+# BETTING CONFIDENCE ANALYSIS: Identify High-Confidence Opportunities
+# Uses thresholds defined earlier to flag games with strong edge and low uncertainty
+# ═══════════════════════════════════════════════════════════════════════════════════
+
+# Calculate EV edge for home and away (requires market data)
+# Note: Full betting recommendations are in NFLmarket.R; this provides quick filters
+final <- final %>%
+  dplyr::mutate(
+    # Calculate approximate EV edge (home team perspective)
+    # This is a simplified version; full calculations are in moneyline report
+    prob_edge_home = home_p_2w_cal - home_p_2w_mkt,
+    prob_edge_away = away_p_2w_cal - away_p_2w_mkt,
+
+    # Betting confidence flags (for filtering high-quality opportunities)
+    high_confidence_home = (prob_edge_home > HIGH_CONFIDENCE_EDGE) &
+                           (model_uncertainty < LOW_UNCERTAINTY_THRESHOLD),
+    high_confidence_away = (prob_edge_away > HIGH_CONFIDENCE_EDGE) &
+                           (model_uncertainty < LOW_UNCERTAINTY_THRESHOLD),
+    medium_confidence_home = (prob_edge_home > MEDIUM_CONFIDENCE_EDGE) &
+                             (model_uncertainty < LOW_UNCERTAINTY_THRESHOLD) &
+                             !high_confidence_home,
+    medium_confidence_away = (prob_edge_away > MEDIUM_CONFIDENCE_EDGE) &
+                             (model_uncertainty < LOW_UNCERTAINTY_THRESHOLD) &
+                             !high_confidence_away,
+
+    # Overall betting signal strength (0 = pass, 1 = medium, 2 = high)
+    betting_signal_home = dplyr::case_when(
+      high_confidence_home ~ 2L,
+      medium_confidence_home ~ 1L,
+      TRUE ~ 0L
+    ),
+    betting_signal_away = dplyr::case_when(
+      high_confidence_away ~ 2L,
+      medium_confidence_away ~ 1L,
+      TRUE ~ 0L
+    )
+  )
+
+# Print betting opportunity summary
+betting_summary <- final %>%
+  dplyr::summarise(
+    n_games = dplyr::n(),
+    high_conf_home = sum(high_confidence_home, na.rm = TRUE),
+    high_conf_away = sum(high_confidence_away, na.rm = TRUE),
+    med_conf_home = sum(medium_confidence_home, na.rm = TRUE),
+    med_conf_away = sum(medium_confidence_away, na.rm = TRUE),
+    total_high_conf = high_conf_home + high_conf_away,
+    total_med_conf = med_conf_home + med_conf_away,
+    avg_model_uncertainty = mean(model_uncertainty, na.rm = TRUE),
+    avg_prob_edge = mean(abs(prob_edge_home), na.rm = TRUE)
+  )
+
+message("\n═══════════════════════════════════════════════════════════════════")
+message("BETTING CONFIDENCE SUMMARY (Practical Impact Analysis)")
+message("═══════════════════════════════════════════════════════════════════")
+message(sprintf("Total games analyzed: %d", betting_summary$n_games))
+message(sprintf("High confidence opportunities: %d (%.1f%% of games)",
+                betting_summary$total_high_conf,
+                100 * betting_summary$total_high_conf / betting_summary$n_games))
+message(sprintf("  - Home team: %d | Away team: %d",
+                betting_summary$high_conf_home, betting_summary$high_conf_away))
+message(sprintf("Medium confidence opportunities: %d (%.1f%% of games)",
+                betting_summary$total_med_conf,
+                100 * betting_summary$total_med_conf / betting_summary$n_games))
+message(sprintf("  - Home team: %d | Away team: %d",
+                betting_summary$med_conf_home, betting_summary$med_conf_away))
+message(sprintf("Average model uncertainty: %.3f", betting_summary$avg_model_uncertainty))
+message(sprintf("Average probability edge: %.3f (%.1f pp)",
+                betting_summary$avg_prob_edge, 100 * betting_summary$avg_prob_edge))
+message("═══════════════════════════════════════════════════════════════════\n")
+
+# If there are high-confidence opportunities, display them
+if (betting_summary$total_high_conf > 0) {
+  high_conf_games <- final %>%
+    dplyr::filter(high_confidence_home | high_confidence_away) %>%
+    dplyr::mutate(
+      bet_side = dplyr::case_when(
+        high_confidence_home ~ "Home",
+        high_confidence_away ~ "Away",
+        TRUE ~ NA_character_
+      ),
+      prob_edge = dplyr::case_when(
+        high_confidence_home ~ prob_edge_home,
+        high_confidence_away ~ prob_edge_away,
+        TRUE ~ NA_real_
+      )
+    ) %>%
+    dplyr::select(matchup, bet_side, prob_edge, model_uncertainty,
+                  home_p_2w_cal, away_p_2w_cal) %>%
+    dplyr::arrange(desc(prob_edge))
+
+  message("🎯 HIGH CONFIDENCE BETTING OPPORTUNITIES:")
+  print(high_conf_games, n = Inf)
+  message("")
+}
+
 # Canonical calibrated probs (3-way) + canonical two-way derived from them
 final_canon <- final |>
   tidyr::separate(matchup, into = c("away_team","home_team"), sep = " @ ", remove = FALSE) |>
