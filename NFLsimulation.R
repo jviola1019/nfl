@@ -3787,10 +3787,11 @@ games_ready <- week_slate |>
     away_secondary_penalty = coalesce(away_secondary_avail_pen, 0) * SECONDARY_AVAIL_POINT_PER_FLAG,
     away_front7_penalty = coalesce(away_front7_avail_pen, 0) * FRONT7_AVAIL_POINT_PER_FLAG,
 
-    home_injury_off_total = home_inj_off_pts - home_skill_penalty - home_trench_penalty,
-    away_injury_off_total = away_inj_off_pts - away_skill_penalty - away_trench_penalty,
-    home_injury_def_total = home_inj_def_pts + home_secondary_penalty + home_front7_penalty,
-    away_injury_def_total = away_inj_def_pts + away_secondary_penalty + away_front7_penalty
+    # FIX: Use inj_off/def_pts directly (already position-weighted) to avoid double-counting
+    home_injury_off_total = home_inj_off_pts,  # Already includes all offensive position penalties
+    away_injury_off_total = away_inj_off_pts,
+    home_injury_def_total = home_inj_def_pts,  # Already includes all defensive position penalties
+    away_injury_def_total = away_inj_def_pts
   ) %>%
   # <<< add this mutate right after the previous one >>>
   dplyr::mutate(
@@ -3922,16 +3923,78 @@ rz_def <- pbp_hist %>%
   dplyr::group_by(team = .data[[defteam_col]]) %>%
   dplyr::summarise(rz_td_def = mean(td[in_rz], na.rm = TRUE), .groups = "drop")
 
+# Enhanced Red Zone metrics: trip rate and goal-to-go efficiency
+rz_enhanced <- pbp_hist %>%
+  dplyr::filter(!is.na(yardline_100), !is.na(drive)) %>%
+  dplyr::group_by(game_id, drive, team = .data[[posteam_col]]) %>%
+  dplyr::summarise(
+    reached_rz = any(yardline_100 <= 20, na.rm = TRUE),
+    reached_goalline = any(yardline_100 <= 5, na.rm = TRUE),
+    scored_td = any(touchdown == 1, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  dplyr::group_by(team) %>%
+  dplyr::summarise(
+    rz_trip_rate = mean(reached_rz, na.rm = TRUE),          # % of drives reaching RZ
+    goal_to_go_td_rate = sum(scored_td & reached_goalline) / pmax(sum(reached_goalline), 1),
+    .groups = "drop"
+  )
+
+# Pass rate for weather interaction effects
+team_pass_rate <- pbp_hist %>%
+  dplyr::filter(!is.na(play_type), play_type %in% c("pass", "run"), !is.na(down)) %>%
+  dplyr::group_by(team = .data[[posteam_col]]) %>%
+  dplyr::summarise(
+    pass_rate = mean(play_type == "pass", na.rm = TRUE),
+    .groups = "drop"
+  )
+
+league_avg_pass_rate <- mean(team_pass_rate$pass_rate, na.rm = TRUE)
+
+# Special teams field position metrics (1-2 pt impact per user)
+special_teams_fp <- pbp_hist %>%
+  dplyr::filter(!is.na(play_type)) %>%
+  dplyr::group_by(team = .data[[posteam_col]]) %>%
+  dplyr::summarise(
+    # Punting: net field position gained
+    avg_punt_yds = mean(kick_distance[play_type == "punt"], na.rm = TRUE),
+    # Kick return: average starting field position
+    avg_ko_return_yds = mean(return_yards[play_type == "kickoff"], na.rm = TRUE),
+    # Average drive start (offensive field position)
+    avg_drive_start = mean(yardline_100[!is.na(drive) & drive_play_count == 1], na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  dplyr::mutate(
+    # Field position advantage: better starting position + better punting
+    fp_advantage = (100 - avg_drive_start) + avg_punt_yds/100
+  )
+
 games_ready <- games_ready %>%
   dplyr::left_join(rz_off, by = c("home_team" = "team")) %>% dplyr::rename(home_rz_off = rz_td_off) %>%
   dplyr::left_join(rz_def, by = c("away_team" = "team")) %>% dplyr::rename(away_rz_def = rz_td_def) %>%
   dplyr::left_join(rz_off, by = c("away_team" = "team")) %>% dplyr::rename(away_rz_off = rz_td_off) %>%
   dplyr::left_join(rz_def, by = c("home_team" = "team")) %>% dplyr::rename(home_rz_def = rz_td_def) %>%
+  dplyr::left_join(rz_enhanced, by = c("home_team" = "team")) %>%
+    dplyr::rename(home_rz_trip_rate = rz_trip_rate, home_goal_to_go_td = goal_to_go_td_rate) %>%
+  dplyr::left_join(rz_enhanced, by = c("away_team" = "team")) %>%
+    dplyr::rename(away_rz_trip_rate = rz_trip_rate, away_goal_to_go_td = goal_to_go_td_rate) %>%
+  dplyr::left_join(team_pass_rate, by = c("home_team" = "team")) %>% dplyr::rename(home_pass_rate = pass_rate) %>%
+  dplyr::left_join(team_pass_rate, by = c("away_team" = "team")) %>% dplyr::rename(away_pass_rate = pass_rate) %>%
+  dplyr::left_join(special_teams_fp, by = c("home_team" = "team")) %>%
+    dplyr::rename(home_fp_adv = fp_advantage, home_drive_start = avg_drive_start) %>%
+  dplyr::left_join(special_teams_fp, by = c("away_team" = "team")) %>%
+    dplyr::rename(away_fp_adv = fp_advantage, away_drive_start = avg_drive_start) %>%
   dplyr::mutate(
     rz_edge_home = (home_rz_off - away_rz_def),
     rz_edge_away = (away_rz_off - home_rz_def),
-    mu_home = pmax(mu_home + 2.0 * rz_edge_home, 0),   # ~2 pts per +10% edge
-    mu_away = pmax(mu_away + 2.0 * rz_edge_away, 0)
+    # Enhanced RZ impact with trip rate multiplier
+    rz_impact_home = 2.0 * rz_edge_home * coalesce(home_rz_trip_rate, 0.25),
+    rz_impact_away = 2.0 * rz_edge_away * coalesce(away_rz_trip_rate, 0.25),
+    # Special teams field position impact (~1-2 pts per user analysis)
+    st_impact_home = 1.5 * (coalesce(home_fp_adv, 0) - coalesce(away_fp_adv, 0)),
+    st_impact_away = 1.5 * (coalesce(away_fp_adv, 0) - coalesce(home_fp_adv, 0)),
+    mu_home = pmax(mu_home + rz_impact_home + st_impact_home, 0),
+    mu_away = pmax(mu_away + rz_impact_away + st_impact_away, 0)
   )
 
 
@@ -3957,7 +4020,12 @@ games_ready <- games_ready |>
 rho_from_game <- function(total_mu, spread_abs, rho_global = RHO_SCORE) {
   base <- 0.10 + 0.20 * plogis((total_mu - 44)/4)   # totals around 44 are neutral
   anti <- -0.15 * plogis((spread_abs - 10)/3)       # big spreads dampen correlation
-  rho  <- base + anti
+
+  # Game script effect: larger spreads = more script-dependent (winning team runs clock)
+  # This strengthens negative correlation in blowouts
+  script_factor <- tanh(spread_abs / 10)            # 0 for close games, ~1 for blowouts
+  rho  <- base - (anti * (1 + script_factor))       # Amplify anti-correlation in blowouts
+
   # shrink toward global estimate to avoid overfit
   rho  <- 0.5 * rho + 0.5 * rho_global
   pmin(pmax(rho, -0.20), 0.60)
@@ -4555,6 +4623,7 @@ games_ready <- games_ready %>%
     cold   = coalesce(env_cold,  FALSE),
     precip = coalesce(env_precip, FALSE),
 
+    # Base weather effects (same as before)
     env_total_auto =
       ifelse(dome, DOME_BONUS_TOTAL, 0) +
       pmax(coalesce(wind_mph, 0) - 12, 0) * (-0.04) +
@@ -4566,10 +4635,28 @@ games_ready <- games_ready %>%
       ifelse(is.na(temp_f)      & cold,   COLD_TEMP_PEN    * 0.5, 0) +
       ifelse(is.na(precip_prob) & precip, RAIN_SNOW_PEN    * 0.5, 0),
 
+    # Multiplicative weather interaction effects (data-driven per user analysis)
+    # Wind hurts pass-heavy teams more: effect = wind × (pass_rate - league_avg)
+    home_pass_dev = coalesce(home_pass_rate, league_avg_pass_rate) - league_avg_pass_rate,
+    away_pass_dev = coalesce(away_pass_rate, league_avg_pass_rate) - league_avg_pass_rate,
+    wind_interaction_home = ifelse(!dome & !is.na(wind_mph) & wind_mph > 12,
+                                    -0.10 * (wind_mph - 12) * home_pass_dev, 0),
+    wind_interaction_away = ifelse(!dome & !is.na(wind_mph) & wind_mph > 12,
+                                    -0.10 * (wind_mph - 12) * away_pass_dev, 0),
+
+    # Cold effect: dome teams struggle more in cold (body not acclimated)
+    # Identify dome teams by checking if their stadium is a dome
+    home_is_dome_team = dome,  # Playing at home dome
+    away_is_dome_team = FALSE, # Away team dome status would need roster lookup
+    cold_interaction_home = ifelse(!dome & !is.na(temp_f) & temp_f <= 35 & away_is_dome_team,
+                                    -0.40, 0),  # Away dome team penalty
+    cold_interaction_away = ifelse(!dome & !is.na(temp_f) & temp_f <= 35 & home_is_dome_team,
+                                    -0.40, 0),  # Would be home dome team if traveling
+
     env_total_adj = env_total_auto + env_total_flags,
 
-    mu_home = pmax(mu_home + env_total_adj/2 + mu_home_adj, 0),
-    mu_away = pmax(mu_away + env_total_adj/2 + mu_away_adj, 0),
+    mu_home = pmax(mu_home + env_total_adj/2 + mu_home_adj + wind_interaction_home + cold_interaction_home, 0),
+    mu_away = pmax(mu_away + env_total_adj/2 + mu_away_adj + wind_interaction_away + cold_interaction_away, 0),
     sd_home = pmax(sd_home + sd_home_adj, 5.0),
     sd_away = pmax(sd_away + sd_away_adj, 5.0)
   )
