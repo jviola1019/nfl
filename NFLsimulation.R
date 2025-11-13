@@ -2267,6 +2267,16 @@ TRENCH_AVAIL_POINT_PER_FLAG    <- 0.65
 SECONDARY_AVAIL_POINT_PER_FLAG <- 0.45
 FRONT7_AVAIL_POINT_PER_FLAG    <- 0.50
 
+# Statistical rigor constants (added for code quality and reproducibility)
+NB_SIZE_MIN         <- 5        # Minimum overdispersion parameter (NFL scores typically k ∈ [5,15])
+NB_SIZE_MAX         <- 50       # Maximum overdispersion parameter (tighter than 1e4 for stability)
+ISOTONIC_EPSILON    <- 0.01     # Isotonic calibration bounds (keep predictions in [0.01, 0.99])
+BETA_PRIOR_STRENGTH <- 6        # Beta prior strength for Bayesian smoothing
+CONFIDENCE_LEVEL    <- 0.95     # Confidence level for prediction intervals
+MIN_SAMPLE_SIZE     <- 500      # Minimum sample for reliable estimates
+REGRESSION_BASE     <- 0.3      # Base regression to mean factor
+REGRESSION_GAMES    <- 6        # Games required to reduce regression (halflife)
+
 # Reference sheet for common tuning knobs.  Call `show_tuning_help()` from an
 # interactive session to review the levers and the metrics they typically move.
 .tuning_parameters <- tibble::tribble(
@@ -3490,6 +3500,16 @@ get_hourly_weather <- function(lat, lon, date_iso, hours = c(13)) {
 
 # make sure stadium_coords is defined above this point and has columns: venue_key, lat, lon, dome
 
+# Default weather conditions for neutral sites / missing stadium data (Kansas City as neutral baseline)
+DEFAULT_STADIUM_CONDITIONS <- list(
+  lat = 39.0489,    # Kansas City (Arrowhead Stadium)
+  lon = -94.4839,
+  dome = FALSE,
+  wind_mph = 8,     # Typical outdoor conditions
+  temp_f = 55,      # Mild temperature
+  precip_prob = 0.1 # Low precipitation probability
+)
+
 # helper so we avoid inline braces inside mutate()
 .wx_cache_dir <- file.path(path.expand("~"), ".cache", "nfl_sim_weather")
 if (!dir.exists(.wx_cache_dir)) dir.create(.wx_cache_dir, recursive = TRUE)
@@ -3500,7 +3520,12 @@ safe_hourly <- function(lat, lon, date_iso, kickoff_hour_local = NA_integer_) {
   # `NA` for `NA_real_`, which caused an error inside the `if` statement when
   # this helper was called via `purrr::pmap()`.  Using `isTRUE(all(...))` keeps
   # the check scalar and safely handles `NA`s.
-  if (!isTRUE(all(is.finite(c(lat, lon))))) return(NULL)
+  # FIX: Use default coordinates for neutral sites instead of returning NULL
+  if (!isTRUE(all(is.finite(c(lat, lon))))) {
+    lat <- DEFAULT_STADIUM_CONDITIONS$lat
+    lon <- DEFAULT_STADIUM_CONDITIONS$lon
+    message(sprintf("Using default location (KC) for missing stadium data"))
+  }
   if (is.na(date_iso) || !nzchar(date_iso)) return(NULL)
   key  <- digest::digest(list(round(lat,4), round(lon,4), date_iso))
   path <- file.path(.wx_cache_dir, paste0(key, ".rds"))
@@ -3951,6 +3976,32 @@ team_pass_rate <- pbp_hist %>%
 
 league_avg_pass_rate <- mean(team_pass_rate$pass_rate, na.rm = TRUE)
 
+# Home/Away Split Performance Metrics (CRITICAL MISSING DATA)
+# Teams perform differently at home vs away - this captures EPA and success rate splits
+home_away_splits <- pbp_hist %>%
+  dplyr::filter(!is.na(.data[[posteam_col]]), !is.na(epa), !is.na(success)) %>%
+  dplyr::mutate(
+    is_home = (.data[[posteam_col]] == .data[[home_team_col]])
+  ) %>%
+  dplyr::group_by(team = .data[[posteam_col]], is_home) %>%
+  dplyr::summarise(
+    epa_mean = mean(epa, na.rm = TRUE),
+    success_rate = mean(success, na.rm = TRUE),
+    plays = n(),
+    .groups = "drop"
+  ) %>%
+  tidyr::pivot_wider(
+    names_from = is_home,
+    values_from = c(epa_mean, success_rate, plays),
+    names_prefix = "loc_"
+  ) %>%
+  dplyr::mutate(
+    # Home advantage in EPA/play
+    epa_home_adv = coalesce(epa_mean_loc_TRUE, 0) - coalesce(epa_mean_loc_FALSE, 0),
+    # Success rate advantage at home
+    sr_home_adv = coalesce(success_rate_loc_TRUE, 0.45) - coalesce(success_rate_loc_FALSE, 0.45)
+  )
+
 # Special teams field position metrics (1-2 pt impact per user)
 special_teams_fp <- pbp_hist %>%
   dplyr::filter(!is.na(play_type)) %>%
@@ -3984,6 +4035,10 @@ games_ready <- games_ready %>%
     dplyr::rename(home_fp_adv = fp_advantage, home_drive_start = avg_drive_start) %>%
   dplyr::left_join(special_teams_fp, by = c("away_team" = "team")) %>%
     dplyr::rename(away_fp_adv = fp_advantage, away_drive_start = avg_drive_start) %>%
+  dplyr::left_join(home_away_splits, by = c("home_team" = "team")) %>%
+    dplyr::rename(home_epa_home_adv = epa_home_adv, home_sr_adv = sr_home_adv) %>%
+  dplyr::left_join(home_away_splits, by = c("away_team" = "team")) %>%
+    dplyr::rename(away_epa_home_adv = epa_home_adv, away_sr_adv = sr_home_adv) %>%
   dplyr::mutate(
     rz_edge_home = (home_rz_off - away_rz_def),
     rz_edge_away = (away_rz_off - home_rz_def),
@@ -3993,8 +4048,11 @@ games_ready <- games_ready %>%
     # Special teams field position impact (~1-2 pts per user analysis)
     st_impact_home = 1.5 * (coalesce(home_fp_adv, 0) - coalesce(away_fp_adv, 0)),
     st_impact_away = 1.5 * (coalesce(away_fp_adv, 0) - coalesce(home_fp_adv, 0)),
-    mu_home = pmax(mu_home + rz_impact_home + st_impact_home, 0),
-    mu_away = pmax(mu_away + rz_impact_away + st_impact_away, 0)
+    # Home/Away EPA advantage: EPA/play × ~60 plays/game × 9 pts/EPA ≈ 0.5-1.5 pts/game
+    home_location_boost = coalesce(home_epa_home_adv, 0) * 60 * 9,
+    away_location_penalty = coalesce(away_epa_home_adv, 0) * 60 * 9 * (-1),  # Away team loses their home advantage
+    mu_home = pmax(mu_home + rz_impact_home + st_impact_home + home_location_boost, 0),
+    mu_away = pmax(mu_away + rz_impact_away + st_impact_away + away_location_penalty, 0)
   )
 
 
@@ -4123,8 +4181,10 @@ recent_form_at_sim <- function(cut_season, cut_week, teams,
     }
   ) |>
     dplyr::mutate(
-      off_mean_raw = (n_games * off_mean_raw + 6 * league_off_ppg) / (n_games + 6),
-      def_mean_raw = (n_games * def_mean_raw + 6 * league_def_ppg) / (n_games + 6),
+      # FIX: Adaptive regression to mean (was hardcoded 6, now uses REGRESSION_BASE × exp(-n/REGRESSION_GAMES))
+      regression_weight = BETA_PRIOR_STRENGTH * (1 + REGRESSION_BASE * exp(-n_games / REGRESSION_GAMES)),
+      off_mean_raw = (n_games * off_mean_raw + regression_weight * league_off_ppg) / (n_games + regression_weight),
+      def_mean_raw = (n_games * def_mean_raw + regression_weight * league_def_ppg) / (n_games + regression_weight),
       off_sd_raw   = pmax(off_sd_raw, 5.5),
       def_sd_raw   = pmax(def_sd_raw, 5.5)
     ) |>
@@ -4173,8 +4233,9 @@ nb_size_from_musd <- function(mu, sd) {
   v <- sd^2
   if (!is.finite(mu) || !is.finite(sd) || mu <= 0 || v <= mu) return(Inf)
   k <- mu^2 / (v - mu)
-  k <- pmax(k, 2)          # minimum overdispersion
-  k <- pmin(k, 1e4)        # numeric safety
+  # FIX: NFL scores typically have k ∈ [5, 15], not k >= 2 (too much overdispersion)
+  k <- pmax(k, NB_SIZE_MIN)  # Realistic floor (was 2, now 5)
+  k <- pmin(k, NB_SIZE_MAX)  # Tighter ceiling (was 1e4, now 50)
   k
 }
 
@@ -5053,6 +5114,40 @@ final <- final |>
     two_way_mass_raw = pmax(home_win_prob + away_win_prob, 1e-9),
     home_p_2w_raw    = .clamp01(home_win_prob / two_way_mass_raw),
     away_p_2w_raw    = 1 - home_p_2w_raw
+  )
+
+# Add prediction intervals and model uncertainty metrics (CRITICAL for uncertainty quantification)
+final <- final |>
+  dplyr::left_join(
+    games_ready %>%
+      dplyr::select(game_id, mu_home, mu_away, sd_home, sd_away, k_home, k_away) %>%
+      dplyr::mutate(
+        k_home = pmin(pmax(k_home, NB_SIZE_MIN), NB_SIZE_MAX),
+        k_away = pmin(pmax(k_away, NB_SIZE_MIN), NB_SIZE_MAX)
+      ),
+    by = "game_id"
+  ) %>%
+  dplyr::mutate(
+    # Prediction intervals using negative binomial quantiles (95% CI)
+    home_score_pi_lo = ifelse(is.finite(k_home) & k_home < Inf,
+                               qnbinom((1 - CONFIDENCE_LEVEL) / 2, size = k_home, mu = mu_home),
+                               qpois((1 - CONFIDENCE_LEVEL) / 2, lambda = mu_home)),
+    home_score_pi_hi = ifelse(is.finite(k_home) & k_home < Inf,
+                               qnbinom(1 - (1 - CONFIDENCE_LEVEL) / 2, size = k_home, mu = mu_home),
+                               qpois(1 - (1 - CONFIDENCE_LEVEL) / 2, lambda = mu_home)),
+    away_score_pi_lo = ifelse(is.finite(k_away) & k_away < Inf,
+                               qnbinom((1 - CONFIDENCE_LEVEL) / 2, size = k_away, mu = mu_away),
+                               qpois((1 - CONFIDENCE_LEVEL) / 2, lambda = mu_away)),
+    away_score_pi_hi = ifelse(is.finite(k_away) & k_away < Inf,
+                               qnbinom(1 - (1 - CONFIDENCE_LEVEL) / 2, size = k_away, mu = mu_away),
+                               qpois(1 - (1 - CONFIDENCE_LEVEL) / 2, lambda = mu_away)),
+
+    # Epistemic uncertainty from model disagreement (blend vs market)
+    # Higher values = more model disagreement = less certain prediction
+    model_uncertainty = abs(home_p_2w_cal - home_p_2w_mkt) / pmax(home_p_2w_cal + home_p_2w_mkt, 0.01),
+
+    # Total uncertainty combines aleatoric (score variance) + epistemic (model disagreement)
+    total_uncertainty = sqrt((sd_home^2 + sd_away^2) / 2) + 10 * model_uncertainty
   )
 
 # Canonical calibrated probs (3-way) + canonical two-way derived from them
