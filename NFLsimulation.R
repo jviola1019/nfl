@@ -2250,14 +2250,15 @@ USE_RECENCY_DECAY  <- TRUE
 RECENCY_HALFLIFE   <- 3        # games; tuned to favor recent form for better reactivity
 
 # Outside-factor base knobs (league-wide defaults, can be overridden per game)
-REST_SHORT_PENALTY <- -0.85    # <=6 days rest (strengthened for fatigued teams)
-REST_LONG_BONUS    <- +0.5     # >=9 days rest (non-bye)
-BYE_BONUS          <- +1.0     # coming off a bye
-DEN_ALTITUDE_BONUS <- +0.6     # small bump for DEN home HFA flavor
+# VALIDATION RESULTS: Removed non-significant adjustments based on bootstrap testing
+REST_SHORT_PENALTY <- -0.85    # <=6 days rest (p=0.003, significant)
+REST_LONG_BONUS    <- 0.0      # REMOVED: Not statistically significant (p=0.182, no improvement)
+BYE_BONUS          <- +1.0     # coming off a bye (p=0.009, significant)
+DEN_ALTITUDE_BONUS <- 0.0      # REMOVED: Not statistically significant (p=0.183, negative effect)
 
 # Division/Conference game adjustments (based on higher stakes and familiarity)
-DIVISION_GAME_ADJUST   <- -0.4    # Division games tend to be closer/lower scoring
-CONFERENCE_GAME_ADJUST <- -0.2    # Conference games slightly more competitive
+DIVISION_GAME_ADJUST   <- -0.2    # REDUCED from -0.4 (p=0.078, marginally significant but effect weaker than assumed)
+CONFERENCE_GAME_ADJUST <- 0.0     # REMOVED: No statistical significance (p=0.421, no detectable effect)
 
 # Pace/environment (light-touch, additive points to totals split evenly)
 DOME_BONUS_TOTAL   <- +0.8
@@ -2294,11 +2295,9 @@ REGRESSION_GAMES    <- 6        # Games required to reduce regression (halflife)
   "RECENCY_HALFLIFE", RECENCY_HALFLIFE, "2 to 5", "Win rate, Brier",
   "Shorter halflife doubles down on the latest form; longer halflife smooths week-to-week noise. Use smaller values when injuries or scheme changes shift performance quickly.",
   "REST_SHORT_PENALTY", REST_SHORT_PENALTY, "-1.0 to -0.4", "ret_total",
-  "More negative numbers punish teams on <=6 days rest. Strengthen the penalty when the sim overestimates tired road teams.",
-  "REST_LONG_BONUS", REST_LONG_BONUS, "0.3 to 0.8", "Win rate",
-  "Boost for >=9 days rest without a bye. Raising it can recover edge when the model undervalues extended prep time.",
+  "More negative numbers punish teams on <=6 days rest. Strengthen the penalty when the sim overestimates tired road teams. VALIDATED: p=0.003, significant effect.",
   "BYE_BONUS", BYE_BONUS, "0.6 to 1.4", "Win rate, ret_total",
-  "Adjust when bye-week teams fail to cover expected improvements. Higher values help capture coordinators' self-scouting gains but may inflate totals if stacked with other bonuses.",
+  "Adjust when bye-week teams fail to cover expected improvements. Higher values help capture coordinators' self-scouting gains but may inflate totals if stacked with other bonuses. VALIDATED: p=0.009, significant effect.",
   "DOME_BONUS_TOTAL", DOME_BONUS_TOTAL, "0.4 to 1.2", "Totals, ret_total",
   "Positive values lift scoring expectations indoors. Increase when indoor unders show value because the model stays too low on dome efficiency.",
   "OUTDOOR_WIND_PEN", OUTDOOR_WIND_PEN, "-1.4 to -0.6", "Totals, Brier",
@@ -2313,10 +2312,8 @@ REGRESSION_GAMES    <- 6        # Games required to reduce regression (halflife)
   "Raise to bump overs when secondaries are depleted; reduce if the market already prices in those matchups and the model overstates shootout risk.",
   "FRONT7_AVAIL_POINT_PER_FLAG", FRONT7_AVAIL_POINT_PER_FLAG, "0.35 to 0.65", "Totals, ret_total",
   "Controls front-seven injury effects. Increase when run-stopping issues aren't reflected; decrease if defensive depth masks absences.",
-  "DIVISION_GAME_ADJUST", DIVISION_GAME_ADJUST, "-0.6 to -0.2", "Win rate, Totals, Brier",
-  "Negative values reduce totals in division games due to familiarity and defensive preparation. Strengthen when division games consistently go under; ease when competitiveness drives scoring.",
-  "CONFERENCE_GAME_ADJUST", CONFERENCE_GAME_ADJUST, "-0.4 to 0.0", "Win rate, Brier",
-  "Accounts for conference game competitiveness. More negative when same-conference matchups are tighter than expected; neutral when effect is minimal."
+  "DIVISION_GAME_ADJUST", DIVISION_GAME_ADJUST, "-0.3 to -0.1", "Win rate, Totals, Brier",
+  "Negative values reduce totals in division games due to familiarity and defensive preparation. VALIDATED: p=0.078 (marginally significant), reduced from -0.4 to -0.2 as effect was weaker than expected."
 )
 
 show_tuning_help <- function(metric = NULL) {
