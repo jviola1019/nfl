@@ -2225,6 +2225,12 @@ WEEK_TO_SIM <- 11               # <-- single switch for the week
 N_TRIALS    <- 100000
 N_RECENT    <- 6               # last N games for "form"
 SEED        <- 471
+
+# R 4.5.1 compatibility: Ensure reproducible random number generation
+# This sets the RNG to be compatible with R 4.5.0+ while maintaining backward compatibility
+if (getRversion() >= "4.5.0") {
+  suppressWarnings(RNGversion("4.5.0"))
+}
 set.seed(SEED)
 
 # ----- Priors / blending knobs -----
