@@ -155,13 +155,19 @@ fit_isotonic_regularized <- function(train_data) {
 fit_platt <- function(train_data) {
   cat("  Fitting Platt scaling (logistic regression)...\n")
 
+  # Clamp probabilities to prevent log(0) or division by zero
   train_data <- train_data %>%
-    mutate(logit = log(raw_prob / (1 - raw_prob)))
+    mutate(
+      raw_prob_clamped = pmin(pmax(raw_prob, 0.001), 0.999),
+      logit = log(raw_prob_clamped / (1 - raw_prob_clamped))
+    )
 
   model <- glm(home_win ~ logit, data = train_data, family = binomial)
 
   predict_platt <- function(probs) {
-    logit <- log(probs / (1 - probs))
+    # Clamp probabilities to prevent log(0) or division by zero
+    probs_clamped <- pmin(pmax(probs, 0.001), 0.999)
+    logit <- log(probs_clamped / (1 - probs_clamped))
     predict(model, newdata = data.frame(logit = logit), type = "response")
   }
 
@@ -172,17 +178,21 @@ fit_platt <- function(train_data) {
 fit_beta <- function(train_data) {
   cat("  Fitting beta calibration (asymmetric correction)...\n")
 
+  # Clamp probabilities to prevent log(0) or division by zero
   train_data <- train_data %>%
     mutate(
-      logit_p = log(raw_prob / (1 - raw_prob)),
-      logit_1mp = log((1 - raw_prob) / raw_prob)
+      raw_prob_clamped = pmin(pmax(raw_prob, 0.001), 0.999),
+      logit_p = log(raw_prob_clamped / (1 - raw_prob_clamped)),
+      logit_1mp = log((1 - raw_prob_clamped) / raw_prob_clamped)
     )
 
   model <- glm(home_win ~ logit_p + logit_1mp, data = train_data, family = binomial)
 
   predict_beta <- function(probs) {
-    logit_p <- log(probs / (1 - probs))
-    logit_1mp <- log((1 - probs) / probs)
+    # Clamp probabilities to prevent log(0) or division by zero
+    probs_clamped <- pmin(pmax(probs, 0.001), 0.999)
+    logit_p <- log(probs_clamped / (1 - probs_clamped))
+    logit_1mp <- log((1 - probs_clamped) / probs_clamped)
     predict(model, newdata = data.frame(logit_p = logit_p, logit_1mp = logit_1mp),
            type = "response")
   }
@@ -252,9 +262,13 @@ determine_ensemble_weights <- function(val_data, models) {
   cat(sprintf("  Spline Brier: %.5f\n\n", brier_spline))
 
   # Inverse Brier weighting (better models get more weight)
-  inv_briers <- c(1/brier_iso, 1/brier_platt, 1/brier_beta, 1/brier_spline)
+  # Protect against division by zero - add small epsilon to Brier scores
+  brier_scores <- pmax(c(brier_iso, brier_platt, brier_beta, brier_spline), 1e-10)
+  inv_briers <- 1 / brier_scores
   total_inv <- sum(inv_briers)
 
+  # Protect against division by zero in weight calculation
+  total_inv <- ifelse(total_inv < 1e-10, 1.0, total_inv)
   weights <- inv_briers / total_inv
 
   # REGULARIZATION: Bound weights to prevent extreme reliance

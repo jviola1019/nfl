@@ -518,9 +518,13 @@ calculate_effect_sizes <- function(model, data) {
   total_re_var <- team_sd^2 + opp_sd^2
   residual_var <- sigma(model)^2  # Residual variance
 
-  icc_team <- team_sd^2 / (total_re_var + residual_var)
-  icc_opp <- opp_sd^2 / (total_re_var + residual_var)
-  icc_total <- total_re_var / (total_re_var + residual_var)
+  # Protect against division by zero (add small epsilon)
+  total_var <- total_re_var + residual_var
+  total_var <- ifelse(total_var < 1e-10, 1e-10, total_var)
+
+  icc_team <- team_sd^2 / total_var
+  icc_opp <- opp_sd^2 / total_var
+  icc_total <- total_re_var / total_var
 
   # Effect size summary
   effect_summary <- tibble(
@@ -578,13 +582,19 @@ diagnostic_checks <- function(model, data) {
   convergence <- model$sdr$pdHess
   message(sprintf("Model convergence: %s", ifelse(convergence, "SUCCESS", "FAILED")))
 
-  # Calculate residuals
+  # Calculate residuals (with protection against zero SD)
   data <- data %>%
     mutate(
       fitted = predict(model, type = "response"),
-      residual = points - fitted,
-      std_residual = residual / sd(residual)
+      residual = points - fitted
     )
+
+  # Calculate standardized residuals with protection against zero SD
+  residual_sd <- sd(data$residual, na.rm = TRUE)
+  residual_sd <- ifelse(residual_sd < 1e-10, 1.0, residual_sd)
+
+  data <- data %>%
+    mutate(std_residual = residual / residual_sd)
 
   # Check for outliers (|residual| > 3 SD)
   outliers <- data %>%
@@ -661,16 +671,16 @@ message("\n===== SECTION 7: R 4.5.1 Compatibility Check =====\n")
 #' Check package compatibility with R 4.5.1
 check_r_compatibility <- function() {
 
-  r_version <- R.version.string
+  r_version <- getRversion()
   message(sprintf("Current R version: %s\n", r_version))
 
-  # Check if running R 4.5.1 or later
-  r_version_numeric <- as.numeric(paste0(R.version$major, ".", R.version$minor))
-
-  if (r_version_numeric >= 4.5) {
+  # Check if running R 4.5.1 or later (using safe comparison)
+  if (isTRUE(r_version >= "4.5.0")) {
     message("✓ Running R 4.5.0 or later - GOOD\n")
-  } else {
+  } else if (isTRUE(r_version < "4.5.0")) {
     message("✗ Running R < 4.5.0 - May have compatibility issues\n")
+  } else {
+    message("⚠ Could not determine R version - proceeding with caution\n")
   }
 
   # Check critical packages
@@ -688,12 +698,12 @@ check_r_compatibility <- function() {
     if (requireNamespace(pkg, quietly = TRUE)) {
       pkg_version <- as.character(packageVersion(pkg))
 
-      # Check for known compatibility issues
+      # Check for known compatibility issues (using isTRUE for safe comparisons)
       compatible <- case_when(
-        pkg == "glmmTMB" && packageVersion(pkg) >= "1.1.0" ~ "✓ Compatible",
-        pkg == "nflreadr" && packageVersion(pkg) >= "1.3.0" ~ "✓ Compatible",
-        pkg == "tidyverse" && packageVersion(pkg) >= "2.0.0" ~ "✓ Compatible",
-        pkg == "randtoolbox" && packageVersion(pkg) >= "2.0.0" ~ "✓ Compatible",
+        pkg == "glmmTMB" && isTRUE(packageVersion(pkg) >= "1.1.0") ~ "✓ Compatible",
+        pkg == "nflreadr" && isTRUE(packageVersion(pkg) >= "1.3.0") ~ "✓ Compatible",
+        pkg == "tidyverse" && isTRUE(packageVersion(pkg) >= "2.0.0") ~ "✓ Compatible",
+        pkg == "randtoolbox" && isTRUE(packageVersion(pkg) >= "2.0.0") ~ "✓ Compatible",
         TRUE ~ "? Unknown - recommend updating"
       )
 
