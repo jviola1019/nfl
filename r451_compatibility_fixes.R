@@ -17,14 +17,17 @@
 
 cat("\n===== R 4.5.1 Compatibility Check =====\n\n")
 
-# Check R version
-r_version <- as.numeric(paste0(R.version$major, ".", R.version$minor))
-cat(sprintf("Current R version: %s.%s\n", R.version$major, R.version$minor))
+# Check R version (using getRversion() for safe comparison)
+r_version <- getRversion()
+cat(sprintf("Current R version: %s\n", r_version))
 
-if (r_version < 4.5) {
+# Safe version comparison that handles NA/NULL values
+if (isTRUE(r_version < "4.5.0")) {
   warning("R version < 4.5.1 detected. Please upgrade to R 4.5.1 or later.")
-} else {
+} else if (isTRUE(r_version >= "4.5.0")) {
   cat("✓ R version 4.5+ detected\n")
+} else {
+  warning("Could not determine R version. Proceeding with caution.")
 }
 
 # Minimum package versions for R 4.5.1 compatibility
@@ -59,7 +62,8 @@ check_packages <- function(required_versions) {
 
     if (requireNamespace(pkg_name, quietly = TRUE)) {
       installed_ver <- as.character(packageVersion(pkg_name))
-      is_compatible <- packageVersion(pkg_name) >= required_ver
+      # Safe comparison that handles potential edge cases
+      is_compatible <- isTRUE(packageVersion(pkg_name) >= required_ver)
 
       results <- rbind(results, data.frame(
         package = pkg_name,

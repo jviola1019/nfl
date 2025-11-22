@@ -177,10 +177,11 @@ calibrate_platt <- function(train_data, test_data = NULL) {
 
   cat("Fitting Platt scaling (logistic calibration)...\n")
 
-  # Convert probabilities to logits
+  # Convert probabilities to logits (clamp to prevent log(0) or division by zero)
   train_data <- train_data %>%
     mutate(
-      raw_logit = log(raw_win_prob / (1 - raw_win_prob))
+      raw_win_prob_clamped = pmin(pmax(raw_win_prob, 0.001), 0.999),
+      raw_logit = log(raw_win_prob_clamped / (1 - raw_win_prob_clamped))
     )
 
   # Fit logistic regression
@@ -220,7 +221,8 @@ calibrate_platt <- function(train_data, test_data = NULL) {
   if (!is.null(test_data)) {
     test_cal <- test_data %>%
       mutate(
-        raw_logit = log(raw_win_prob / (1 - raw_win_prob)),
+        raw_win_prob_clamped = pmin(pmax(raw_win_prob, 0.001), 0.999),
+        raw_logit = log(raw_win_prob_clamped / (1 - raw_win_prob_clamped)),
         platt_prob = predict(platt_model, newdata = ., type = "response"),
         platt_prob = pmin(pmax(platt_prob, 0.01), 0.99)
       )
@@ -250,10 +252,12 @@ calibrate_beta <- function(train_data, test_data = NULL) {
 
   # Transform to beta distribution parameters
   # Beta calibration: fit a + b*log(p/(1-p)) + c*log((1-p)/p)
+  # Clamp probabilities to prevent log(0) or division by zero
   train_data <- train_data %>%
     mutate(
-      logit_p = log(raw_win_prob / (1 - raw_win_prob)),
-      logit_1mp = log((1 - raw_win_prob) / raw_win_prob)
+      raw_win_prob_clamped = pmin(pmax(raw_win_prob, 0.001), 0.999),
+      logit_p = log(raw_win_prob_clamped / (1 - raw_win_prob_clamped)),
+      logit_1mp = log((1 - raw_win_prob_clamped) / raw_win_prob_clamped)
     )
 
   # Fit beta calibration model
@@ -287,8 +291,9 @@ calibrate_beta <- function(train_data, test_data = NULL) {
   if (!is.null(test_data)) {
     test_cal <- test_data %>%
       mutate(
-        logit_p = log(raw_win_prob / (1 - raw_win_prob)),
-        logit_1mp = log((1 - raw_win_prob) / raw_win_prob),
+        raw_win_prob_clamped = pmin(pmax(raw_win_prob, 0.001), 0.999),
+        logit_p = log(raw_win_prob_clamped / (1 - raw_win_prob_clamped)),
+        logit_1mp = log((1 - raw_win_prob_clamped) / raw_win_prob_clamped),
         beta_prob = predict(beta_model, newdata = ., type = "response"),
         beta_prob = pmin(pmax(beta_prob, 0.01), 0.99)
       )
@@ -388,12 +393,17 @@ calibrate_ensemble <- function(iso_data, platt_data, beta_data, spline_data) {
   brier_spline <- mean((ensemble$home_win - ensemble$spline_prob)^2, na.rm = TRUE)
 
   # Inverse Brier weights (better models get more weight)
-  total_inv_brier <- (1/brier_iso + 1/brier_platt + 1/brier_beta + 1/brier_spline)
+  # Protect against division by zero - add small epsilon to Brier scores
+  brier_scores <- pmax(c(brier_iso, brier_platt, brier_beta, brier_spline), 1e-10)
+  total_inv_brier <- sum(1 / brier_scores)
 
-  w_iso <- (1/brier_iso) / total_inv_brier
-  w_platt <- (1/brier_platt) / total_inv_brier
-  w_beta <- (1/brier_beta) / total_inv_brier
-  w_spline <- (1/brier_spline) / total_inv_brier
+  # Protect against division by zero in weight calculation
+  total_inv_brier <- ifelse(total_inv_brier < 1e-10, 1.0, total_inv_brier)
+
+  w_iso <- (1/brier_scores[1]) / total_inv_brier
+  w_platt <- (1/brier_scores[2]) / total_inv_brier
+  w_beta <- (1/brier_scores[3]) / total_inv_brier
+  w_spline <- (1/brier_scores[4]) / total_inv_brier
 
   cat("  Ensemble weights (based on inverse Brier):\n")
   cat(sprintf("    Isotonic: %.3f\n", w_iso))

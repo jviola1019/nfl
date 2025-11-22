@@ -2096,7 +2096,7 @@ xfun_meets_min <- tryCatch({
   if (!requireNamespace("xfun", quietly = TRUE)) {
     FALSE
   } else {
-    utils::packageVersion("xfun") >= "0.52"
+    isTRUE(utils::packageVersion("xfun") >= "0.52")
   }
 }, error = function(e) FALSE)
 

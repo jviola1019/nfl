@@ -389,14 +389,17 @@ test_injury_impact <- function(severity, schedules) {
     )
   )
 
-  # Test significance
+  # Test significance (with protection against perfect correlation)
   n <- nrow(games_position)
   position_cors <- position_cors %>%
     mutate(
-      t_stat = correlation * sqrt(n - 2) / sqrt(1 - correlation^2),
+      # Protect against division by zero when |correlation| = 1
+      denom = pmax(sqrt(1 - correlation^2), 1e-10),
+      t_stat = correlation * sqrt(n - 2) / denom,
       p_value = 2 * pt(abs(t_stat), df = n - 2, lower.tail = FALSE),
       significant = p_value < 0.05
-    )
+    ) %>%
+    select(-denom)  # Remove temporary column
 
   print(position_cors)
   cat("\n")
