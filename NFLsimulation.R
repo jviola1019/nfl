@@ -2217,56 +2217,54 @@ margin_probs_from_summary <- function(margin_mean, margin_sd, tie_prob) {
     sd_effective  = sd_eff
   )
 }
+# =============================================================================
+# CONFIGURATION - Load from config.R
+# =============================================================================
+# **TO CHANGE THE WEEK: Edit config.R and change WEEK_TO_SIM value**
+# All configuration is centralized in config.R for easy management
 
+if (file.exists("config.R")) {
+  source("config.R")
+  cat(sprintf("\n✓ Configuration loaded: Season %d, Week %d\n\n", SEASON, WEEK_TO_SIM))
+} else {
+  # Fallback defaults if config.R doesn't exist
+  cat("\n⚠ Warning: config.R not found. Using default configuration.\n")
+  cat("  Create config.R file to customize settings.\n\n")
 
-# ------------------------ USER CONTROLS ---------------------------------------
-SEASON      <- year(Sys.Date())
-WEEK_TO_SIM <- 11               # <-- single switch for the week
-N_TRIALS    <- 100000
-N_RECENT    <- 6               # last N games for "form"
-SEED        <- 471
+  SEASON      <- year(Sys.Date())
+  WEEK_TO_SIM <- 11
+  N_TRIALS    <- 100000
+  N_RECENT    <- 6
+  SEED        <- 471
 
-# R 4.5.1 compatibility: Ensure reproducible random number generation
-# This sets the RNG to be compatible with R 4.5.0+ while maintaining backward compatibility
-if (getRversion() >= "4.5.0") {
-  suppressWarnings(RNGversion("4.5.0"))
+  # R 4.5.1 compatibility
+  if (getRversion() >= "4.5.0") {
+    suppressWarnings(RNGversion("4.5.0"))
+  }
+  set.seed(SEED)
+
+  GLMM_BLEND_W <- 0.38
+  BLEND_META_MODEL    <- getOption("nfl_sim.blend_model",    default = "glmnet")
+  BLEND_ALPHA         <- getOption("nfl_sim.blend_alpha",    default = 0.25)
+  CALIBRATION_METHOD  <- getOption("nfl_sim.calibration",    default = "isotonic")
+  USE_SOS            <- TRUE
+  SOS_STRENGTH       <- 0.45
+  USE_RECENCY_DECAY  <- TRUE
+  RECENCY_HALFLIFE   <- 3
+
+  # Situational adjustments
+  REST_SHORT_PENALTY <- -0.85
+  REST_LONG_BONUS    <- 0.0
+  BYE_BONUS          <- +1.0
+  DEN_ALTITUDE_BONUS <- 0.0
+  DIVISION_GAME_ADJUST   <- -0.2
+  CONFERENCE_GAME_ADJUST <- 0.0
 }
-set.seed(SEED)
 
-# ----- Priors / blending knobs -----
-GLMM_BLEND_W <- 0.38   # weight on GLMM priors vs pace-based baseline (tuned for Brier/log-loss)
-
-# Meta-model and calibration controls for the market/model blend
-BLEND_META_MODEL    <- getOption("nfl_sim.blend_model",    default = "glmnet")
-BLEND_ALPHA         <- getOption("nfl_sim.blend_alpha",    default = 0.25)
-CALIBRATION_METHOD  <- getOption("nfl_sim.calibration",    default = "isotonic")
-
-# SoS weighting knobs
-USE_SOS            <- TRUE     # turn on/off SoS weighting
-SOS_STRENGTH       <- 0.45     # 0=no effect; 1=full strength; try 0.4-0.8
-
-# Recency weighting for recent form (exponential decay)
-USE_RECENCY_DECAY  <- TRUE
-RECENCY_HALFLIFE   <- 3        # games; tuned to favor recent form for better reactivity
-
-# Outside-factor base knobs (league-wide defaults, can be overridden per game)
-# VALIDATION RESULTS: Removed non-significant adjustments based on bootstrap testing
-REST_SHORT_PENALTY <- -0.85    # <=6 days rest (p=0.003, significant)
-REST_LONG_BONUS    <- 0.0      # REMOVED: Not statistically significant (p=0.182, no improvement)
-BYE_BONUS          <- +1.0     # coming off a bye (p=0.009, significant)
-DEN_ALTITUDE_BONUS <- 0.0      # REMOVED: Not statistically significant (p=0.183, negative effect)
-
-# Division/Conference game adjustments (based on higher stakes and familiarity)
-DIVISION_GAME_ADJUST   <- -0.2    # REDUCED from -0.4 (p=0.078, marginally significant but effect weaker than assumed)
-CONFERENCE_GAME_ADJUST <- 0.0     # REMOVED: No statistical significance (p=0.421, no detectable effect)
-
-# Pace/environment (light-touch, additive points to totals split evenly)
-DOME_BONUS_TOTAL   <- +0.8
-OUTDOOR_WIND_PEN   <- -1.2     # apply if you set wind flag (tuned for weather impact)
-COLD_TEMP_PEN      <- -0.6     # apply if you set cold flag on a game
-RAIN_SNOW_PEN      <- -0.8
-
-RHO_SCORE      <- NA  # if NA, we'll estimate it from data
+# =============================================================================
+# Parameters below are set by config.R or fallback defaults above
+# Do not modify here - edit config.R instead
+# =============================================================================
 
 # Player availability impact scalars (points per aggregated severity unit)
 SKILL_AVAIL_POINT_PER_FLAG     <- 0.55
