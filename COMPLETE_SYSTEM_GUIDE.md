@@ -30,6 +30,92 @@ Rscript model_validation.R
 Rscript NFLsimulation.R
 ```
 
+## 🎯 How to Change the Week for Predictions
+
+### **METHOD 1: Using the Configuration File (RECOMMENDED)** ✅
+
+The easiest way to change the week is using the new `config.R` file:
+
+**Step 1:** Open `config.R` in a text editor
+
+**Step 2:** Find line 23 and change the `WEEK_TO_SIM` value:
+```r
+WEEK_TO_SIM <- 11  # <-- **CHANGE THIS TO RUN A DIFFERENT WEEK**
+```
+
+**Step 3:** In R, source the config file before running the simulation:
+```r
+source("config.R")  # Load configuration
+source("NFLsimulation.R")  # Run predictions
+```
+
+### **METHOD 2: Using the Interactive Dashboard** 🎨
+
+Open `dashboard.html` in your web browser for a visual interface:
+
+1. **Open the dashboard**: Double-click `dashboard.html`
+2. **Select the week**: Use the slider (Week 1-18)
+3. **Apply settings**: Click "Apply Week & Generate Config"
+4. **Download config**: Click "Generate config.R File"
+5. **Run in R**: Source the downloaded config file
+
+### **METHOD 3: Direct Edit in NFLsimulation.R**
+
+**Location**: `NFLsimulation.R`, **Line 2224**
+
+```r
+# ------------------------ USER CONTROLS ---------------------------------------
+SEASON      <- year(Sys.Date())  # Current season (auto-detected)
+WEEK_TO_SIM <- 11               # <-- **CHANGE THIS VALUE** (1-18)
+N_TRIALS    <- 100000           # Number of simulation trials
+SEED        <- 471              # Random seed for reproducibility
+```
+
+**To change the week:**
+1. Open `NFLsimulation.R`
+2. Go to line 2224
+3. Change `WEEK_TO_SIM <- 11` to your desired week (e.g., `WEEK_TO_SIM <- 13`)
+4. Save the file
+5. Run: `Rscript NFLsimulation.R`
+
+### **METHOD 4: Command Line Override**
+
+You can also override the week without editing files:
+
+```r
+# In R console or script
+WEEK_TO_SIM <- 13  # Set week
+SEASON <- 2024     # Set season (optional)
+source("NFLsimulation.R")  # Run with custom week
+```
+
+### **Important Notes** ⚠️
+
+- **Week Range**: Regular season weeks are 1-18
+- **Data Availability**: Ensure you have data loaded for the specified week
+- **Season**: The model auto-detects the current year, but you can override:
+  ```r
+  SEASON <- 2024  # Force specific season
+  ```
+- **All scripts synchronized**: Once you set `WEEK_TO_SIM`, all monitoring and validation scripts will use this value
+
+### **Configuration Summary**
+
+The `config.R` file now centralizes ALL configuration in one place:
+
+| Parameter | Location | Default | Description |
+|-----------|----------|---------|-------------|
+| `WEEK_TO_SIM` | `config.R:23` | 11 | **Week to simulate** |
+| `SEASON` | `config.R:21` | Auto | Current NFL season |
+| `N_TRIALS` | `config.R:29` | 100,000 | Simulation trials |
+| `SEED` | `config.R:35` | 471 | Random seed |
+| `CALIBRATION_METHOD` | `config.R:61` | "isotonic" | Calibration type |
+| `ENABLE_MONITORING` | `config.R:173` | FALSE | Real-time monitoring |
+
+**All parameters are documented in `config.R` with validation results and recommended ranges.**
+
+---
+
 ## System Architecture
 
 ###  1. Core Prediction Engine
