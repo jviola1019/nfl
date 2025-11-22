@@ -508,10 +508,15 @@ calculate_effect_sizes <- function(model, data) {
   # Home field advantage effect
   home_effect <- coefs["is_home"]
 
-  # Extract random effects standard deviations
+  # Extract random effects standard deviations (with safety checks)
   re_sd <- as.data.frame(VarCorr(model)$cond)
-  team_sd <- re_sd$sdcor[re_sd$grp == "team"]
-  opp_sd <- re_sd$sdcor[re_sd$grp == "opp"]
+
+  # Safe extraction with fallbacks (ensure length = 1)
+  team_sd_vec <- re_sd$sdcor[re_sd$grp == "team"]
+  team_sd <- if (length(team_sd_vec) == 0) 0 else team_sd_vec[1]
+
+  opp_sd_vec <- re_sd$sdcor[re_sd$grp == "opp"]
+  opp_sd <- if (length(opp_sd_vec) == 0) 0 else opp_sd_vec[1]
 
   # Calculate ICC (Intraclass Correlation Coefficient)
   # Proportion of variance explained by team/opponent effects
@@ -522,9 +527,10 @@ calculate_effect_sizes <- function(model, data) {
   total_var <- total_re_var + residual_var
   total_var <- ifelse(total_var < 1e-10, 1e-10, total_var)
 
-  icc_team <- team_sd^2 / total_var
-  icc_opp <- opp_sd^2 / total_var
-  icc_total <- total_re_var / total_var
+  # Ensure scalars (not vectors)
+  icc_team <- as.numeric(team_sd^2 / total_var)
+  icc_opp <- as.numeric(opp_sd^2 / total_var)
+  icc_total <- as.numeric(total_re_var / total_var)
 
   # Effect size summary
   effect_summary <- tibble(
