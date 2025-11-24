@@ -100,6 +100,33 @@ USE_RECENCY_DECAY <- TRUE
 #' @range 0.0 to 1.0
 RECENCY_DECAY_RATE <- 0.15
 
+#' @description Recency halflife in games for exponential decay weighting
+#' @default 3.0
+#' @range 1.0 to 6.0
+#' @note Lower values = stronger recency bias
+RECENCY_HALFLIFE <- 3.0
+
+# =============================================================================
+# VALIDATION SCHEMA - Train/Validation/Test Splits
+# =============================================================================
+
+#' @description Explicit train/validation/test split for hyperparameter tuning
+#' @details
+#'   - tune: Historical data for hyperparameter grid search (2011-2018)
+#'   - valid: Held-out data for model selection (2019-2022)
+#'   - test: Forward test window for final evaluation (2023-current)
+#' @note Do not modify calibration or hyperparameters using valid or test sets
+VALIDATION_SCHEMA <- list(
+  tune  = list(start_season = 2011L, end_season = 2018L),
+  valid = list(start_season = 2019L, end_season = 2022L),
+  test  = list(start_season = 2023L, end_season = SEASON)
+)
+
+#' @description Number of Monte Carlo trials for backtesting/tuning
+#' @default 40000
+#' @note Lower than live simulation trials for faster hyperparameter search
+BACKTEST_TRIALS <- 40000
+
 # =============================================================================
 # SITUATIONAL ADJUSTMENTS (VALIDATED)
 # =============================================================================
@@ -296,6 +323,9 @@ list2env(
     SOS_STRENGTH = SOS_STRENGTH,
     USE_RECENCY_DECAY = USE_RECENCY_DECAY,
     RECENCY_DECAY_RATE = RECENCY_DECAY_RATE,
+    RECENCY_HALFLIFE = RECENCY_HALFLIFE,
+    VALIDATION_SCHEMA = VALIDATION_SCHEMA,
+    BACKTEST_TRIALS = BACKTEST_TRIALS,
     REST_SHORT_PENALTY = REST_SHORT_PENALTY,
     REST_LONG_BONUS = REST_LONG_BONUS,
     BYE_BONUS = BYE_BONUS,
