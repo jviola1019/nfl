@@ -1,5 +1,7 @@
 # NFL Model - Train/Validation/Test Pipeline
 
+> **Note**: For general model setup and configuration, see [README.md](README.md). This document covers the validation pipeline for hyperparameter tuning.
+
 ## Overview
 
 This validation system implements proper **out-of-sample** hyperparameter tuning and model evaluation with explicit train/validation/test splits. This ensures:

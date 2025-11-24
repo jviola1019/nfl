@@ -210,6 +210,25 @@ COLD_IMPACT <- -0.15
 #' @default -1.5
 PRECIP_IMPACT <- -1.5
 
+#' @description Scoring bonus for dome games (points)
+#' @default 0.8
+#' @range 0.4 to 1.2
+DOME_BONUS_TOTAL <- 0.8
+
+#' @description Penalty for outdoor games in high wind (points)
+#' @default -1.0
+#' @range -1.4 to -0.6
+OUTDOOR_WIND_PEN <- -1.0
+
+#' @description Penalty for cold temperature games (points)
+#' @default -0.5
+COLD_TEMP_PEN <- -0.5
+
+#' @description Penalty for rain/snow precipitation (points)
+#' @default -0.8
+#' @range -1.2 to -0.4
+RAIN_SNOW_PEN <- -0.8
+
 # =============================================================================
 # OUTPUT AND REPORTING
 # =============================================================================
@@ -340,6 +359,10 @@ list2env(
     WIND_IMPACT = WIND_IMPACT,
     COLD_IMPACT = COLD_IMPACT,
     PRECIP_IMPACT = PRECIP_IMPACT,
+    DOME_BONUS_TOTAL = DOME_BONUS_TOTAL,
+    OUTDOOR_WIND_PEN = OUTDOOR_WIND_PEN,
+    COLD_TEMP_PEN = COLD_TEMP_PEN,
+    RAIN_SNOW_PEN = RAIN_SNOW_PEN,
     OUTPUT_DIR = OUTPUT_DIR,
     SAVE_DETAILED_RESULTS = SAVE_DETAILED_RESULTS,
     GENERATE_HTML_REPORTS = GENERATE_HTML_REPORTS,

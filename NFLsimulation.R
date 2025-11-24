@@ -2259,6 +2259,12 @@ if (file.exists("config.R")) {
   DEN_ALTITUDE_BONUS <- 0.0
   DIVISION_GAME_ADJUST   <- -0.2
   CONFERENCE_GAME_ADJUST <- 0.0
+
+  # Weather adjustments
+  DOME_BONUS_TOTAL <- 0.8
+  OUTDOOR_WIND_PEN <- -1.0
+  COLD_TEMP_PEN    <- -0.5
+  RAIN_SNOW_PEN    <- -0.8
 }
 
 # =============================================================================
