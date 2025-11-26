@@ -1,16 +1,20 @@
 # NFL Model - Train/Validation/Test Pipeline
 
+> **Prerequisites**: See [README.md](README.md) for installation, basic setup, and model architecture. This document covers the hyperparameter tuning and validation pipeline specifically.
+
 ## Overview
 
-This validation system implements proper **out-of-sample** hyperparameter tuning and model evaluation with explicit train/validation/test splits. This ensures:
+This validation system implements proper out-of-sample hyperparameter tuning with explicit train/validation/test splits to prevent data leakage and ensure honest model evaluation.
 
-- ✅ **No data leakage**: Calibration and hyperparameters are trained only on TRAIN data
-- ✅ **Honest evaluation**: VALIDATION and TEST sets are never used for model selection
-- ✅ **Reproducible results**: Clear separation of tuning, validation, and testing phases
+### Key Principles
+
+- **No data leakage**: Calibration and hyperparameters trained only on TRAIN data
+- **Honest evaluation**: VALIDATION and TEST sets never used for model selection
+- **Reproducible results**: Clear separation of tuning, validation, and testing phases
 
 ## Data Splits
 
-The validation schema (defined in `config.R`) splits historical data into three windows:
+The validation schema (defined in `config.R`) divides historical data into three temporal windows:
 
 ```r
 VALIDATION_SCHEMA <- list(
@@ -24,47 +28,37 @@ VALIDATION_SCHEMA <- list(
 
 | Phase | Years | Purpose | What Gets Fixed? |
 |-------|-------|---------|------------------|
-| **TRAIN** | 2011-2018 | Hyperparameter grid search | Selected best hyperparameters |
-| **VALIDATION** | 2019-2022 | Model selection and calibration evaluation | Nothing (frozen from TRAIN) |
-| **TEST** | 2023-current | Final performance evaluation | Nothing (frozen from TRAIN) |
+| **TRAIN** | 2011-2018 | Hyperparameter grid search | Best hyperparameters selected |
+| **VALIDATION** | 2019-2022 | Model selection and evaluation | Nothing (frozen from TRAIN) |
+| **TEST** | 2023-current | Final performance assessment | Nothing (frozen from TRAIN) |
 
 ## Key Files
 
-1. **`config.R`**
-   - Defines `VALIDATION_SCHEMA` with train/valid/test windows
-   - Defines `RECENCY_HALFLIFE` parameter
-   - Defines `BACKTEST_TRIALS` for faster backtesting
+1. **`config.R`** - Defines `VALIDATION_SCHEMA`, `RECENCY_HALFLIFE`, and `BACKTEST_TRIALS`
 
-2. **`validation_pipeline.R`** (NEW)
+2. **`validation_pipeline.R`** (if available)
    - `tune_hyperparams()`: Grid search on TRAIN set
-   - `apply_best_hyperparams()`: Apply selected hyperparameters
    - `build_calibration()`: Train calibration on TRAIN set only
-   - `apply_calibration()`: Load pre-built calibration
-   - `evaluate_phase()`: Evaluate on a specific window
+   - `evaluate_phase()`: Evaluate on specific window
    - `run_full_validation()`: Complete pipeline
-   - `print_validation_summary()`: Format results
 
-3. **`validation_reports.R`** (NEW)
+3. **`validation_reports.R`** (if available)
    - `generate_validation_report()`: Phase-labeled tables
-   - `save_validation_html()`: HTML output with clear phase markers
-   - `plot_tuning_grid()`: Visualize hyperparameter search
+   - `save_validation_html()`: HTML output with phase markers
 
-4. **`run_validation_example.R`** (NEW)
-   - `run_quick_validation()`: Small grid, fast (~5-10 min)
-   - `run_full_validation_default()`: Full grid (~30 min)
-   - `run_custom_validation()`: Custom grid example
-   - `run_tuning_only()`: Just hyperparameter tuning
-   - `analyze_previous_results()`: Load and analyze saved results
+4. **`run_validation_example.R`** (if available)
+   - `run_quick_validation()`: Fast test with small grid
+   - `run_full_validation_default()`: Full grid search
 
 ## Quick Start
 
-### Option 1: Quick Validation (Recommended for First Run)
+### Option 1: Quick Validation (Recommended First Run)
 
 ```r
 # Load configuration
 source("config.R")
 
-# Load validation functions
+# Load validation functions (if available)
 source("validation_pipeline.R")
 source("run_validation_example.R")
 
@@ -72,7 +66,7 @@ source("run_validation_example.R")
 library(nflreadr)
 sched <- load_schedules()
 
-# Run quick validation (small grid, ~10 minutes)
+# Run quick validation (~10 minutes)
 results <- run_quick_validation()
 
 # View summary
@@ -89,7 +83,7 @@ library(nflreadr)
 # Load schedule for market comparisons
 sched <- load_schedules()
 
-# Run complete validation with default grid (81 configurations)
+# Run complete validation with default grid
 results <- run_full_validation(
   schema       = VALIDATION_SCHEMA,
   tune_grid    = NULL,  # Use default 3x3x3x3 grid
@@ -101,7 +95,7 @@ results <- run_full_validation(
 # Print summary
 print_validation_summary(results, detailed = TRUE)
 
-# Generate report with phase labels
+# Generate HTML report
 source("validation_reports.R")
 report <- generate_validation_report(
   results,
@@ -109,69 +103,50 @@ report <- generate_validation_report(
 )
 ```
 
-### Option 3: Custom Hyperparameter Grid
-
-```r
-source("config.R")
-source("validation_pipeline.R")
-
-# Define custom grid (focus on GLMM blending weight)
-custom_grid <- expand.grid(
-  GLMM_BLEND_W     = seq(0.30, 0.50, by = 0.05),  # Fine resolution
-  RECENCY_HALFLIFE = c(3.0),                       # Fixed
-  N_RECENT         = c(6),                         # Fixed
-  SOS_STRENGTH     = c(0.45),                      # Fixed
-  stringsAsFactors = FALSE
-)
-
-# Tune on this grid
-tuning_results <- tune_hyperparams(
-  schema  = VALIDATION_SCHEMA$tune,
-  grid    = custom_grid,
-  trials  = BACKTEST_TRIALS,
-  verbose = TRUE
-)
-
-# Apply best parameters
-apply_best_hyperparams(tuning_results$best_params)
-```
-
 ## Hyperparameters Being Tuned
 
-The default grid searches over 4 key hyperparameters:
+The default grid searches over four key hyperparameters:
 
-### 1. `GLMM_BLEND_W` (0.3, 0.38, 0.5)
-**Weight on GLMM priors vs pace-based baseline**
-- Lower values (0.3) = rely more on pace/total-based estimates
-- Higher values (0.5) = rely more on GLMM team strength model
+### 1. GLMM_BLEND_W (0.3, 0.38, 0.5)
+
+Weight on GLMM priors versus pace-based baseline.
+
+- Lower values (0.3): Rely more on pace/total-based estimates
+- Higher values (0.5): Rely more on GLMM team strength model
 - Default range: 0.3 to 0.5
 
-### 2. `RECENCY_HALFLIFE` (2.0, 3.0, 4.0)
-**Exponential decay halflife for recent games (in games)**
-- Lower values (2.0) = stronger recency bias, recent games matter more
-- Higher values (4.0) = weaker recency bias, consider longer history
+### 2. RECENCY_HALFLIFE (2.0, 3.0, 4.0)
+
+Exponential decay halflife for recent game weighting (in games).
+
+- Lower values (2.0): Stronger recency bias, recent games matter more
+- Higher values (4.0): Weaker recency bias, longer history considered
 - Default range: 2.0 to 4.0 games
 
-### 3. `N_RECENT` (4, 6, 8)
-**Number of recent games to include in form calculation**
-- Lower values (4) = only very recent games
-- Higher values (8) = longer recent history window
+### 3. N_RECENT (4, 6, 8)
+
+Number of recent games to include in form calculation.
+
+- Lower values (4): Only very recent games
+- Higher values (8): Longer recent history window
 - Default range: 4 to 8 games
 
-### 4. `SOS_STRENGTH` (0.3, 0.45, 0.6)
-**Magnitude of strength-of-schedule adjustment**
-- Lower values (0.3) = weaker SoS effect
-- Higher values (0.6) = stronger SoS effect
+### 4. SOS_STRENGTH (0.3, 0.45, 0.6)
+
+Magnitude of strength-of-schedule adjustment.
+
+- Lower values (0.3): Weaker SoS effect
+- Higher values (0.6): Stronger SoS effect
 - Default range: 0.3 to 0.6
 
-## Workflow
+## Validation Workflow
 
 ### Phase 1: TUNING (on TRAIN data)
 
 1. **Grid Search**: Test all hyperparameter combinations on 2011-2018 data
-2. **Score Each Config**: Run `score_weeks()` for each configuration
-3. **Select Best**: Choose configuration that minimizes calibrated 2-way Brier score
-4. **Tiebreaker**: If Brier scores are tied, choose lower log-loss
+2. **Score Each Config**: Run simulations for each configuration
+3. **Select Best**: Choose configuration minimizing calibrated 2-way Brier score
+4. **Tiebreaker**: If Brier scores tied, choose lower log-loss
 
 **Output**: Best hyperparameters frozen for validation/test
 
@@ -187,8 +162,8 @@ The default grid searches over 4 key hyperparameters:
 
 1. **Apply Frozen Config**: Use best hyperparameters from Phase 1
 2. **Apply Frozen Calibration**: Use calibration from Phase 2
-3. **Score**: Run `score_weeks(2019, 2022)` with frozen settings
-4. **Compare to Market**: Compute Brier/log-loss vs market
+3. **Score**: Run simulations with frozen settings
+4. **Compare to Market**: Compute Brier/log-loss versus market
 
 **Output**: Out-of-sample performance on held-out data
 
@@ -196,8 +171,8 @@ The default grid searches over 4 key hyperparameters:
 
 1. **Apply Frozen Config**: Same hyperparameters from Phase 1
 2. **Apply Frozen Calibration**: Same calibration from Phase 2
-3. **Score**: Run `score_weeks(2023, SEASON)` with frozen settings
-4. **Compare to Market**: Final test performance vs market
+3. **Score**: Run simulations with frozen settings
+4. **Compare to Market**: Final test performance versus market
 
 **Output**: Final test set performance (true out-of-sample)
 
@@ -208,7 +183,7 @@ The default grid searches over 4 key hyperparameters:
 ```
 Performance Summary (Brier scores):
   TRAIN      (2011-2018): 0.2105
-  VALIDATION (2019-2022): 0.2118  ← Small increase is OK
+  VALIDATION (2019-2022): 0.2118  ← Small increase is expected
   TEST       (2023-2024): 0.2112  ← Similar to validation
 
 Market Comparison (Validation):
@@ -218,33 +193,20 @@ Market Comparison (Test):
   Model vs Market delta: +0.0031 Brier  ← Consistent with validation
 ```
 
-**Interpretation**: Model generalizes well. Small increase from TRAIN to VALIDATION/TEST is expected and acceptable. Consistent performance across validation and test indicates stable out-of-sample behavior.
+**Interpretation**: Model generalizes well. The small increase from TRAIN to VALIDATION/TEST is expected and acceptable. Consistent performance across validation and test indicates stable out-of-sample behavior.
 
 ### Overfitting Warning
 
 ```
 Performance Summary (Brier scores):
   TRAIN      (2011-2018): 0.2000  ← Very low
-  VALIDATION (2019-2022): 0.2200  ← Much higher! ⚠️
-  TEST       (2023-2024): 0.2250  ← Even higher! ⚠️
+  VALIDATION (2019-2022): 0.2200  ← Much higher ⚠
+  TEST       (2023-2024): 0.2250  ← Even higher ⚠
 ```
 
-**Interpretation**: Model is overfit to training data. Need to:
-- Reduce model complexity
-- Try simpler hyperparameter values
-- Add regularization
+**Interpretation**: Model is overfit to training data. Consider reducing model complexity, trying simpler hyperparameter values, or adding regularization.
 
 ## Common Tasks
-
-### Load and Analyze Previous Results
-
-```r
-source("validation_pipeline.R")
-source("run_validation_example.R")
-
-# Load most recent validation run
-results <- analyze_previous_results()
-```
 
 ### Apply Best Hyperparameters to Live Simulation
 
@@ -255,7 +217,7 @@ results <- readRDS("run_logs/validation_results_YYYYMMDD_HHMMSS.rds")
 # Apply to global environment
 apply_best_hyperparams(results$tuning$best_params)
 
-# Update config.R manually with these values for future runs
+# Update config.R with these values
 cat("\nUpdate config.R with:\n")
 cat(sprintf("GLMM_BLEND_W <- %.3f\n", results$tuning$best_params$GLMM_BLEND_W))
 cat(sprintf("RECENCY_HALFLIFE <- %.2f\n", results$tuning$best_params$RECENCY_HALFLIFE))
@@ -271,7 +233,7 @@ source("validation_reports.R")
 # Load results
 results <- readRDS("run_logs/validation_results_YYYYMMDD_HHMMSS.rds")
 
-# Generate HTML with phase labels
+# Generate HTML
 report <- generate_validation_report(
   results,
   output_file = "validation_report.html"
@@ -283,14 +245,16 @@ browseURL("validation_report.html")
 
 ## Important Notes
 
-### ⚠️ Data Leakage Prevention
+### Data Leakage Prevention
 
 **NEVER**:
+
 - Train calibration on validation or test data
 - Select hyperparameters based on test performance
 - Modify model based on test results and re-evaluate
 
 **ALWAYS**:
+
 - Use TRAIN data only for hyperparameter selection and calibration
 - Keep validation and test sets completely frozen
 - Report all three phases (train/valid/test) in results
@@ -303,20 +267,21 @@ The existing calibration system in `NFLsimulation.R` uses:
 2. **Nested CV isotonic mapping** (`isotonic_mappings`): Leave-one-week-out for backtesting
 3. **3-way multinomial** (`cal3`): For tie probabilities
 
-The `build_calibration()` function captures these objects after running `score_weeks()` on the training window. These calibration objects are then frozen and reused for validation/test without refitting.
+The `build_calibration()` function captures these objects after running simulations on the training window. These objects are then frozen and reused for validation/test without refitting.
 
 ### Caching
 
-The existing `score_weeks()` function uses disk caching. This means:
+The `score_weeks()` function uses disk caching. This means:
+
 - First run of a configuration: Full simulation (slow)
 - Subsequent runs: Cache hit (fast)
-- Cache key includes: season range, weeks, trials, seed, RHO_SCORE
+- Cache key includes: season range, weeks, trials, seed, and key parameters
 
-If you change hyperparameters that affect simulation (like `N_RECENT`), the cache will miss and re-simulate.
+If you change hyperparameters that affect simulation, the cache will miss and re-simulate.
 
 ## File Outputs
 
-All validation runs save results to `run_logs/` directory:
+All validation runs save results to the `run_logs/` directory:
 
 ```
 run_logs/
@@ -338,10 +303,10 @@ run_logs/
 **Cause**: Large grid with many combinations
 
 **Solutions**:
+
 1. Use `run_quick_validation()` with small grid
 2. Reduce grid size by fixing some parameters
 3. Reduce `BACKTEST_TRIALS` (but increases variance)
-4. Use parallel processing (not yet implemented)
 
 ### Market comparison returns empty
 
@@ -370,8 +335,6 @@ run_logs/
 
 5. **Use for Live Predictions**: Run `NFLsimulation.R` with tuned hyperparameters
 
-## Questions?
+---
 
-- Check example scripts in `run_validation_example.R`
-- Review function documentation in `validation_pipeline.R`
-- See reporting options in `validation_reports.R`
+For more information on model architecture, validation methodology, and performance benchmarks, see [README.md](README.md).

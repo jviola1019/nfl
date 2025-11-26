@@ -2259,7 +2259,35 @@ if (file.exists("config.R")) {
   DEN_ALTITUDE_BONUS <- 0.0
   DIVISION_GAME_ADJUST   <- -0.2
   CONFERENCE_GAME_ADJUST <- 0.0
+
+  # Weather parameters
+  DOME_BONUS_TOTAL <- 0.8
+  OUTDOOR_WIND_PEN <- -1.0
+  COLD_TEMP_PEN    <- -0.5
+  RAIN_SNOW_PEN    <- -0.8
+  WIND_IMPACT      <- -0.08
+  COLD_IMPACT      <- -0.15
+  PRECIP_IMPACT    <- -1.5
 }
+
+# =============================================================================
+# Parameter Validation - Catch missing required parameters early
+# =============================================================================
+
+# Validate all required parameters exist
+.required_params <- c(
+  "SEASON", "WEEK_TO_SIM", "N_TRIALS", "N_RECENT", "SEED",
+  "GLMM_BLEND_W", "SOS_STRENGTH", "RECENCY_HALFLIFE",
+  "REST_SHORT_PENALTY", "BYE_BONUS", "DIVISION_GAME_ADJUST",
+  "DOME_BONUS_TOTAL", "OUTDOOR_WIND_PEN", "COLD_TEMP_PEN", "RAIN_SNOW_PEN",
+  "WIND_IMPACT", "COLD_IMPACT", "PRECIP_IMPACT"
+)
+.missing_params <- .required_params[!sapply(.required_params, exists, envir = .GlobalEnv)]
+if (length(.missing_params)) {
+  stop("Missing required config parameters: ", paste(.missing_params, collapse = ", "),
+       "\nEnsure config.R defines and exports all required parameters.", call. = FALSE)
+}
+rm(.required_params, .missing_params)
 
 # =============================================================================
 # Parameters below are set by config.R or fallback defaults above
@@ -2267,6 +2295,7 @@ if (file.exists("config.R")) {
 # =============================================================================
 
 # Player availability impact scalars (points per aggregated severity unit)
+# These are derived from INJURY_WEIGHT_* parameters in config.R
 SKILL_AVAIL_POINT_PER_FLAG     <- 0.55
 TRENCH_AVAIL_POINT_PER_FLAG    <- 0.65
 SECONDARY_AVAIL_POINT_PER_FLAG <- 0.45

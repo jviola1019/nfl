@@ -29,23 +29,7 @@ if (!exists("PREDICTION_JOIN_KEYS", inherits = FALSE)) {
 # ------------------------------------------------------------------------------
 # General-purpose helpers -------------------------------------------------------
 # ------------------------------------------------------------------------------
-
-# NOTE: This helper is also defined in NFLbrier_logloss.R (lines 14-27)
-# Intentionally duplicated to avoid external dependencies
-first_non_missing_typed <- function(x) {
-  if (!length(x)) {
-    return(x)
-  }
-  is_valid <- if (is.numeric(x)) {
-    which(is.finite(x))
-  } else {
-    which(!is.na(x))
-  }
-  if (!length(is_valid)) {
-    return(x[NA_integer_])
-  }
-  x[[is_valid[1L]]]
-}
+# Note: first_non_missing_typed() is defined in NFLbrier_logloss.R (sourced above)
 
 collapse_by_keys_relaxed <- function(df, keys, label = "data frame") {
   if (is.null(df) || !nrow(df) || !length(keys)) {

@@ -8,6 +8,19 @@
 #
 # =============================================================================
 
+# Ensure required packages are available
+if (!requireNamespace("lubridate", quietly = TRUE)) {
+  message("Installing required package: lubridate")
+  install.packages("lubridate", repos = "https://cloud.r-project.org/")
+}
+suppressPackageStartupMessages(library(lubridate))
+
+# Minimum R version check
+if (getRversion() < "4.0.0") {
+  warning("This model is tested on R 4.0+. You are running R ", getRversion(),
+          ". Some features may not work correctly.", call. = FALSE)
+}
+
 # =============================================================================
 # PRIMARY CONFIGURATION - CHANGE THESE TO RUN DIFFERENT WEEKS
 # =============================================================================
@@ -210,6 +223,29 @@ COLD_IMPACT <- -0.15
 #' @default -1.5
 PRECIP_IMPACT <- -1.5
 
+#' @description Dome bonus for total points (indoor games score higher)
+#' @default 0.8
+#' @range 0.4 to 1.2
+#' @validation Empirical; should be validated via cross-validation
+DOME_BONUS_TOTAL <- 0.8
+
+#' @description Outdoor wind penalty for totals
+#' @default -1.0
+#' @range -1.4 to -0.6
+#' @validation Empirical; should be validated via cross-validation
+OUTDOOR_WIND_PEN <- -1.0
+
+#' @description Cold temperature penalty (below 35°F)
+#' @default -0.5
+#' @validation Empirical; should be validated via cross-validation
+COLD_TEMP_PEN <- -0.5
+
+#' @description Rain/snow precipitation penalty
+#' @default -0.8
+#' @range -1.2 to -0.4
+#' @validation Empirical; should be validated via cross-validation
+RAIN_SNOW_PEN <- -0.8
+
 # =============================================================================
 # OUTPUT AND REPORTING
 # =============================================================================
@@ -340,6 +376,10 @@ list2env(
     WIND_IMPACT = WIND_IMPACT,
     COLD_IMPACT = COLD_IMPACT,
     PRECIP_IMPACT = PRECIP_IMPACT,
+    DOME_BONUS_TOTAL = DOME_BONUS_TOTAL,
+    OUTDOOR_WIND_PEN = OUTDOOR_WIND_PEN,
+    COLD_TEMP_PEN = COLD_TEMP_PEN,
+    RAIN_SNOW_PEN = RAIN_SNOW_PEN,
     OUTPUT_DIR = OUTPUT_DIR,
     SAVE_DETAILED_RESULTS = SAVE_DETAILED_RESULTS,
     GENERATE_HTML_REPORTS = GENERATE_HTML_REPORTS,
