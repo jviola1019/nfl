@@ -4148,6 +4148,7 @@ momentum_metrics <- sched %>%
     margin = ifelse(location == "home_team", home_margin, -home_margin),
     won = margin > 0
   ) %>%
+  dplyr::select(-location) %>%  # Remove location column to prevent duplicates in joins
   dplyr::group_by(team) %>%
   dplyr::arrange(game_date) %>%
   dplyr::mutate(
@@ -4187,6 +4188,7 @@ division_performance <- sched %>%
   dplyr::mutate(
     margin = ifelse(location == "home_team", home_margin, -home_margin)
   ) %>%
+  dplyr::select(-location) %>%  # Remove location column to prevent duplicates in joins
   dplyr::group_by(team) %>%
   dplyr::summarise(
     div_game_margin_avg = mean(margin, na.rm = TRUE),
@@ -4220,6 +4222,7 @@ post_bye_performance <- sched %>%
                     home_score - away_score,
                     away_score - home_score)
   ) %>%
+  dplyr::select(-location) %>%  # Remove location column to prevent duplicates in joins
   dplyr::filter(had_bye) %>%
   dplyr::group_by(team) %>%
   dplyr::summarise(
