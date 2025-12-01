@@ -3082,6 +3082,9 @@ team_games_away <- sched_std |>
 team_games <- bind_rows(team_games_home, team_games_away) |>
   arrange(game_date)
 
+# Initialize RHO_SCORE (score correlation parameter) if not already defined
+if (!exists("RHO_SCORE")) RHO_SCORE <- NA_real_
+
 # Estimate league rho from data
 if (is.na(RHO_SCORE)) {
   score_pairs <- sched_std |>
