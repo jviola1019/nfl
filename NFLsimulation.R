@@ -2722,12 +2722,20 @@ if (nrow(week_slate) == 0) stop(sprintf("No games found for %s Wk %s.", SEASON, 
 teams_on_slate <- sort(unique(c(week_slate$home_team, week_slate$away_team)))
 
 # =============================== INJURIES (schema-agnostic + safe) ===============================
-# Prefer nflfastR injury scraping with nflreadr fallback when necessary.
+# Load injury data with multiple fallback sources
+# Data sources (in order of preference):
+# 1. nflreadr::load_injuries() - Primary source (recommended as of 2025)
+#    https://nflreadr.nflverse.com/reference/load_injuries.html
+# 2. nflfastR::fast_scraper_injuries() - Alternative scraper
+# 3. Returns empty tibble if no data available (model defaults to zero injury impact)
 safe_load_injuries <- function(seasons, prefer_fast = TRUE, ...) {
   seasons <- sort(unique(seasons))
   if (!length(seasons)) {
+    message("No seasons specified for injury data; returning empty tibble.")
     return(tibble::tibble())
   }
+
+  message(sprintf("Loading injury data for seasons: %s", paste(seasons, collapse = ", ")))
 
   use_fast <- isTRUE(prefer_fast) && requireNamespace("nflfastR", quietly = TRUE)
   if (isTRUE(prefer_fast) && !use_fast) {
@@ -2808,18 +2816,28 @@ safe_load_injuries <- function(seasons, prefer_fast = TRUE, ...) {
     }
 
     tryCatch(
-      nflreadr::load_injuries(seasons = season, ...),
+      {
+        result <- nflreadr::load_injuries(seasons = season, ...)
+        if (is.data.frame(result) && nrow(result) > 0) {
+          message(sprintf("✓ Loaded %d injury records for season %s from nflreadr", nrow(result), season))
+        }
+        result
+      },
       error = function(e) {
         msg <- conditionMessage(e)
-        if (grepl("404", msg, fixed = TRUE)) {
+        if (grepl("404", msg, fixed = TRUE) || grepl("not found", msg, ignore.case = TRUE)) {
           missing <<- c(missing, season)
           message(sprintf(
-            "Injury release for season %s is unavailable yet; skipping it.",
+            "Injury release for season %s is unavailable yet; model will use zero injury impact for this season.",
             season
           ))
           return(tibble::tibble())
         }
-        stop(e)
+        warning(sprintf(
+          "nflreadr::load_injuries failed for season %s (%s). Model will use zero injury impact.",
+          season, msg
+        ), call. = FALSE)
+        return(tibble::tibble())
       }
     )
   })
@@ -2827,13 +2845,20 @@ safe_load_injuries <- function(seasons, prefer_fast = TRUE, ...) {
   injuries <- dplyr::bind_rows(pieces)
 
   if (length(missing)) {
-    warning(
+    message(
       sprintf(
-        "Injury releases missing for seasons: %s. Downstream metrics will omit those seasons.",
+        "ℹ Injury data not available for seasons: %s. Model will use zero injury impact for these seasons.",
         paste(missing, collapse = ", ")
-      ),
-      call. = FALSE
+      )
     )
+  }
+
+  if (nrow(injuries) == 0) {
+    message("⚠ No injury data loaded. Model will run with zero injury impact for all teams.")
+    message("  To get injury data, ensure nflreadr is updated: install.packages('nflreadr')")
+    message("  Source: https://nflreadr.nflverse.com/reference/load_injuries.html")
+  } else {
+    message(sprintf("✓ Successfully loaded %d total injury records", nrow(injuries)))
   }
 
   injuries
@@ -4138,6 +4163,7 @@ momentum_metrics <- sched %>%
     home_pts = home_score, away_pts = away_score,
     home_margin = home_score - away_score
   ) %>%
+  dplyr::select(-any_of("location")) %>%  # Remove any existing location column before pivot
   tidyr::pivot_longer(
     cols = c(home_team, away_team),
     names_to = "location",
@@ -4180,6 +4206,7 @@ division_performance <- sched %>%
     home_team, away_team,
     home_margin = home_score - away_score
   ) %>%
+  dplyr::select(-any_of("location")) %>%  # Remove any existing location column before pivot
   tidyr::pivot_longer(
     cols = c(home_team, away_team),
     names_to = "location",
@@ -4211,6 +4238,7 @@ post_bye_performance <- sched %>%
   ) %>%
   dplyr::ungroup() %>%
   dplyr::filter(home_had_bye | away_had_bye) %>%
+  dplyr::select(-any_of("location")) %>%  # Remove any existing location column before pivot
   tidyr::pivot_longer(
     cols = c(home_team, away_team),
     names_to = "location",
@@ -5942,12 +5970,7 @@ score_weeks <- function(start_season, end_season, weeks = NULL, trials = 40000L)
 .clp <- function(x, eps=1e-12) pmin(pmax(x, eps), 1-eps)
 .lgt <- function(p) log(p/(1-p))
 .inv <- function(z) 1/(1+exp(-z))
-american_to_probability <- function(odds) {
-  ifelse(
-    is.na(odds) | odds == 0, NA_real_,
-    ifelse(odds < 0, (-odds)/((-odds)+100), 100/(odds+100))
-  )
-}
+# Note: american_to_probability() is defined in NFLmarket.R (sourced above)
 
 align_blend_with_margin <- function(p_blend,
                                     margin_mean,
@@ -6721,8 +6744,7 @@ make_calibrator <- function(method, p, y, weights = NULL) {
   }
 }
 
-# weeks 'ago' from (S,W) for recency weights (approx 18 weeks/season)
-weeks_ago <- function(season, week, S, W) (S - season) * 18 + (W - week)
+# Note: weeks_ago function already defined above at line 6698
 
 cw <- sched %>% dplyr::filter(game_type %in% c("REG","Regular")) %>%
   dplyr::arrange(season, week) %>% dplyr::distinct(season, week)
