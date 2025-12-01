@@ -4151,10 +4151,18 @@ momentum_metrics <- sched %>%
   dplyr::group_by(team) %>%
   dplyr::arrange(game_date) %>%
   dplyr::mutate(
-    # 3-game rolling averages (manual implementation for R 4.5.1 compatibility)
-    momentum_ppg = (points + dplyr::lag(points, 1, default = points) + dplyr::lag(points, 2, default = points)) / 3,
-    momentum_margin = (margin + dplyr::lag(margin, 1, default = margin) + dplyr::lag(margin, 2, default = margin)) / 3,
-    momentum_win_rate = (as.numeric(won) + dplyr::lag(as.numeric(won), 1, default = 0) + dplyr::lag(as.numeric(won), 2, default = 0)) / 3
+    # 3-game rolling averages (R 4.5.1 compatible - use scalar defaults)
+    # For first 1-2 games, use current value when lag is NA
+    lag1_points = dplyr::lag(points, 1, default = NA_real_),
+    lag2_points = dplyr::lag(points, 2, default = NA_real_),
+    lag1_margin = dplyr::lag(margin, 1, default = NA_real_),
+    lag2_margin = dplyr::lag(margin, 2, default = NA_real_),
+    lag1_won = dplyr::lag(as.numeric(won), 1, default = NA_real_),
+    lag2_won = dplyr::lag(as.numeric(won), 2, default = NA_real_),
+
+    momentum_ppg = (points + coalesce(lag1_points, points) + coalesce(lag2_points, points)) / 3,
+    momentum_margin = (margin + coalesce(lag1_margin, margin) + coalesce(lag2_margin, margin)) / 3,
+    momentum_win_rate = (as.numeric(won) + coalesce(lag1_won, 0) + coalesce(lag2_won, 0)) / 3
   ) %>%
   dplyr::ungroup() %>%
   dplyr::group_by(team) %>%
