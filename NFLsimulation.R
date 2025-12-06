@@ -2567,6 +2567,23 @@ sched <- sched %>%
     game_type = game_type_std
   )
 
+# Add division/conference indicators to full schedule (not just week_slate)
+if (nrow(team_info) > 0) {
+  sched <- sched %>%
+    dplyr::left_join(team_info %>% dplyr::rename(home_division = team_division, home_conf = team_conf),
+                     by = c("home_team" = "team")) %>%
+    dplyr::left_join(team_info %>% dplyr::rename(away_division = team_division, away_conf = team_conf),
+                     by = c("away_team" = "team")) %>%
+    dplyr::mutate(
+      division_game = !is.na(home_division) & !is.na(away_division) & home_division == away_division,
+      conference_game = !is.na(home_conf) & !is.na(away_conf) & home_conf == away_conf
+    ) %>%
+    dplyr::select(-home_division, -away_division, -home_conf, -away_conf)
+} else {
+  sched <- sched %>%
+    dplyr::mutate(division_game = FALSE, conference_game = FALSE)
+}
+
 sched <- standardize_join_keys(sched)
 
 sched <- collapse_by_keys_strict(
@@ -4201,7 +4218,7 @@ momentum_metrics <- sched %>%
 
 # Division game performance (familiarity effects)
 division_performance <- sched %>%
-  dplyr::filter(game_completed, game_type == "REG", div_game == TRUE) %>%
+  dplyr::filter(game_completed, game_type == "REG", division_game == TRUE) %>%
   dplyr::transmute(
     home_team, away_team,
     home_margin = home_score - away_score
@@ -4380,9 +4397,9 @@ games_ready <- games_ready %>%
     momentum_home = 0.15 * coalesce(home_momentum, 0) + 0.5 * coalesce(home_hot, 0),
     momentum_away = 0.15 * coalesce(away_momentum, 0) + 0.5 * coalesce(away_hot, 0),
 
-    # Division game adjustment (if div_game, use historical performance)
-    div_adjustment_home = ifelse(div_game, 0.25 * coalesce(home_div_margin, 0), 0),
-    div_adjustment_away = ifelse(div_game, 0.25 * coalesce(away_div_margin, 0), 0),
+    # Division game adjustment (if division_game, use historical performance)
+    div_adjustment_home = ifelse(division_game, 0.25 * coalesce(home_div_margin, 0), 0),
+    div_adjustment_away = ifelse(division_game, 0.25 * coalesce(away_div_margin, 0), 0),
 
     # Post-bye adjustment (if team had bye last week)
     # This will be applied in the rest calculation section that already exists
