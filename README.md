@@ -13,7 +13,7 @@ A production-ready statistical model for predicting NFL game outcomes using Mont
 **Choose your guide based on your needs**:
 
 1. **🚀 [GETTING_STARTED.md](GETTING_STARTED.md)** - Start here!
-   - 5-minute quick start
+   - 5-minute extra detailed quick start
    - IDE setup (RStudio + VS Code)
    - Common workflows and troubleshooting
    - Perfect for beginners
@@ -180,13 +180,29 @@ Rscript professional_model_benchmarking.R  # vs FiveThirtyEight/ESPN
 
 ## File Structure
 
-**Core files**:
-- `config.R` - All settings
-- `NFLsimulation.R` - Main prediction engine
-- `NFLmarket.R` - Market comparison tools
-- `NFLbrier_logloss.R` - Evaluation metrics
+### Core Files (Run These)
+- **`config.R`** - All model parameters and settings
+- **`NFLsimulation.R`** - Main prediction engine (run this for predictions)
+- **`NFLmarket.R`** - Market comparison and betting analysis utilities
+- **`NFLbrier_logloss.R`** - Model evaluation metrics
 
-**See [DOCUMENTATION.md](DOCUMENTATION.md#file-reference-table) for complete file reference (20 R files, 6 documentation files).**
+### Validation Files (Test Model Performance)
+- **`validation_pipeline.R`** - Hyperparameter tuning and cross-validation
+- **`model_validation.R`** - Statistical significance testing
+- **`injury_model_validation.R`** - Injury impact validation
+- **`professional_model_benchmarking.R`** - Compare to FiveThirtyEight/ESPN
+- **`calibration_refinement.R`** - Probability calibration analysis
+
+### Documentation
+- **`README.md`** - This file (beginner guide)
+- **`GETTING_STARTED.md`** - Further detailed beginner guide for both RStudio and VS Code
+- **`DOCUMENTATION.md`** - Detailed code architecture/Validation methodology
+- **`UPDATES.md`** - Update logs 
+- **`RESULTS.md`** - Detailed validation results and statistical tests
+
+### Utility Files
+- **`r451_compatibility_fixes.R`** - R 4.5.1 compatibility patches
+- **`final_verification_checklist.R`** - Pre-deployment checks
 
 ---
 
