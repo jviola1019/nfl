@@ -4377,10 +4377,11 @@ games_ready <- games_ready %>%
     third_down_edge_home = 10 * (coalesce(home_3rd_conv, 0.40) - coalesce(away_3rd_def, 0.40)),
     third_down_edge_away = 10 * (coalesce(away_3rd_conv, 0.40) - coalesce(home_3rd_def, 0.40)),
 
-    # Turnover impact (each TO worth ~4 pts, apply conservatively)
-    to_edge_home = 40 * (coalesce(away_to_rate, 0.03) - coalesce(home_to_rate, 0.03) +
+    # Turnover impact (p = 0.051, marginally significant - reduced weight to avoid overfitting)
+    # Reduced from 40 to 20 (50% reduction) due to weak statistical significance
+    to_edge_home = 20 * (coalesce(away_to_rate, 0.03) - coalesce(home_to_rate, 0.03) +
                          coalesce(home_forced_to, 0.03) - coalesce(away_forced_to, 0.03)),
-    to_edge_away = 40 * (coalesce(home_to_rate, 0.03) - coalesce(away_to_rate, 0.03) +
+    to_edge_away = 20 * (coalesce(home_to_rate, 0.03) - coalesce(away_to_rate, 0.03) +
                          coalesce(away_forced_to, 0.03) - coalesce(home_forced_to, 0.03)),
 
     # Penalty impact (conservative - penalties kill ~0.3 drives per 1% rate increase)
@@ -4404,11 +4405,12 @@ games_ready <- games_ready %>%
     # Post-bye adjustment (if team had bye last week)
     # This will be applied in the rest calculation section that already exists
 
-    # Apply all adjustments with Bayesian shrinkage (0.6 weight to avoid overfitting)
-    mu_home = pmax(mu_home + 0.6 * (rz_impact_home + st_impact_home + home_location_boost +
+    # Apply all adjustments with Bayesian shrinkage (0.7 weight to avoid overfitting)
+    # Increased from 0.6 to 0.7 to reduce overfitting risk with many features
+    mu_home = pmax(mu_home + 0.7 * (rz_impact_home + st_impact_home + home_location_boost +
                                      third_down_edge_home + to_edge_home + penalty_edge_home +
                                      situational_home + momentum_home + div_adjustment_home), 0),
-    mu_away = pmax(mu_away + 0.6 * (rz_impact_away + st_impact_away + away_location_penalty +
+    mu_away = pmax(mu_away + 0.7 * (rz_impact_away + st_impact_away + away_location_penalty +
                                      third_down_edge_away + to_edge_away + penalty_edge_away +
                                      situational_away + momentum_away + div_adjustment_away), 0)
   )
@@ -4430,6 +4432,11 @@ games_ready <- games_ready |>
     sd_away  = 0.6 * sd_away + 0.4 * (sd_goal / sqrt(2)),
     sd_home  = pmax(sd_home, 5.0),
     sd_away  = pmax(sd_away, 5.0)
+  ) |>
+  # Calculate negative binomial size parameters for prediction intervals
+  dplyr::mutate(
+    k_home = purrr::map2_dbl(mu_home, sd_home, nb_size_from_musd),
+    k_away = purrr::map2_dbl(mu_away, sd_away, nb_size_from_musd)
   )
 
 # Game-specific score correlation (rho): higher totals -> more positive correlation; larger mismatch -> less correlation
