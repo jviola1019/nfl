@@ -13,7 +13,7 @@ A production-ready statistical model for predicting NFL game outcomes using Mont
 **Choose your guide based on your needs**:
 
 1. **🚀 [GETTING_STARTED.md](GETTING_STARTED.md)** - Start here!
-   - 5-minute quick start
+   - 5-minute extra detailed quick start
    - IDE setup (RStudio + VS Code)
    - Common workflows and troubleshooting
    - Perfect for beginners
@@ -338,8 +338,9 @@ install.packages("lubridate")
 
 ### Documentation
 - **`README.md`** - This file (beginner guide)
-- **`TECHNICAL_DOCUMENTATION.md`** - Detailed code architecture
-- **`VALIDATION_README.md`** - Validation methodology
+- **`GETTING_STARTED.md`** - Further detailed beginner guide for both RStudio and VS Code
+- **`DOCUMENTATION.md`** - Detailed code architecture/Validation methodology
+- **`UPDATES.md`** - Update logs 
 - **`RESULTS.md`** - Detailed validation results and statistical tests
 
 ### Utility Files
