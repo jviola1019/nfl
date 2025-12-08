@@ -36,102 +36,34 @@ A production-ready statistical model for predicting NFL game outcomes using Mont
 
 ## Quick Start
 
-### 1. Install R and Required Packages
+**Ready to run predictions?** See **[GETTING_STARTED.md](GETTING_STARTED.md)** for:
+- Complete installation guide (5 minutes)
+- IDE setup (RStudio + VS Code)
+- Running your first prediction
+- Understanding output and troubleshooting
 
-This model requires R version 4.5.1 or higher. Install required packages by running:
-
-```r
-source("config.R")
-```
-
-The configuration file will automatically install missing packages (tidyverse, nflreadr, lubridate, etc.).
-
-### 2. Run Predictions for Any Week
-
-To predict games for a specific week, edit `config.R` and change line 37:
-
-```r
-WEEK_TO_SIM <- 13  # Change this number (1-18 for regular season)
-```
-
-Then run the main simulation:
-
+**Quick command** (if already set up):
 ```bash
+# Edit WEEK_TO_SIM in config.R, then:
 Rscript NFLsimulation.R
-```
-
-The model will:
-1. Load current season data from nflverse
-2. Calculate team statistics and strength of schedule
-3. Load injury reports and weather forecasts
-4. Run 100,000 Monte Carlo simulations per game
-5. Output predictions with win probabilities
-
-### 3. Understanding the Output
-
-The model generates predictions including:
-- **Win probability** for each team (0-100%)
-- **Predicted score** for both teams
-- **Point spread** (positive favors home team)
-- **Confidence intervals** (90% range of likely scores)
-
-Example output:
-```
-Game: KC vs BUF
-Home Win Probability: 58.3%
-Predicted Score: KC 24.2, BUF 21.7
-Spread: KC -2.5
 ```
 
 ---
 
 ## Model Accuracy
 
-### Performance Metrics (2022-2024 Seasons)
+**Performance** (2022-2024, 2,282 games):
+- **Brier Score**: 0.211 (Vegas: 0.208) - Near-market accuracy
+- **Accuracy**: 67.1% (2 out of 3 games correct)
+- **RMSE**: 10.82 points (within target)
 
-The model was rigorously tested on three full NFL seasons using cross-validation:
+**Rankings**:
+1. Vegas Market: 0.208 Brier
+2. **This Model: 0.211 Brier** (100% data-driven)
+3. FiveThirtyEight: 0.215 Brier
+4. ESPN FPI: 0.218 Brier
 
-**Primary Metrics:**
-- **Brier Score**: 0.211 *(lower is better, range: 0-1)*
-  - Measures accuracy of probability predictions
-  - Market baseline (Vegas): 0.208
-  - Beat FiveThirtyEight (0.215) and ESPN FPI (0.218)
-
-- **Log-Loss**: 0.614 *(lower is better)*
-  - Penalizes confident wrong predictions more heavily
-  - Industry standard for probability model evaluation
-
-- **Accuracy**: 67.1% correct predictions
-  - 1,531 correct out of 2,282 games tested
-  - Market baseline (Vegas): 68.2%
-
-- **RMSE**: 10.82 ± 0.43 points
-  - Average prediction error on final score
-  - Within target threshold (<11 points)
-
-**Calibration:**
-- **Isotonic regression** applied for probability calibration
-- Reduced Brier score by 1.7% (0.215 → 0.211)
-- Ensures predicted probabilities match actual outcomes
-
-### What These Numbers Mean
-
-**Brier Score (0.211)**: When the model says a team has a 70% chance to win, they actually win about 70% of the time. A Brier score of 0.211 means the model's probability predictions are highly reliable, only 0.003 points behind the Vegas betting market.
-
-**67.1% Accuracy**: The model correctly predicts the winning team in roughly 2 out of every 3 games. This is competitive with professional prediction services.
-
-**Log-Loss (0.614)**: The model assigns appropriate confidence to its predictions without being overconfident or underconfident.
-
-### Comparison to Professional Models
-
-| Rank | Model | Brier Score | Accuracy | Notes |
-|------|-------|-------------|----------|-------|
-| 1 | Vegas Betting Market | 0.208 | 68.2% | Incorporates betting money |
-| **2** | **This Model** | **0.211** | **67.1%** | **100% data-driven** |
-| 3 | FiveThirtyEight ELO | 0.215 | 65.8% | Public model |
-| 4 | ESPN FPI | 0.218 | 64.5% | Public model |
-
-**Key Insight**: This model achieves professional-grade accuracy using only publicly available statistical data, without insider information or betting market adjustments.
+**See [RESULTS.md](RESULTS.md) for complete validation results and statistical tests.**
 
 ---
 
@@ -205,146 +137,56 @@ Raw model probabilities are adjusted using isotonic regression to ensure they ma
 
 ## Configuration
 
-All settings are in `config.R`. Key parameters:
+Edit `config.R` to change settings:
 
-### Basic Settings
 ```r
 SEASON <- 2025              # Current season
 WEEK_TO_SIM <- 12          # Week to predict (1-18)
-N_TRIALS <- 100000         # Simulation count (higher = more accurate)
+N_TRIALS <- 100000         # Simulation count
 ```
 
-### Model Weights (All Statistically Validated)
-```r
-# Team Strength
-GLMM_BLEND_W <- 0.38       # Weight for hierarchical model (p < 0.001)
-SOS_STRENGTH <- 0.45       # Strength of schedule factor (p < 0.001)
-RECENCY_HALFLIFE <- 3.0    # Recent games weighted more (p < 0.001)
-
-# Rest & Recovery
-REST_SHORT_PENALTY <- -0.85  # Short rest (Thu/Mon games) (p = 0.003)
-BYE_BONUS <- +1.0            # Post-bye week bonus (p = 0.009)
-
-# Injuries (all p < 0.01)
-INJURY_WEIGHT_SKILL <- 0.55      # WR/RB/TE impact
-INJURY_WEIGHT_TRENCH <- 0.65     # OL/DL impact
-INJURY_WEIGHT_SECONDARY <- 0.45  # CB/S impact
-QB_INJURY_MULTIPLIER <- 1.5      # QB impact multiplier
-
-# Weather (all p < 0.05)
-DOME_BONUS_TOTAL <- 0.8        # Indoor scoring boost
-OUTDOOR_WIND_PEN <- -1.0       # Wind penalty
-COLD_TEMP_PEN <- -0.5          # Cold weather penalty
-RAIN_SNOW_PEN <- -0.8          # Precipitation penalty
-```
-
-**Important**: All parameter values are determined by statistical testing. Do not change these values unless you re-run the validation pipeline.
+All model parameters (injuries, weather, rest, etc.) are statistically validated (p < 0.05). **See [DOCUMENTATION.md](DOCUMENTATION.md) for complete parameter details.**
 
 ---
 
 ## Statistical Validation
 
-### Which Variables Are Included?
+All model parameters tested using:
+- 10-fold cross-validation (2,282 games, 2022-2024)
+- Permutation testing (p < 0.05 required)
+- Effect size analysis
 
-Every adjustment in this model was tested using:
-- **10-fold cross-validation** on 2,282 historical games (2022-2024)
-- **Permutation testing** to establish statistical significance
-- **Effect size analysis** to ensure practical importance
-
-**Inclusion Criteria:**
-- p-value < 0.05 (95% confidence that effect is real)
-- Brier score improvement > 0.001 (measurable accuracy gain)
-
-**Variables EXCLUDED** (not statistically significant):
-- Long rest bonus (p = 0.182) → set to 0.0
-- Denver altitude advantage (p = 0.183) → set to 0.0
-- Conference game adjustment (p = 0.421) → set to 0.0
-
-This ensures the model includes only factors that genuinely improve predictions, preventing overfitting.
-
-### Validation Files
-
-Run these scripts to verify model performance:
-
+**Validation scripts**:
 ```bash
-# Full validation pipeline (hyperparameter tuning + cross-validation)
-Rscript validation_pipeline.R
-
-# Detailed injury model validation
-Rscript injury_model_validation.R
-
-# Benchmark against FiveThirtyEight and ESPN FPI
-Rscript professional_model_benchmarking.R
-
-# Calibration refinement analysis
-Rscript calibration_refinement.R
+Rscript validation_pipeline.R              # Hyperparameter tuning
+Rscript injury_model_validation.R          # Injury impacts
+Rscript professional_model_benchmarking.R  # vs FiveThirtyEight/ESPN
 ```
 
-Each validation script generates detailed reports showing statistical significance, effect sizes, and confidence intervals.
+**See [RESULTS.md](RESULTS.md) and [VALIDATION_README.md](VALIDATION_README.md) for complete validation methodology.**
 
 ---
 
 ## Troubleshooting
 
-### Common Issues
+**Common issues and detailed troubleshooting**: See **[GETTING_STARTED.md](GETTING_STARTED.md#troubleshooting)**
 
-**Error: "could not find function 'year'"**
-```r
-# Install lubridate package
-install.packages("lubridate")
-```
-
-**Error: "object 'RHO_SCORE' not found"**
-- This is fixed in the current version
-- Ensure you're using the latest code from this repository
-
-**Error: "Names must be unique - 'location' duplicated"**
-- This is fixed in the current version
-- Update to the latest NFLsimulation.R
-
-**No injury data loaded**
-- The model will still run with zero injury impact
-- Update nflreadr package: `install.packages("nflreadr")`
-- See injury loading messages for details
-
-**Predictions seem off**
-- Check that WEEK_TO_SIM matches the current week
-- Verify season year in config.R is correct
-- Ensure nflverse data is up-to-date (may take 1-2 days after games)
-
-### Getting Help
-
-1. Check `TECHNICAL_DOCUMENTATION.md` for detailed architecture
-2. Review validation output in `VALIDATION_README.md`
-3. Examine the code comments in each R file
-4. Open an issue on GitHub with your error message
+**Quick fixes**:
+- `"could not find function 'year'"`: Install lubridate → `install.packages("lubridate")`
+- `"object 'season' not found"`: Fixed in current version (v2.0)
+- No predictions: Check `WEEK_TO_SIM` and `SEASON` in config.R
 
 ---
 
 ## File Structure
 
-### Core Files (Run These)
-- **`config.R`** - All model parameters and settings
-- **`NFLsimulation.R`** - Main prediction engine (run this for predictions)
-- **`NFLmarket.R`** - Market comparison and betting analysis utilities
-- **`NFLbrier_logloss.R`** - Model evaluation metrics
+**Core files**:
+- `config.R` - All settings
+- `NFLsimulation.R` - Main prediction engine
+- `NFLmarket.R` - Market comparison tools
+- `NFLbrier_logloss.R` - Evaluation metrics
 
-### Validation Files (Test Model Performance)
-- **`validation_pipeline.R`** - Hyperparameter tuning and cross-validation
-- **`model_validation.R`** - Statistical significance testing
-- **`injury_model_validation.R`** - Injury impact validation
-- **`professional_model_benchmarking.R`** - Compare to FiveThirtyEight/ESPN
-- **`calibration_refinement.R`** - Probability calibration analysis
-
-### Documentation
-- **`README.md`** - This file (beginner guide)
-- **`TECHNICAL_DOCUMENTATION.md`** - Detailed code architecture
-- **`VALIDATION_README.md`** - Validation methodology
-- **`RESULTS.md`** - Detailed validation results and statistical tests
-
-### Utility Files
-- **`r451_compatibility_fixes.R`** - R 4.5.1 compatibility patches
-- **`final_verification_checklist.R`** - Pre-deployment checks
+**See [DOCUMENTATION.md](DOCUMENTATION.md#file-reference-table) for complete file reference (20 R files, 6 documentation files).**
 
 ---
 
@@ -377,19 +219,11 @@ The model uses nflreadr as the primary source:
 
 ## Requirements
 
-### System Requirements
-- **R Version**: 4.5.1 or higher (required for compatibility)
-- **RAM**: 8 GB minimum, 16 GB recommended
-- **Storage**: 2 GB for historical data cache
-- **Internet**: Required for downloading nflverse data
+- **R Version**: 4.5.1+ (required)
+- **RAM**: 8 GB minimum
+- **Packages**: Auto-installed by config.R (tidyverse, nflreadr, lubridate, glmnet, lme4)
 
-### R Packages (Auto-installed by config.R)
-- tidyverse (data manipulation)
-- nflreadr (NFL data source)
-- lubridate (date handling)
-- glmnet (model fitting)
-- lme4 (hierarchical modeling)
-- purrr (functional programming)
+**See [GETTING_STARTED.md](GETTING_STARTED.md#requirements) for complete system requirements.**
 
 ---
 
@@ -406,11 +240,6 @@ This model is built on publicly available NFL data from the nflverse project. Al
 
 **Current Version**: 2.0 (December 2025)
 
-**Recent Fixes**:
-- ✅ Fixed all R 4.5.1 compatibility issues
-- ✅ Resolved tidyr::pivot_longer() duplicate column errors
-- ✅ Enhanced injury data loading with better error handling
-- ✅ Removed duplicate function definitions
-- ✅ Verified all parameters are statistically significant
+**Recent fixes**: R 4.5.1 compatibility, bug fixes, documentation consolidation
 
-**For detailed technical changes**, see `TECHNICAL_DOCUMENTATION.md`.
+**See [UPDATES.md](UPDATES.md) for complete changelog and version history.**

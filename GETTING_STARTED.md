@@ -102,61 +102,27 @@ Game: KC vs BUF
 
 ## Model Configuration
 
-All settings are in `config.R`. Key parameters you might change:
+Edit `config.R` to change settings:
 
-### Basic Settings
 ```r
 SEASON <- 2025              # Current season
 WEEK_TO_SIM <- 14          # Week to predict (1-18 for regular season)
 N_TRIALS <- 100000         # Simulation count (reduce to 10000 for faster testing)
 ```
 
-### Advanced Settings (Already Optimized)
-```r
-# Team Strength Weighting
-GLMM_BLEND_W <- 0.38       # Hierarchical model weight (validated)
-SOS_STRENGTH <- 0.45       # Strength of schedule impact (validated)
-RECENCY_HALFLIFE <- 3.0    # Recent games decay rate (validated)
-
-# Rest and Recovery
-REST_SHORT_PENALTY <- -0.85  # Thursday/Monday night games (p=0.003)
-BYE_BONUS <- +1.0            # Post-bye week advantage (p=0.009)
-
-# Injuries (all p < 0.01)
-INJURY_WEIGHT_SKILL <- 0.55      # WR/RB/TE
-INJURY_WEIGHT_TRENCH <- 0.65     # OL/DL
-INJURY_WEIGHT_SECONDARY <- 0.45  # CB/S
-QB_INJURY_MULTIPLIER <- 1.5      # Quarterback impact
-
-# Weather (all p < 0.05)
-DOME_BONUS_TOTAL <- 0.8        # Indoor scoring boost
-OUTDOOR_WIND_PEN <- -1.0       # High wind penalty
-COLD_TEMP_PEN <- -0.5          # Cold weather penalty
-RAIN_SNOW_PEN <- -0.8          # Precipitation penalty
-```
-
-**⚠️ Important**: These values are statistically validated. Only change them if you're re-running the validation pipeline.
+**All model parameters** (injuries, weather, rest, etc.) are statistically validated.
+**See [README.md](README.md#configuration) for basic settings or [DOCUMENTATION.md](DOCUMENTATION.md) for complete parameter reference.**
 
 ---
 
 ## Model Performance
 
-### Validation Results (2022-2024 Seasons)
+**Validation Results** (2022-2024, 2,282 games):
+- **Brier Score**: 0.211 (Vegas: 0.208) - Professional-grade accuracy
+- **Accuracy**: 67.1% - Correctly predicts 2 out of 3 games
+- **Beats** FiveThirtyEight (0.215) and ESPN FPI (0.218)
 
-The model was tested on 2,282 completed NFL games:
-
-| Metric | Model Score | Benchmark | Assessment |
-|--------|-------------|-----------|------------|
-| **Brier Score** | 0.211 | Vegas: 0.208 | ✓ Professional-grade |
-| **Log-Loss** | 0.614 | FiveThirtyEight: 0.649 | ✓ Excellent |
-| **Accuracy** | 67.1% | ESPN FPI: 64.5% | ✓ Competitive |
-| **RMSE** | 10.82 ± 0.43 pts | Target: <11 pts | ✓ Within target |
-
-**What this means**:
-- The model correctly predicts the winner in **2 out of 3 games**
-- Probability estimates are highly accurate (Brier 0.211 vs Vegas 0.208)
-- Beats public models like FiveThirtyEight and ESPN FPI
-- Uses only publicly available data (no insider information)
+**See [RESULTS.md](RESULTS.md) for complete validation results, statistical tests, and methodology.**
 
 ---
 
@@ -252,25 +218,17 @@ source("professional_model_benchmarking.R")
 
 ## File Structure Overview
 
-### Core Files (Use These)
-- **`config.R`** - All model settings (START HERE)
-- **`NFLsimulation.R`** - Main prediction engine (run this)
-- **`NFLmarket.R`** - Market comparison tools
-- **`NFLbrier_logloss.R`** - Performance evaluation
+**To run predictions**:
+- `config.R` - Edit settings here (WEEK_TO_SIM, SEASON)
+- `NFLsimulation.R` - Main prediction engine
 
-### Validation Files (Testing)
-- **`validation_pipeline.R`** - Hyperparameter tuning
-- **`model_validation.R`** - Statistical tests
-- **`injury_model_validation.R`** - Injury impact validation
-- **`professional_model_benchmarking.R`** - vs FiveThirtyEight/ESPN
-- **`calibration_refinement.R`** - Probability calibration
-- **`rolling_validation_system.R`** - Real-time monitoring
+**Documentation**:
+- `GETTING_STARTED.md` - This guide (start here)
+- `README.md` - Project overview
+- `DOCUMENTATION.md` - Technical reference
+- `RESULTS.md` - Validation results
 
-### Documentation
-- **`GETTING_STARTED.md`** - This file (beginner guide)
-- **`DOCUMENTATION.md`** - Complete technical reference
-- **`UPDATES.md`** - Changelog and recent fixes
-- **`RESULTS.md`** - Detailed validation results
+**See [DOCUMENTATION.md](DOCUMENTATION.md#file-reference-table) for complete file listing (20 R files, 6 docs).**
 
 ---
 
@@ -351,20 +309,11 @@ source("professional_model_benchmarking.R")
 
 ## Requirements
 
-### Minimum System Requirements
-- **R Version**: 4.5.1 or higher (required)
-- **RAM**: 8 GB minimum, 16 GB recommended
-- **Storage**: 2 GB for data cache
-- **Internet**: Required for downloading NFL data
+- **R**: Version 4.5.1+ (required)
+- **RAM**: 8 GB minimum (16 GB recommended)
+- **Packages**: Auto-installed by config.R
 
-### R Packages (Auto-installed)
-All required packages install automatically when you run `config.R`:
-- tidyverse (data manipulation)
-- nflreadr (NFL data source)
-- lubridate (date handling)
-- glmnet (model fitting)
-- lme4 (hierarchical models)
-- purrr (functional programming)
+**See [README.md](README.md#requirements) for complete system requirements.**
 
 ---
 

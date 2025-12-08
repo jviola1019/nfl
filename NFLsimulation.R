@@ -4836,7 +4836,13 @@ if (file.exists(.calib_path)) {
 
   # sequential fallback
   build_one <- function(s, w){
-    week_inputs_and_sim_2w(s, w, CALIB_TRIALS)
+    result <- week_inputs_and_sim_2w(s, w, CALIB_TRIALS)
+    # Add season and week columns for fold identification
+    if (is.data.frame(result) && nrow(result) > 0) {
+      result$season <- s
+      result$week <- w
+    }
+    result
   }
 
   # simple sequential loop (robust and fast enough with skip+cache)
