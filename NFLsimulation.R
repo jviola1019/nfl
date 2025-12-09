@@ -5618,6 +5618,135 @@ final <- final |>
     away_p_2w_raw    = 1 - home_p_2w_raw
   )
 
+# ═══════════════════════════════════════════════════════════════════════════════════
+# MARKET DATA: Load market probabilities (needed for uncertainty and betting analysis)
+# Must be loaded BEFORE uncertainty calculations below
+# ═══════════════════════════════════════════════════════════════════════════════════
+
+# Helper function for probability clamping
+.clp <- function(x, lo = 1e-3, hi = 1 - 1e-3) pmin(pmax(x, lo), hi)
+
+# ═══════════════════════════════════════════════════════════════════════════════════
+# MARKET PROBABILITY HELPER FUNCTIONS
+# ═══════════════════════════════════════════════════════════════════════════════════
+
+# Convert spread to implied probability (using historical logistic fit)
+map_spread_prob <- function(sp) {
+  # sp = home spread (negative favors home)
+  # Logistic regression fit from historical data
+  plogis(-sp / 3.5)  # roughly ~14% per point near pk, flatter at extremes
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════════
+# MARKET PROBABILITY EXTRACTION FUNCTION
+# Converts market data (moneylines, spreads) to implied probabilities
+# ═══════════════════════════════════════════════════════════════════════════════════
+
+market_probs_from_sched <- function(sched_df) {
+  .clp <- function(x, eps = 1e-12) pmin(pmax(x, eps), 1 - eps)
+  .pick <- function(df, cands) {
+    nm <- intersect(cands, names(df))
+    if (length(nm)) nm[1] else NA_character_
+  }
+  american_to_probability <- function(odds) {
+    ifelse(
+      is.na(odds) | odds == 0, NA_real_,
+      ifelse(odds < 0, (-odds)/((-odds) + 100), 100/(odds + 100))
+    )
+  }
+
+  base <- sched_df %>%
+    dplyr::filter(!is.na(game_id)) %>%
+    dplyr::transmute(game_id, season, week) %>%
+    dplyr::distinct()
+
+  if (!nrow(base)) {
+    return(tibble::tibble(game_id = character(), season = integer(), week = integer(), p_home_mkt_2w = numeric()))
+  }
+
+  ml_home <- .pick(sched_df, c(
+    "home_ml_close", "ml_home_close", "moneyline_home_close", "home_moneyline_close",
+    "home_ml", "ml_home", "moneyline_home", "home_moneyline"
+  ))
+  ml_away <- .pick(sched_df, c(
+    "away_ml_close", "ml_away_close", "moneyline_away_close", "away_moneyline_close",
+    "away_ml", "ml_away", "moneyline_away", "away_moneyline"
+  ))
+  sp_col <- .pick(sched_df, c(
+    "close_spread", "spread_close", "home_spread_close",
+    "spread_line", "spread", "home_spread", "spread_favorite"
+  ))
+
+  ml_tbl <- tibble::tibble(
+    game_id = character(), season = integer(), week = integer(), p_home_mkt_2w_ml = numeric()
+  )
+  if (!is.na(ml_home) && !is.na(ml_away)) {
+    ml_tbl <- sched_df %>%
+      dplyr::transmute(
+        game_id, season, week,
+        p_home_raw = american_to_probability(suppressWarnings(as.numeric(.data[[ml_home]]))),
+        p_away_raw = american_to_probability(suppressWarnings(as.numeric(.data[[ml_away]])))
+      ) %>%
+      dplyr::mutate(
+        den = p_home_raw + p_away_raw,
+        p_home_mkt_2w_ml = .clp(ifelse(is.finite(den) & den > 0, p_home_raw/den, NA_real_))
+      ) %>%
+      dplyr::filter(is.finite(p_home_mkt_2w_ml)) %>%
+      dplyr::select(game_id, season, week, p_home_mkt_2w_ml) %>%
+      dplyr::distinct()
+  }
+
+  spread_tbl <- tibble::tibble(
+    game_id = character(), season = integer(), week = integer(), p_home_mkt_2w_spread = numeric()
+  )
+  if (!is.na(sp_col)) {
+    spread_tbl <- sched_df %>%
+      dplyr::transmute(
+        game_id, season, week,
+        home_spread = suppressWarnings(as.numeric(.data[[sp_col]]))
+      ) %>%
+      dplyr::filter(is.finite(home_spread)) %>%
+      dplyr::mutate(p_home_mkt_2w_spread = .clp(map_spread_prob(home_spread))) %>%
+      dplyr::filter(is.finite(p_home_mkt_2w_spread)) %>%
+      dplyr::select(game_id, season, week, p_home_mkt_2w_spread) %>%
+      dplyr::distinct()
+  }
+
+  out <- base %>%
+    dplyr::left_join(ml_tbl, by = c("game_id", "season", "week")) %>%
+    dplyr::left_join(spread_tbl, by = c("game_id", "season", "week")) %>%
+    dplyr::mutate(
+      p_home_mkt_2w = dplyr::coalesce(p_home_mkt_2w_ml, p_home_mkt_2w_spread)
+    ) %>%
+    dplyr::select(game_id, season, week, p_home_mkt_2w)
+
+  if (!any(is.finite(out$p_home_mkt_2w))) {
+    message(
+      "market_probs_from_sched(): no usable closing moneyline or spread columns found; returning NA probabilities."
+    )
+  }
+
+  out
+}
+
+# Load market data and join to final predictions
+mkt_now <- tryCatch(
+  market_probs_from_sched(sched) %>%
+    dplyr::transmute(game_id, home_p_2w_mkt = p_home_mkt_2w),
+  error = function(e) tibble::tibble(game_id = character(), home_p_2w_mkt = numeric())
+)
+
+# Join market data and calculate away market probability
+final <- final %>%
+  dplyr::left_join(mkt_now, by = "game_id") %>%
+  dplyr::mutate(
+    home_p_2w_mkt = .clp(home_p_2w_mkt),
+    away_p_2w_mkt = 1 - home_p_2w_mkt,  # Away market prob is complement of home
+    # Fill missing market data with model predictions (for games without lines)
+    home_p_2w_mkt = ifelse(is.na(home_p_2w_mkt), home_p_2w_cal, home_p_2w_mkt),
+    away_p_2w_mkt = ifelse(is.na(away_p_2w_mkt), away_p_2w_cal, away_p_2w_mkt)
+  )
+
 # Add prediction intervals and model uncertainty metrics (CRITICAL for uncertainty quantification)
 final <- final |>
   dplyr::left_join(
@@ -6130,19 +6259,16 @@ map_spread_total_prob <- function(sp, tot) {
 }
 
 
-spread_map <- fit_spread_to_prob(sched %>% dplyr::filter(game_type %in% c("REG","Regular")))
-map_spread_prob <- function(sp) {
-  sp <- as.numeric(sp)
-  if (is.null(spread_map)) {
-    # fallback if we couldn't fit a model (13.86 = Historical NFL margin standard deviation)
-    pnorm(-sp/13.86)
-  } else {
-    .clp(as.numeric(predict(spread_map, newdata = data.frame(spread = sp), type = "response")))
-  }
-}
+# Note: map_spread_prob defined earlier at line 5634 (simple fallback version)
+# Note: market_probs_from_sched defined earlier at line 5645 (must be before first use)
 
-# Build 2-way market probabilities from SCHEDULES:
-market_probs_from_sched <- function(sched_df) {
+spread_map <- fit_spread_to_prob(sched %>% dplyr::filter(game_type %in% c("REG","Regular")))
+
+# DUPLICATE REMOVED - map_spread_prob now defined at line 5634
+
+# DUPLICATE REMOVED - market_probs_from_sched now defined at line 5645
+# Keeping function definition commented for reference:
+market_probs_from_sched_DUPLICATE <- function(sched_df) {
   .clp <- function(x, eps = 1e-12) pmin(pmax(x, eps), 1 - eps)
   .pick <- function(df, cands) {
     nm <- intersect(cands, names(df))
@@ -6964,19 +7090,16 @@ if (nrow(train_deploy) >= 500) {
 }
 
 # ---- Apply to CURRENT slate (`final`) ----
-# 1) Make sure we have market 2-way home prob
-mkt_now <- tryCatch(
-  market_probs_from_sched(sched) %>%
-    dplyr::transmute(game_id, home_p_2w_mkt = p_home_mkt_2w),
-  error = function(e) tibble::tibble(game_id = character(), home_p_2w_mkt = numeric())
-)
+# Note: Market data already loaded and joined above (lines 5630-5645)
+# This ensures home_p_2w_mkt and away_p_2w_mkt are available for uncertainty calculations
 
 stopifnot("home_p_2w_cal" %in% names(final))
+stopifnot("home_p_2w_mkt" %in% names(final))
+
+# Create model probability alias for blend prediction
 final <- final %>%
-  dplyr::left_join(mkt_now, by = "game_id") %>%
   dplyr::mutate(
-    home_p_2w_model = .clp(home_p_2w_cal),
-    home_p_2w_mkt   = .clp(home_p_2w_mkt)   # now safely named
+    home_p_2w_model = .clp(home_p_2w_cal)
   )
 
 
