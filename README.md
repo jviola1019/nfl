@@ -12,6 +12,8 @@ A production-ready statistical model for predicting NFL game outcomes using Mont
 
 **Choose your guide based on your needs**:
 
+### Core Documentation
+
 1. **🚀 [GETTING_STARTED.md](GETTING_STARTED.md)** - Start here!
    - 5-minute extra detailed quick start
    - IDE setup (RStudio + VS Code)
@@ -30,7 +32,25 @@ A production-ready statistical model for predicting NFL game outcomes using Mont
    - Migration guides
    - Known issues
 
-**Quick links**: [RESULTS.md](RESULTS.md) (validation results) | [VALIDATION_README.md](VALIDATION_README.md) (validation methodology)
+### Validation & Results
+
+4. **📊 [RESULTS.md](RESULTS.md)** - Model performance metrics
+   - Validation results (Brier, log-loss, accuracy)
+   - Comparison to professional models
+   - Statistical significance tests
+   - Performance across different time periods
+
+5. **🎯 [IMPROVEMENTS_SUMMARY.md](IMPROVEMENTS_SUMMARY.md)** - Recent optimizations
+   - Session-by-session improvement tracking
+   - Overfitting reduction strategies
+   - R 4.5.1 compatibility fixes
+   - Parameter validation results
+
+6. **🚀 [PRODUCTION_READY_SUMMARY.md](PRODUCTION_READY_SUMMARY.md)** - Production deployment guide
+   - Complete production readiness checklist
+   - New validation tools documentation
+   - Performance monitoring procedures
+   - Best practices for weekly workflow
 
 ---
 
