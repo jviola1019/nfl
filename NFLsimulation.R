@@ -4417,6 +4417,18 @@ games_ready <- games_ready %>%
 
 
 
+# --- Helper functions for negative binomial calculations ---------------------
+# Convert (mu, sd) -> NB size k. If v<=mu, fall back to Poisson (k = Inf)
+nb_size_from_musd <- function(mu, sd) {
+  v <- sd^2
+  if (!is.finite(mu) || !is.finite(sd) || mu <= 0 || v <= mu) return(Inf)
+  k <- mu^2 / (v - mu)
+  # FIX: NFL scores typically have k ∈ [5, 15], not k >= 2 (too much overdispersion)
+  k <- pmax(k, NB_SIZE_MIN)  # Realistic floor (was 2, now 5)
+  k <- pmin(k, NB_SIZE_MAX)  # Tighter ceiling (was 1e4, now 50)
+  k
+}
+
 # --- Total-sensitive SD guardrail (light touch) -------------------------------
 sd_total_curve <- function(total_mu){
   # ~12 at total 38 to ~16 at total 55; clamp to [10,18]
@@ -4593,17 +4605,6 @@ recent_form_at_sim <- function(cut_season, cut_week, teams,
 }
 
 # --- MONTE CARLO (Negative Binomial + Gaussian Copula) -----------------------
-# Convert (mu, sd) -> NB size k. If v<=mu, fall back to Poisson (k = Inf)
-nb_size_from_musd <- function(mu, sd) {
-  v <- sd^2
-  if (!is.finite(mu) || !is.finite(sd) || mu <= 0 || v <= mu) return(Inf)
-  k <- mu^2 / (v - mu)
-  # FIX: NFL scores typically have k ∈ [5, 15], not k >= 2 (too much overdispersion)
-  k <- pmax(k, NB_SIZE_MIN)  # Realistic floor (was 2, now 5)
-  k <- pmin(k, NB_SIZE_MAX)  # Tighter ceiling (was 1e4, now 50)
-  k
-}
-
 # Correlated NB via Gaussian copula; respects your mu/sd targets
 simulate_game_nb <- function(mu_home, sd_home, mu_away, sd_away,
                              n_trials = N_TRIALS, rho = RHO_SCORE, cap = PTS_CAP_HI, seed = SEED) {
