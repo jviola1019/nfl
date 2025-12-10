@@ -2388,6 +2388,15 @@ seasons_hfa <- (SEASON - 9):(SEASON - 0)
 sched <- load_schedules(seasons = seasons_hfa) |>
   mutate(game_completed = !is.na(home_score) & !is.na(away_score))
 
+# CRITICAL: Verify season column exists (fail fast with clear error if missing)
+if (!"season" %in% names(sched)) {
+  stop("CRITICAL ERROR: load_schedules() did not return a 'season' column.\n",
+       "This may indicate an nflreadr package version mismatch.\n",
+       "Available columns: ", paste(sort(names(sched)), collapse = ", "), "\n",
+       "Please ensure nflreadr is up to date: install.packages('nflreadr')")
+}
+
+
 # --- NEW: normalize date column to 'game_date' (Date) no matter what the package gives us
 date_col <- dplyr::case_when(
   "game_date" %in% names(sched) ~ "game_date",
