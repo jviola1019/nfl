@@ -6397,8 +6397,19 @@ preds_hist <- if (exists("res") && "per_game" %in% names(res)) {
     dplyr::filter(season %in% seasons_hist) %>%
     dplyr::transmute(game_id, season, week, p_model = .clp(p2_cal))
 } else if (exists("calib_sim_df")) {
-  calib_sim_df %>%
-    dplyr::left_join(sched %>% dplyr::select(game_id, season, week), by = "game_id") %>%
+  # CRITICAL FIX: Ensure game_id, season, week exist in calib_sim_df before filtering
+  # If calib_sim_df doesn't have season/week, join from sched first
+  temp_df <- if ("season" %in% names(calib_sim_df) && "week" %in% names(calib_sim_df)) {
+    calib_sim_df
+  } else {
+    calib_sim_df %>%
+      dplyr::left_join(
+        sched %>% dplyr::select(game_id, season, week),
+        by = "game_id"
+      )
+  }
+
+  temp_df %>%
     dplyr::filter(season %in% seasons_hist) %>%
     dplyr::transmute(
       game_id, season, week,
