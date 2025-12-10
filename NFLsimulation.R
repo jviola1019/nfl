@@ -5939,8 +5939,15 @@ score_weeks_fast <- function(start_season, end_season, weeks = NULL) {
   stopifnot(exists("map_iso"))
   stopifnot(exists("calibrate_3way"))
 
-  sims <- calib_sim_df %>%
-    dplyr::left_join(sched %>% dplyr::select(game_id, season, week), by = "game_id") %>%
+  # CRITICAL FIX: Ensure season/week columns exist before filtering
+  sims_base <- if ("season" %in% names(calib_sim_df) && "week" %in% names(calib_sim_df)) {
+    calib_sim_df
+  } else {
+    calib_sim_df %>%
+      dplyr::left_join(sched %>% dplyr::select(game_id, season, week), by = "game_id")
+  }
+
+  sims <- sims_base %>%
     dplyr::filter(season >= start_season, season <= end_season) %>%
     { if (is.null(weeks)) . else dplyr::filter(., week %in% weeks) } %>%
     dplyr::filter(!is.na(y_home)) %>%
