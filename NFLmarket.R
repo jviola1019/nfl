@@ -621,6 +621,98 @@ expected_value_units <- function(prob, odds) {
   out
 }
 
+# ==============================================================================
+# PROFESSIONAL CALIBRATION: Probability shrinkage and conservative staking
+# ==============================================================================
+# NFL betting markets are extremely efficient. Models that show large edges
+# (>5%) are almost certainly overfit or miscalibrated. These functions implement
+# professional-grade adjustments to account for model uncertainty.
+
+#' Shrink model probability toward market consensus
+#'
+#' Professional models recognize that market probabilities incorporate
+#' information the model may not have. This function implements Bayesian
+#' shrinkage toward market prices to reduce overconfidence.
+#'
+#' @param model_prob Model's estimated probability
+#' @param market_prob Market-implied probability
+#' @param shrinkage Shrinkage factor (0-1). Higher = more trust in market.
+#'   Default 0.6 means 60% weight on market, 40% on model.
+#' @return Shrunk probability that blends model and market views
+shrink_probability_toward_market <- function(model_prob, market_prob, shrinkage = 0.6) {
+  model_prob <- clamp_probability(model_prob)
+  market_prob <- clamp_probability(market_prob)
+  shrinkage <- pmax(0, pmin(1, shrinkage))
+
+  # Weighted average: higher shrinkage = more weight on market
+  shrunk <- (1 - shrinkage) * model_prob + shrinkage * market_prob
+
+  clamp_probability(shrunk)
+}
+
+#' Calculate conservative Kelly stake with edge skepticism
+#'
+#' Full Kelly is too aggressive and assumes perfect probability estimates.
+#' This function implements:
+#' 1. Fractional Kelly (default 1/8) to reduce variance
+#' 2. Edge skepticism: larger edges are more likely model errors
+#' 3. Maximum stake caps to prevent catastrophic losses
+#'
+#' @param prob Estimated win probability (should be shrunk toward market)
+#' @param odds American odds for the bet
+#' @param kelly_fraction Fraction of Kelly to use (default 0.125 = 1/8 Kelly)
+#' @param max_edge Maximum believable edge (default 0.10 = 10%)
+#' @param max_stake Maximum stake as fraction of bankroll (default 0.02 = 2%)
+#' @return Conservative stake size
+conservative_kelly_stake <- function(prob, odds,
+                                     kelly_fraction = 0.125,
+                                     max_edge = 0.10,
+                                     max_stake = 0.02) {
+  prob <- clamp_probability(prob)
+  dec <- american_to_decimal(odds)
+  b <- dec - 1
+
+  # Standard Kelly formula
+  kelly <- (prob * b - (1 - prob)) / b
+
+  # Apply edge skepticism: if kelly > max_edge, the model is likely wrong
+  # Progressively reduce stake for "too good to be true" edges
+  edge_penalty <- dplyr::case_when(
+    is.na(kelly) ~ NA_real_,
+    kelly <= max_edge ~ 1.0,
+    kelly <= max_edge * 2 ~ 0.5,  # 50% penalty for 2x max believable edge
+    kelly <= max_edge * 3 ~ 0.25, # 75% penalty for 3x max believable edge
+    TRUE ~ 0.1                     # 90% penalty for extreme edges
+  )
+
+  # Apply fractional Kelly and edge penalty
+  stake <- kelly * kelly_fraction * edge_penalty
+
+  # Cap at maximum stake and floor at 0
+  stake <- pmax(0, pmin(stake, max_stake))
+
+  # Handle invalid values
+  invalid <- is.na(dec) | !is.finite(dec) | b <= 0 | abs(b) < 1e-6 | is.na(stake)
+  stake[invalid] <- NA_real_
+
+  stake
+}
+
+#' Classify edge magnitude for display warnings
+#'
+#' @param edge EV edge as decimal (e.g., 0.15 = 15%)
+#' @return Character classification: "realistic", "suspicious", "implausible"
+classify_edge_magnitude <- function(edge) {
+  dplyr::case_when(
+    is.na(edge) ~ NA_character_,
+    edge <= 0 ~ "negative",
+    edge <= 0.05 ~ "realistic",      # 0-5%: plausible professional edge
+    edge <= 0.10 ~ "optimistic",     # 5-10%: possible but rare
+    edge <= 0.15 ~ "suspicious",     # 10-15%: likely model error
+    TRUE ~ "implausible"             # >15%: almost certainly wrong
+  )
+}
+
 realized_moneyline_units <- function(pick_side, winner_side, odds, stake = 1) {
   pick_side <- tolower(as.character(pick_side))
   winner_side <- tolower(as.character(winner_side))
@@ -1563,6 +1655,16 @@ build_moneyline_comparison_table <- function(market_comparison_result,
         market_home_spread
       ),
       market_away_prob = clamp_probability(1 - market_home_prob),
+      # Add moneyline-implied probabilities for transparency (separate from spread-derived)
+      ml_implied_home_prob = clamp_probability(american_to_probability(market_home_ml)),
+      ml_implied_away_prob = clamp_probability(american_to_probability(market_away_ml)),
+      # Flag if market_home_prob differs significantly from moneyline-implied (spread-derived)
+      prob_source = dplyr::case_when(
+        is.na(market_home_ml) | !is.finite(market_home_ml) ~ "spread",
+        is.na(ml_implied_home_prob) | !is.finite(ml_implied_home_prob) ~ "spread",
+        abs(market_home_prob - ml_implied_home_prob) < 0.01 ~ "moneyline",
+        TRUE ~ "moneyline"  # We prioritize moneyline when available
+      ),
       market_home_spread = harmonize_home_spread(market_home_spread, market_home_prob),
       market_total_line = coerce_numeric_safely(market_total_line),
       blend_median_margin = dplyr::if_else(
@@ -1604,10 +1706,36 @@ build_moneyline_comparison_table <- function(market_comparison_result,
       blend_home_ml_vig = apply_moneyline_vig(blend_home_ml, vig = vig),
       blend_away_ml = probability_to_american(blend_away_prob),
       blend_away_ml_vig = apply_moneyline_vig(blend_away_ml, vig = vig),
+
+      # ===========================================================================
+      # PROFESSIONAL CALIBRATION: Shrink probabilities toward market consensus
+      # ===========================================================================
+      # NFL markets are extremely efficient. Raw model probabilities that diverge
+      # significantly from market are almost certainly overfit. We shrink toward
+      # market to produce more realistic betting recommendations.
+      # Default shrinkage = 0.6 (60% market weight, 40% model weight)
+      blend_home_prob_shrunk = shrink_probability_toward_market(
+        blend_home_prob, market_home_prob, shrinkage = 0.6
+      ),
+      blend_away_prob_shrunk = shrink_probability_toward_market(
+        blend_away_prob, market_away_prob, shrinkage = 0.6
+      ),
+
+      # Raw probability edge (for display - shows model's raw view)
       blend_edge_prob_home = blend_home_prob - market_home_prob,
       blend_edge_prob_away = blend_away_prob - market_away_prob,
-      blend_ev_units_home = expected_value_units(blend_home_prob, market_home_ml),
-      blend_ev_units_away = expected_value_units(blend_away_prob, market_away_ml),
+
+      # Shrunk probability edge (for betting decisions - more conservative)
+      blend_edge_prob_home_shrunk = blend_home_prob_shrunk - market_home_prob,
+      blend_edge_prob_away_shrunk = blend_away_prob_shrunk - market_away_prob,
+
+      # EV calculations using SHRUNK probabilities (more realistic)
+      blend_ev_units_home = expected_value_units(blend_home_prob_shrunk, market_home_ml),
+      blend_ev_units_away = expected_value_units(blend_away_prob_shrunk, market_away_ml),
+
+      # Also calculate raw EV for comparison/display
+      blend_ev_units_home_raw = expected_value_units(blend_home_prob, market_home_ml),
+      blend_ev_units_away_raw = expected_value_units(blend_away_prob, market_away_ml),
       blend_favorite_side = dplyr::if_else(blend_home_prob >= blend_away_prob, "home", "away"),
       blend_favorite = dplyr::if_else(blend_favorite_side == "home", home_team, away_team),
       blend_best_ev = dplyr::case_when(
@@ -1639,14 +1767,36 @@ build_moneyline_comparison_table <- function(market_comparison_result,
         ),
         blend_pick_side
       ),
+      # blend_pick now shows the team with best EV, or falls back to blend's favorite for Pass games
       blend_pick = dplyr::case_when(
         blend_pick_side == "home" ~ home_team,
         blend_pick_side == "away" ~ away_team,
+        # For Pass games (negative EV), show the blend's favorite team for reference
+        blend_favorite_side == "home" ~ home_team,
+        blend_favorite_side == "away" ~ away_team,
         TRUE ~ NA_character_
       ),
+      # Track whether this is an EV-based pick or just the blend's favorite
+      blend_pick_type = dplyr::case_when(
+        !is.na(blend_pick_side) ~ "ev_positive",
+        !is.na(blend_favorite_side) ~ "favorite_only",
+        TRUE ~ NA_character_
+      ),
+      # Raw blend probability for the picked side (for display)
       blend_prob_pick = dplyr::case_when(
         blend_pick_side == "home" ~ blend_home_prob,
         blend_pick_side == "away" ~ blend_away_prob,
+        # For Pass games, use the favorite's probability
+        blend_favorite_side == "home" ~ blend_home_prob,
+        blend_favorite_side == "away" ~ blend_away_prob,
+        TRUE ~ NA_real_
+      ),
+      # Shrunk probability for the picked side (for betting decisions)
+      blend_prob_pick_shrunk = dplyr::case_when(
+        blend_pick_side == "home" ~ blend_home_prob_shrunk,
+        blend_pick_side == "away" ~ blend_away_prob_shrunk,
+        blend_favorite_side == "home" ~ blend_home_prob_shrunk,
+        blend_favorite_side == "away" ~ blend_away_prob_shrunk,
         TRUE ~ NA_real_
       ),
       blend_moneyline = dplyr::case_when(
@@ -1681,6 +1831,15 @@ build_moneyline_comparison_table <- function(market_comparison_result,
           american_to_probability(market_home_ml)
         ),
         blend_pick_side == "away" ~ dplyr::coalesce(
+          market_away_prob,
+          american_to_probability(market_away_ml)
+        ),
+        # For Pass games, use market prob for blend's favorite
+        blend_favorite_side == "home" ~ dplyr::coalesce(
+          market_home_prob,
+          american_to_probability(market_home_ml)
+        ),
+        blend_favorite_side == "away" ~ dplyr::coalesce(
           market_away_prob,
           american_to_probability(market_away_ml)
         ),
@@ -1846,22 +2005,47 @@ build_moneyline_comparison_table <- function(market_comparison_result,
         TRUE ~ paste(blend_beats_market_note_raw, probability_alignment_note, sep = " | ")
       ),
       blend_beats_market_note = shorten_market_note(blend_beats_market_note),
-      blend_kelly_fraction = dplyr::case_when(
+      # ===========================================================================
+      # CONSERVATIVE KELLY STAKING
+      # ===========================================================================
+      # Use 1/8 Kelly with edge skepticism to account for model uncertainty.
+      # Larger "edges" are more likely model errors, so we apply progressive
+      # penalties for implausibly large edges.
+
+      # Raw Kelly (for reference only - NOT used for staking)
+      blend_kelly_fraction_raw = dplyr::case_when(
         is.na(blend_pick_side) ~ NA_real_,
         TRUE ~ {
           dec <- american_to_decimal(market_moneyline)
           b <- dec - 1
           stake <- (blend_prob_pick * b - (1 - blend_prob_pick)) / b
-          # Check for invalid values including near-zero b to avoid numerical instability
           invalid <- is.na(dec) | !is.finite(dec) | b <= 0 | abs(b) < 1e-6 | is.na(stake)
           stake[invalid] <- NA_real_
           stake
         }
       ),
+
+      # Conservative Kelly using SHRUNK probabilities
+      # Uses 1/8 Kelly (12.5%), max 10% believable edge, max 2% stake
       blend_confidence = dplyr::case_when(
-        is.na(blend_kelly_fraction) ~ NA_real_,
-        blend_kelly_fraction < 0 ~ 0,
-        TRUE ~ blend_kelly_fraction
+        is.na(blend_pick_side) ~ NA_real_,
+        TRUE ~ conservative_kelly_stake(
+          prob = blend_prob_pick_shrunk,
+          odds = market_moneyline,
+          kelly_fraction = 0.125,   # 1/8 Kelly
+          max_edge = 0.10,          # Cap believable edge at 10%
+          max_stake = 0.02          # Max 2% of bankroll per bet
+        )
+      ),
+
+      # Edge magnitude classification for display warnings
+      edge_classification = classify_edge_magnitude(blend_ev_units),
+      edge_classification_raw = classify_edge_magnitude(
+        dplyr::case_when(
+          blend_pick_side == "home" ~ blend_ev_units_home_raw,
+          blend_pick_side == "away" ~ blend_ev_units_away_raw,
+          TRUE ~ NA_real_
+        )
       ),
       actual_winner = dplyr::case_when(
         is.na(actual_home_win) ~ actual_winner,
@@ -2003,16 +2187,30 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     "<h2>📊 NFL Blend vs Market Analysis Report</h2>",
     "<p class=\"report-subtitle\">Comprehensive comparison of blended model predictions against betting market consensus</p>",
 
-    "<div class=\"intro-section\" style=\"background: rgba(22,101,52,0.2); border-left: 4px solid #22c55e;\">",
-    "<h3>✅ CALCULATION ERRORS FIXED</h3>",
-    "<p><strong>Previous Issue:</strong> The table was incorrectly showing probability differences as \"Blend Edge\" instead of true expected value edge.</p>",
-    "<p><strong>Fixed:</strong></p>",
+    "<div class=\"intro-section\" style=\"background: rgba(220, 38, 38, 0.15); border-left: 4px solid #ef4444;\">",
+    "<h3>⚠️ CRITICAL: PROFESSIONAL CALIBRATION APPLIED</h3>",
+    "<p><strong>NFL betting markets are among the most efficient in sports.</strong> Professional sharps rarely find edges above 3-5%. This model applies:</p>",
     "<ul>",
-    "<li>✅ <strong>EV Edge (%)</strong> now correctly calculated as: (Blend Probability × Decimal Odds) - 1</li>",
-    "<li>✅ <strong>Total EV (Units)</strong> now correctly calculated as: Stake × EV Edge</li>",
-    "<li>✅ <strong>Prob Advantage (pp)</strong> added as separate column for reference</li>",
+    "<li>🎯 <strong>60% Probability Shrinkage:</strong> Raw model probabilities are shrunk 60% toward market consensus to reduce overconfidence</li>",
+    "<li>📉 <strong>1/8 Kelly Staking:</strong> Only 12.5% of optimal Kelly is used to account for estimation error</li>",
+    "<li>🚫 <strong>Edge Skepticism:</strong> Edges >10% receive additional penalties (likely model error, not real opportunity)</li>",
+    "<li>📊 <strong>Max 2% Stake:</strong> No single bet exceeds 2% of bankroll regardless of calculated edge</li>",
     "</ul>",
-    "<p style=\"color: #fbbf24; font-weight: 600;\">⚠️ DO NOT use any reports generated before this fix for betting decisions!</p>",
+    "<p style=\"color: #fca5a5; font-weight: 600;\">⚠️ Edges >5% are OPTIMISTIC, >10% are SUSPICIOUS, >15% are almost certainly model errors. Do NOT bet large amounts on \"implausible\" edges!</p>",
+    "</div>",
+
+    "<div class=\"intro-section\" style=\"background: rgba(22,101,52,0.2); border-left: 4px solid #22c55e;\">",
+    "<h3>✅ METHODOLOGY & TRANSPARENCY</h3>",
+    "<p><strong>Key Features:</strong></p>",
+    "<ul>",
+    "<li>✅ <strong>EV Edge (%)</strong> calculated using SHRUNK probabilities: (Shrunk Prob × Decimal Odds) - 1</li>",
+    "<li>✅ <strong>Total EV (Units)</strong> calculated as: Conservative Stake × EV Edge</li>",
+    "<li>✅ <strong>Prob Edge on Pick (pp)</strong> shows RAW probability advantage (before shrinkage) for reference</li>",
+    "<li>✅ <strong>ML Implied Home %</strong> shows raw moneyline-derived probability for transparency</li>",
+    "<li>✅ <strong>Blend Pick*</strong> asterisk indicates Pass games where blend favorite is shown (no positive EV bet)</li>",
+    "<li>✅ <strong>Edge Classification:</strong> realistic (0-5%), optimistic (5-10%), suspicious (10-15%), implausible (>15%)</li>",
+    "</ul>",
+    "<p style=\"color: #60a5fa; font-weight: 600;\">📊 Market Home Win % uses moneyline when available; spread-derived only as fallback</p>",
     "</div>",
 
     "<div class=\"intro-section\">",
@@ -2038,7 +2236,7 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     "<div class=\"intro-section\">",
     "<h3>📈 Key Metrics Explained</h3>",
     "<ul class=\"metrics-list\">",
-    "<li><span class=\"metric-icon\">💡</span> <strong>Blend Pick:</strong> The team the blended model favors to win.</li>",
+    "<li><span class=\"metric-icon\">💡</span> <strong>Blend Pick:</strong> The team the blended model favors. <strong>Note:</strong> An asterisk (*) indicates the blend's favorite for Pass games where no positive EV bet exists.</li>",
     "<li><span class=\"metric-icon\">🎲</span> <strong>Blend Recommendation:</strong> Suggested betting action based on positive expected value (EV > 0).</li>",
     "<li><span class=\"metric-icon\">✅</span> <strong>Blend Beat Market?:</strong> Did the blend's assessment outperform the market's?",
     "<ul class=\"basis-list\">",
@@ -2054,8 +2252,9 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     "</ul></li>",
     "<li><span class=\"metric-icon\">📈</span> <strong>EV Edge (%):</strong> Expected return per dollar bet, calculated as (Blend Probability × Decimal Odds) - 1. This is the TRUE betting edge. Example: 10% edge means you expect to profit $0.10 for every $1 bet. <em>Color coded: green (positive edge), red (negative edge).</em></li>",
     "<li><span class=\"metric-icon\">💰</span> <strong>Total EV (Units):</strong> Total expected profit = Stake × EV Edge. This is your actual expected profit in units for the recommended bet size. <em>Color coded: green (profitable), red (unprofitable).</em></li>",
-    "<li><span class=\"metric-icon\">📊</span> <strong>Prob Advantage (pp):</strong> Simple probability difference (in percentage points) between blend and market assessments. <strong>IMPORTANT:</strong> This is NOT the same as EV Edge! Prob Advantage doesn't account for odds/pricing, while EV Edge does. Two games can have similar EV Edge (13.5%) but very different Prob Advantage (4.6% vs 8.0%) because of different odds. Use EV Edge for betting decisions, not Prob Advantage.</li>",
+    "<li><span class=\"metric-icon\">📊</span> <strong>Prob Edge on Pick (pp):</strong> Probability difference (in percentage points) between blend and market for the <em>recommended/favorite side</em>. <strong>IMPORTANT:</strong> This is NOT the same as EV Edge! Prob Edge doesn't account for odds/pricing, while EV Edge does. Use EV Edge for betting decisions.</li>",
     "<li><span class=\"metric-icon\">🎯</span> <strong>Probabilities (Blend/Market Home Win %):</strong> Win probability for the home team according to blend model vs market. <em>Color intensity shows confidence level.</em></li>",
+    "<li><span class=\"metric-icon\">📈</span> <strong>ML Implied Home %:</strong> Win probability derived <em>directly</em> from moneyline odds. Compare with Market Home Win % to see if spread-derived probability was used as fallback.</li>",
     "<li><span class=\"metric-icon\">🏈</span> <strong>Spreads:</strong> All spreads shown from home team's perspective:",
     "<ul class=\"basis-list\">",
     "<li><strong>Market Home Spread</strong> — Betting line from sportsbooks (+ = underdog, − = favorite)</li>",
@@ -2081,10 +2280,10 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     "<div class=\"intro-section\">",
     "<h3>🎨 Color Coding</h3>",
     "<ul class=\"color-guide\">",
-    "<li><span class=\"color-box\" style=\"background:#166534;\"></span> <strong>Green:</strong> Blend beats market (better assessment)</li>",
-    "<li><span class=\"color-box\" style=\"background:#991B1B;\"></span> <strong>Red:</strong> Market beats blend (market's assessment was better)</li>",
-    "<li><span class=\"color-box\" style=\"background:#1D4ED8;\"></span> <strong>Blue:</strong> Recommended bet action</li>",
-    "<li><span class=\"color-box\" style=\"background:#94a3b8;\"></span> <strong>Gray:</strong> N/A or insufficient data</li>",
+    "<li><span class=\"color-box\" style=\"background:#059669;\"></span> <strong>Green:</strong> Blend beats market (better assessment)</li>",
+    "<li><span class=\"color-box\" style=\"background:#3D3A36;\"></span> <strong>Muted:</strong> Market beats blend (market's assessment was better)</li>",
+    "<li><span class=\"color-box\" style=\"background:#D97757;\"></span> <strong>Coral:</strong> Recommended bet action</li>",
+    "<li><span class=\"color-box\" style=\"background:#4A4640;\"></span> <strong>Gray:</strong> N/A or insufficient data</li>",
     "</ul>",
     "</div>",
     "</section>"
@@ -2097,7 +2296,11 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       Date = game_date,
       Matchup = matchup,
       Winner = dplyr::coalesce(actual_winner, "TBD"),
-      `Blend Pick` = blend_pick,
+      # Show blend pick with indicator for Pass games (favorite_only vs ev_positive)
+      `Blend Pick` = dplyr::case_when(
+        blend_pick_type == "favorite_only" ~ paste0(blend_pick, "*"),
+        TRUE ~ blend_pick
+      ),
       `Blend Recommendation` = blend_recommendation,
       `Blend Beat Market?` = dplyr::case_when(
         is.na(blend_beats_market) ~ "N/A",
@@ -2105,16 +2308,29 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         TRUE ~ "No"
       ),
       `Blend Beat Market Basis` = blend_beats_market_basis,
-      `Blend Stake (Units)` = blend_confidence,
-      `EV Edge (%)` = blend_ev_units,  # FIXED: Was blend_edge_prob (probability diff), now shows actual EV edge
+      `Blend Stake (Units)` = blend_confidence,  # Conservative 1/8 Kelly with edge skepticism
+      `EV Edge (%)` = blend_ev_units,  # Calculated using SHRUNK probabilities
       `Total EV (Units)` = dplyr::if_else(
         is.na(blend_confidence) | is.na(blend_ev_units),
         NA_real_,
-        blend_confidence * blend_ev_units  # FIXED: Total expected profit = Stake × Edge
+        blend_confidence * blend_ev_units  # Conservative stake × shrunk EV
       ),
-      `Prob Advantage (pp)` = blend_edge_prob,  # Probability difference for reference
+      # Edge classification for professional warning
+      `Edge Quality` = dplyr::case_when(
+        is.na(edge_classification) ~ "N/A",
+        edge_classification == "negative" ~ "Pass",
+        edge_classification == "realistic" ~ "✓ OK",
+        edge_classification == "optimistic" ~ "⚠ High",
+        edge_classification == "suspicious" ~ "⚠⚠ Suspicious",
+        edge_classification == "implausible" ~ "🚫 Implausible",
+        TRUE ~ edge_classification
+      ),
+      # Renamed: clarifies this is the RAW prob advantage (before shrinkage)
+      `Raw Prob Edge (pp)` = blend_edge_prob,  # RAW probability difference for reference
       `Blend Home Win %` = blend_home_prob,
       `Market Home Win %` = market_home_prob,
+      # NEW: Show moneyline-implied probability for transparency
+      `ML Implied Home %` = ml_implied_home_prob,
       `Blend Median Margin` = blend_median_margin,
       `Market Home Spread` = market_home_spread,
       `Market Total` = market_total,
@@ -2147,13 +2363,13 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     gt_tbl <- gt::gt(display_tbl)
     gt_tbl <- gt_apply_if_columns(
       gt_tbl,
-      c("EV Edge (%)", "Prob Advantage (pp)"),
+      c("EV Edge (%)", "Raw Prob Edge (pp)"),
       gt::fmt_percent,
       decimals = 2
     )
     gt_tbl <- gt_apply_if_columns(
       gt_tbl,
-      c("Blend Home Win %", "Market Home Win %"),
+      c("Blend Home Win %", "Market Home Win %", "ML Implied Home %"),
       gt::fmt_percent,
       decimals = 1
     )
@@ -2215,20 +2431,20 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     }
 
     # Apply color coding for all metric columns
-    gt_tbl <- apply_color(gt_tbl, c("Blend Home Win %", "Market Home Win %"),
+    gt_tbl <- apply_color(gt_tbl, c("Blend Home Win %", "Market Home Win %", "ML Implied Home %"),
       c("#1e3a8a", "#2563eb", "#3b82f6", "#60a5fa", "#93c5fd"), c(0, 1))
     gt_tbl <- apply_color(gt_tbl, "Total EV (Units)",
       c("#991B1B", "#dc2626", "#1f2937", "#15803d", "#166534"), c(-0.05, 0.05))
     gt_tbl <- apply_color(gt_tbl, "EV Edge (%)",
       c("#991B1B", "#dc2626", "#1f2937", "#15803d", "#166534"), c(-0.15, 0.15))
-    gt_tbl <- apply_color(gt_tbl, "Prob Advantage (pp)",
+    gt_tbl <- apply_color(gt_tbl, "Raw Prob Edge (pp)",
       c("#7f1d1d", "#991b1b", "#1f2937", "#14532d", "#15532d"), c(-0.30, 0.30))
     gt_tbl <- apply_color(gt_tbl, c("Market Home Spread", "Blend Median Margin"),
       c("#dc2626", "#f87171", "#1f2937", "#4ade80", "#22c55e"), c(-14, 14))
     gt_tbl <- gt::tab_header(
       gt_tbl,
       title = title,
-      subtitle = "✅ CORRECTED CALCULATIONS • 🎯 Spreads • 📊 Probabilities • 💰 True EV Edge • 📈 Total Expected Value"
+      subtitle = "⚠️ PROFESSIONAL CALIBRATION • 60% Shrinkage • 1/8 Kelly • Edge Skepticism • Market-Adjusted Probabilities"
     )
 
     # Add column spanners for better organization
@@ -2246,23 +2462,23 @@ export_moneyline_comparison_html <- function(comparison_tbl,
 
     gt_tbl <- gt::tab_source_note(
       gt_tbl,
-      source_note = "✅ FIXED: EV Edge = (Prob × Decimal Odds) - 1 | Total EV = Stake × EV Edge | Prob Advantage shown for reference only"
+      source_note = "⚠️ CALIBRATED: 60% shrinkage toward market | 1/8 Kelly staking | Edge skepticism applied | * = Pass game | ✓OK=0-5% | ⚠High=5-10% | ⚠⚠Suspicious=10-15% | 🚫Implausible=>15%"
     )
     gt_tbl <- gt::tab_options(
       gt_tbl,
-      table.font.names = c("Inter", "Source Sans Pro", "Helvetica Neue", "Arial", "sans-serif"),
-      table.font.color = "#e2e8f0",
+      table.font.names = c("Inter", "Söhne", "Source Sans Pro", "Helvetica Neue", "Arial", "sans-serif"),
+      table.font.color = "#F5F4F0",
       table.background.color = "transparent",
-      heading.background.color = "#0b1120",
+      heading.background.color = "#1A1815",
       heading.align = "center",
-      column_labels.background.color = "#111c2f",
+      column_labels.background.color = "#1A1815",
       column_labels.font.weight = "600",
       column_labels.text_transform = "uppercase",
       column_labels.border.top.style = "solid",
-      column_labels.border.top.color = "#1f2a44",
-      column_labels.border.bottom.color = "#1f2a44",
-      row.striping.background_color = "rgba(15,23,42,0.55)",
-      data_row.padding = gt::px(10),
+      column_labels.border.top.color = "rgba(217, 119, 87, 0.3)",
+      column_labels.border.bottom.color = "#D97757",
+      row.striping.background_color = "rgba(45, 42, 38, 0.5)",
+      data_row.padding = gt::px(12),
       table.border.top.color = "transparent",
       table.border.bottom.color = "transparent",
       table.border.left.color = "transparent",
@@ -2271,12 +2487,12 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     )
     gt_tbl <- gt::tab_style(
       gt_tbl,
-      style = gt::cell_text(color = "#f8fafc"),
+      style = gt::cell_text(color = "#FAF9F6"),
       locations = gt::cells_title(groups = "title")
     )
     gt_tbl <- gt::tab_style(
       gt_tbl,
-      style = gt::cell_text(color = "#cbd5f5"),
+      style = gt::cell_text(color = "#E89A7A"),
       locations = gt::cells_title(groups = "subtitle")
     )
     gt_tbl <- gt::opt_row_striping(gt_tbl)
@@ -2285,7 +2501,8 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         gt_tbl,
         columns = "Blend Beat Market?",
         colors = function(values) {
-          palette <- c(Yes = "#166534", No = "#1f2937", `N/A` = "#374151")
+          # Claude-themed colors: warm green for yes, muted for no/NA
+          palette <- c(Yes = "#059669", No = "#3D3A36", `N/A` = "#4A4640")
           mapped <- palette[as.character(values)]
           default <- palette[["N/A"]]
           mapped[is.na(mapped)] <- default
@@ -2309,8 +2526,8 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       gt_tbl <- gt::tab_style(
         gt_tbl,
         style = list(
-          gt::cell_fill(color = "#1d4ed8"),
-          gt::cell_text(color = "#f8fafc", weight = "bold")
+          gt::cell_fill(color = "#D97757"),
+          gt::cell_text(color = "#FAF9F6", weight = "bold")
         ),
         locations = gt::cells_body(
           columns = "Blend Recommendation",
@@ -2322,8 +2539,8 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       gt_tbl <- gt::tab_style(
         gt_tbl,
         style = list(
-          gt::cell_fill(color = "#0f172a"),
-          gt::cell_text(color = "#fcd34d", weight = "bold")
+          gt::cell_fill(color = "#2D2A26"),
+          gt::cell_text(color = "#E89A7A", weight = "bold")
         ),
         locations = gt::cells_body(
           columns = "Winner",
@@ -2334,8 +2551,8 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     gt_tbl <- gt::tab_style(
       gt_tbl,
       style = list(
-        gt::cell_fill(color = "#1e293b"),
-        gt::cell_text(color = "#f8fafc", weight = "bold")
+        gt::cell_fill(color = "#1A1815"),
+        gt::cell_text(color = "#FAF9F6", weight = "bold")
       ),
       locations = gt::cells_column_labels(columns = gt::everything())
     )
@@ -2359,12 +2576,12 @@ export_moneyline_comparison_html <- function(comparison_tbl,
 
     if ("opt_css" %in% getNamespaceExports("gt")) {
       custom_css <- paste(
-        ".gt_table { border-radius: 18px; overflow: hidden; box-shadow: 0 28px 60px rgba(15, 23, 42, 0.55); background-color: rgba(15, 23, 42, 0.9); }",
-        ".gt_table thead th { position: sticky; top: 0; z-index: 2; backdrop-filter: blur(6px); background-color: rgba(15, 23, 42, 0.92); font-size: 0.85rem; padding: 12px 8px; border-bottom: 2px solid rgba(59, 130, 246, 0.3); }",
-        ".gt_table tbody tr:hover { background-color: rgba(37, 99, 235, 0.18); transition: background-color 180ms ease-in-out; transform: scale(1.005); }",
-        ".gt_table tbody td { padding: 10px 8px; font-size: 0.9rem; border-bottom: 1px solid rgba(30, 41, 59, 0.5); }",
+        ".gt_table { border-radius: 24px; overflow: hidden; box-shadow: 0 30px 80px rgba(0, 0, 0, 0.4); background-color: rgba(45, 42, 38, 0.9); }",
+        ".gt_table thead th { position: sticky; top: 0; z-index: 2; backdrop-filter: blur(10px); background-color: rgba(26, 24, 21, 0.95); font-size: 0.85rem; padding: 14px 10px; border-bottom: 2px solid #D97757; color: #FAF9F6; }",
+        ".gt_table tbody tr:hover { background-color: rgba(217, 119, 87, 0.12); transition: all 0.2s ease; transform: scale(1.002); }",
+        ".gt_table tbody td { padding: 12px 10px; font-size: 0.9rem; border-bottom: 1px solid rgba(217, 119, 87, 0.1); }",
         ".gt_table tbody td[style*='background'] { font-weight: 600; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3); }",
-        "@media (max-width: 768px) { .gt_table thead th { font-size: 0.7rem; padding: 8px 4px; } .gt_table tbody td { font-size: 0.8rem; padding: 8px 4px; } }",
+        "@media (max-width: 768px) { .gt_table thead th { font-size: 0.7rem; padding: 10px 6px; } .gt_table tbody td { font-size: 0.8rem; padding: 10px 6px; } }",
         sep = "\n"
       )
       gt_tbl <- tryCatch(
@@ -2391,24 +2608,46 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         gt_html <- sub("<table", sprintf("<table id=\"%s\"", table_id), gt_html)
       }
 
+      # Modern Claude-inspired color scheme with warm coral/terracotta accents
       css_block_gt <- paste0(
-        "body {font-family: 'Inter','Source Sans Pro','Helvetica Neue',Arial,sans-serif; background: radial-gradient(circle at top,#172554 0%,#020617 70%); color: #e2e8f0; margin: 0; padding-top: 85px;}\n",
-        ".search-container {position: fixed; top: 0; left: 0; right: 0; z-index: 1000; background: linear-gradient(135deg, rgba(2, 6, 23, 0.98), rgba(15, 23, 42, 0.95)); backdrop-filter: blur(10px); border-bottom: 2px solid rgba(59, 130, 246, 0.4); padding: 1.25rem 0; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);}\n",
-        ".search-inner {max-width: 1200px; margin: 0 auto; padding: 0 1.5rem;}\n",
-        ".page-wrapper {max-width: 1200px; margin: 0 auto; padding: 1rem 1.5rem 4rem;}\n",
-        ".table-wrapper {overflow-x: auto; border-radius: 18px;}\n",
-        ".report-intro {max-width: 960px; margin: 0 auto 2rem; background: linear-gradient(135deg,rgba(15,23,42,0.95),rgba(30,41,59,0.95)); padding: 1.5rem 1.75rem; border-radius: 18px; border: 1px solid rgba(148,163,184,0.25); box-shadow: 0 24px 56px rgba(15,23,42,0.55);}\n",
-        ".report-intro h2 {margin: 0 0 0.75rem; font-size: 1.3rem; color: #f8fafc; letter-spacing: 0.02em;}\n",
-        ".report-intro p {margin: 0 0 1rem; color: #cbd5f5; font-size: 0.95rem;}\n",
-        ".report-intro ul {margin: 0; padding-left: 1.25rem; color: #e2e8f0; line-height: 1.5;}\n",
-        ".report-intro li {margin-bottom: 0.4rem;}\n",
-        ".gt_table {border-radius: 18px; overflow: hidden; box-shadow: 0 28px 60px rgba(15,23,42,0.55);}\n",
-        ".gt_table thead th {position: sticky; top: 85px; z-index: 100; background: rgba(15,23,42,0.92); backdrop-filter: blur(6px);}\n",
-        ".gt_table tbody tr:hover {background-color: rgba(37,99,235,0.18) !important;}\n",
-        "#table-search {width: 100%; max-width: 500px; padding: 0.85rem 1.25rem; margin: 0 auto; border-radius: 999px; border: 1px solid rgba(59, 130, 246, 0.4); background-color: rgba(15,23,42,0.9); color: #f8fafc; display: block; box-shadow: 0 4px 12px rgba(59, 130, 246, 0.2); transition: all 0.2s ease; font-size: 1rem;}\n",
-        "#table-search:focus {outline: none; border-color: #60a5fa; box-shadow: 0 0 0 3px rgba(96,165,250,0.4), 0 8px 20px rgba(59, 130, 246, 0.3); transform: translateY(-1px);}\n",
-        "#table-search::placeholder {color: rgba(148, 163, 184, 0.7);}\n",
-        "@media (max-width: 768px) { body {padding-top: 75px;} .gt_table {font-size: 0.88rem;} .gt_table thead th {font-size: 0.7rem; top: 75px;} .report-intro {padding: 1.25rem;} #table-search {font-size: 0.9rem; padding: 0.75rem 1rem;} }\n"
+        # CSS Variables for theming
+        ":root {--claude-coral: #D97757; --claude-coral-light: #E89A7A; --claude-cream: #FAF9F6; --claude-warm-gray: #2D2A26; --claude-dark: #1A1815; --accent-glow: rgba(217, 119, 87, 0.3);}\n",
+        # Body with warm gradient
+        "body {font-family: 'Inter','Söhne','Source Sans Pro','Helvetica Neue',Arial,sans-serif; background: linear-gradient(135deg, #1A1815 0%, #2D2A26 50%, #1A1815 100%); color: #F5F4F0; margin: 0; padding-top: 85px; min-height: 100vh;}\n",
+        # Animated gradient background
+        "body::before {content: ''; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: radial-gradient(ellipse at 30% 20%, rgba(217, 119, 87, 0.08) 0%, transparent 50%), radial-gradient(ellipse at 70% 80%, rgba(217, 119, 87, 0.05) 0%, transparent 50%); pointer-events: none; z-index: -1;}\n",
+        # Search container with glass morphism
+        ".search-container {position: fixed; top: 0; left: 0; right: 0; z-index: 1000; background: rgba(26, 24, 21, 0.85); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border-bottom: 1px solid rgba(217, 119, 87, 0.3); padding: 1.25rem 0; box-shadow: 0 4px 30px rgba(0, 0, 0, 0.3);}\n",
+        ".search-inner {max-width: 1400px; margin: 0 auto; padding: 0 1.5rem;}\n",
+        ".page-wrapper {max-width: 1400px; margin: 0 auto; padding: 1rem 1.5rem 4rem;}\n",
+        ".table-wrapper {overflow-x: auto; border-radius: 24px; box-shadow: 0 25px 80px rgba(0, 0, 0, 0.4);}\n",
+        # Report intro with glass morphism
+        ".report-intro {max-width: 1000px; margin: 0 auto 2.5rem; background: rgba(45, 42, 38, 0.7); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); padding: 2rem 2.25rem; border-radius: 24px; border: 1px solid rgba(217, 119, 87, 0.2); box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.05);}\n",
+        ".report-intro h2 {margin: 0 0 1rem; font-size: 1.5rem; color: var(--claude-cream); letter-spacing: -0.01em; font-weight: 600;}\n",
+        ".report-intro h3 {color: var(--claude-coral-light); font-size: 1.1rem; margin: 1.5rem 0 0.75rem; font-weight: 600;}\n",
+        ".report-intro p {margin: 0 0 1rem; color: #C9C5BE; font-size: 0.95rem; line-height: 1.6;}\n",
+        ".report-intro ul {margin: 0; padding-left: 1.25rem; color: #E8E6E1; line-height: 1.7;}\n",
+        ".report-intro li {margin-bottom: 0.5rem;}\n",
+        ".report-intro strong {color: var(--claude-cream);}\n",
+        # Intro section styling
+        ".intro-section {padding: 1.25rem; margin: 1rem 0; border-radius: 16px; background: rgba(26, 24, 21, 0.5); border: 1px solid rgba(217, 119, 87, 0.15);}\n",
+        # GT Table styling
+        ".gt_table {border-radius: 20px; overflow: hidden; box-shadow: 0 30px 80px rgba(0, 0, 0, 0.4); background: rgba(45, 42, 38, 0.9) !important;}\n",
+        ".gt_table thead th {position: sticky; top: 85px; z-index: 100; background: rgba(26, 24, 21, 0.95) !important; backdrop-filter: blur(10px); color: var(--claude-cream) !important; font-weight: 600; letter-spacing: 0.03em; border-bottom: 2px solid var(--claude-coral) !important;}\n",
+        ".gt_table tbody tr {transition: all 0.2s ease;}\n",
+        ".gt_table tbody tr:hover {background-color: rgba(217, 119, 87, 0.12) !important; transform: scale(1.002);}\n",
+        ".gt_table tbody td {border-bottom: 1px solid rgba(217, 119, 87, 0.1) !important;}\n",
+        # Search input with coral accent
+        "#table-search {width: 100%; max-width: 550px; padding: 1rem 1.5rem; margin: 0 auto; border-radius: 999px; border: 1px solid rgba(217, 119, 87, 0.3); background: rgba(45, 42, 38, 0.8); color: var(--claude-cream); display: block; box-shadow: 0 4px 20px rgba(217, 119, 87, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.05); transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); font-size: 1rem;}\n",
+        "#table-search:focus {outline: none; border-color: var(--claude-coral); box-shadow: 0 0 0 4px var(--accent-glow), 0 8px 30px rgba(217, 119, 87, 0.2); transform: translateY(-2px);}\n",
+        "#table-search::placeholder {color: rgba(201, 197, 190, 0.6);}\n",
+        # Color guide boxes
+        ".color-box {display: inline-block; width: 16px; height: 16px; border-radius: 4px; vertical-align: middle; margin-right: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.2);}\n",
+        # Result styling
+        ".result-yes {color: #6EE7B7; font-weight: 600;}\n",
+        ".result-no {color: #FCA5A5; font-weight: 600;}\n",
+        # Responsive adjustments
+        "@media (max-width: 768px) { body {padding-top: 75px;} .gt_table {font-size: 0.88rem;} .gt_table thead th {font-size: 0.7rem; top: 75px;} .report-intro {padding: 1.5rem; margin: 0 0.5rem 2rem;} #table-search {font-size: 0.9rem; padding: 0.85rem 1.25rem;} }\n"
       )
 
       search_box <- htmltools::tags$div(
@@ -2454,69 +2693,102 @@ export_moneyline_comparison_html <- function(comparison_tbl,
   }
 
   if (!saved) {
-    css_block <- "body {font-family: 'Inter','Source Sans Pro','Helvetica Neue',Arial,sans-serif; background: radial-gradient(circle at top,#172554 0%,#020617 70%); color: #e2e8f0; margin: 0;}\n"
+    # Fallback CSS with Claude-inspired color scheme
+    css_block <- ":root {--claude-coral: #D97757; --claude-coral-light: #E89A7A; --claude-cream: #FAF9F6; --claude-warm-gray: #2D2A26; --claude-dark: #1A1815;}\n"
     css_block <- paste0(
       css_block,
-      ".page-wrapper {max-width: 1200px; margin: 0 auto; padding: 3rem 1.5rem 4rem;}\n",
-      ".table-wrapper {overflow-x: auto; border-radius: 18px;}\n",
-      ".report-intro {max-width: 960px; margin: 0 auto 2rem; background: linear-gradient(135deg,rgba(15,23,42,0.95),rgba(30,41,59,0.95)); padding: 1.5rem 1.75rem; border-radius: 18px; border: 1px solid rgba(148,163,184,0.25); box-shadow: 0 24px 56px rgba(15,23,42,0.55);}\n",
-      ".report-intro h2 {margin: 0 0 0.75rem; font-size: 1.3rem; color: #f8fafc; letter-spacing: 0.02em;}\n",
-      ".report-intro p {margin: 0 0 1rem; color: #cbd5f5; font-size: 0.95rem;}\n",
-      ".report-intro ul {margin: 0; padding-left: 1.25rem; color: #e2e8f0; line-height: 1.5;}\n",
-      ".report-intro li {margin-bottom: 0.4rem;}\n",
-      "table {width: 100%; border-collapse: separate; border-spacing: 0; background-color: rgba(15,23,42,0.94); color: #e2e8f0; border-radius: 18px; overflow: hidden; box-shadow: 0 28px 60px rgba(15,23,42,0.55); border: 1px solid rgba(148,163,184,0.2);}\n",
-      "thead th {background-color: rgba(17,28,47,0.95); color: #f8fafc; text-transform: uppercase; letter-spacing: 0.08em; position: sticky; top: 0; z-index: 2;}\n",
-      "td, th {padding: 12px 14px; border-bottom: 1px solid rgba(30,41,59,0.75); text-align: center;}\n",
+      "body {font-family: 'Inter','Söhne','Source Sans Pro','Helvetica Neue',Arial,sans-serif; background: linear-gradient(135deg, #1A1815 0%, #2D2A26 50%, #1A1815 100%); color: #F5F4F0; margin: 0; min-height: 100vh;}\n",
+      ".page-wrapper {max-width: 1400px; margin: 0 auto; padding: 3rem 1.5rem 4rem;}\n",
+      ".table-wrapper {overflow-x: auto; border-radius: 24px; box-shadow: 0 25px 80px rgba(0, 0, 0, 0.4);}\n",
+      ".report-intro {max-width: 1000px; margin: 0 auto 2.5rem; background: rgba(45, 42, 38, 0.7); backdrop-filter: blur(10px); padding: 2rem 2.25rem; border-radius: 24px; border: 1px solid rgba(217, 119, 87, 0.2); box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);}\n",
+      ".report-intro h2 {margin: 0 0 1rem; font-size: 1.5rem; color: var(--claude-cream); font-weight: 600;}\n",
+      ".report-intro h3 {color: var(--claude-coral-light); font-size: 1.1rem; margin: 1.5rem 0 0.75rem; font-weight: 600;}\n",
+      ".report-intro p {margin: 0 0 1rem; color: #C9C5BE; font-size: 0.95rem; line-height: 1.6;}\n",
+      ".report-intro ul {margin: 0; padding-left: 1.25rem; color: #E8E6E1; line-height: 1.7;}\n",
+      ".report-intro li {margin-bottom: 0.5rem;}\n",
+      ".intro-section {padding: 1.25rem; margin: 1rem 0; border-radius: 16px; background: rgba(26, 24, 21, 0.5); border: 1px solid rgba(217, 119, 87, 0.15);}\n",
+      "table {width: 100%; border-collapse: separate; border-spacing: 0; background-color: rgba(45, 42, 38, 0.9); color: #F5F4F0; border-radius: 24px; overflow: hidden; box-shadow: 0 30px 80px rgba(0, 0, 0, 0.4); border: 1px solid rgba(217, 119, 87, 0.2);}\n",
+      "thead th {background-color: rgba(26, 24, 21, 0.95); color: var(--claude-cream); text-transform: uppercase; letter-spacing: 0.08em; position: sticky; top: 0; z-index: 2; border-bottom: 2px solid var(--claude-coral);}\n",
+      "td, th {padding: 14px 12px; border-bottom: 1px solid rgba(217, 119, 87, 0.1); text-align: center;}\n",
       "td.text-left {text-align: left;}\n",
       "td.note-cell {max-width: 260px; white-space: normal; word-wrap: break-word;}\n",
-      "tr:nth-child(even) {background-color: rgba(15,23,42,0.65);}\n",
-      "tr.blend-win {background: linear-gradient(135deg,rgba(22,101,52,0.75),rgba(21,128,61,0.6));}\n",
-      "tr.blend-win td {color: #ecfdf5;}\n",
-      "td.blend-reco {background-color: rgba(37,99,235,0.75) !important; color: #f8fafc !important; font-weight: 600;}\n",
-      "td.winner-cell {color: #fcd34d; font-weight: 600;}\n",
-      "tbody tr:hover {background-color: rgba(37,99,235,0.18);}\n",
-      "caption {caption-side: top; font-size: 1.35rem; font-weight: 600; margin-bottom: 0.75rem; color: #f8fafc;}\n",
-      "#table-search {width: 100%; max-width: 420px; padding: 0.75rem 1rem; margin: 0 auto 1.5rem; border-radius: 999px; border: 1px solid rgba(148,163,184,0.35); background-color: rgba(15,23,42,0.85); color: #f8fafc; display: block; box-shadow: 0 12px 30px rgba(15,23,42,0.45);}\n",
-      "#table-search:focus {outline: none; border-color: #60a5fa; box-shadow: 0 0 0 3px rgba(96,165,250,0.35);}\n",
-      "@media (max-width: 768px) { table {font-size: 0.88rem;} thead th {font-size: 0.7rem;} }\n"
+      "tr:nth-child(even) {background-color: rgba(45, 42, 38, 0.5);}\n",
+      "tr.blend-win {background: linear-gradient(135deg, rgba(5, 150, 105, 0.4), rgba(16, 185, 129, 0.3));}\n",
+      "tr.blend-win td {color: #D1FAE5;}\n",
+      "td.blend-reco {background-color: var(--claude-coral) !important; color: var(--claude-cream) !important; font-weight: 600;}\n",
+      "td.winner-cell {color: var(--claude-coral-light); font-weight: 600;}\n",
+      "tbody tr:hover {background-color: rgba(217, 119, 87, 0.12); transition: all 0.2s ease;}\n",
+      "caption {caption-side: top; font-size: 1.35rem; font-weight: 600; margin-bottom: 0.75rem; color: var(--claude-cream);}\n",
+      "#table-search {width: 100%; max-width: 550px; padding: 1rem 1.5rem; margin: 0 auto 1.5rem; border-radius: 999px; border: 1px solid rgba(217, 119, 87, 0.3); background-color: rgba(45, 42, 38, 0.8); color: var(--claude-cream); display: block; box-shadow: 0 4px 20px rgba(217, 119, 87, 0.1); transition: all 0.3s ease;}\n",
+      "#table-search:focus {outline: none; border-color: var(--claude-coral); box-shadow: 0 0 0 4px rgba(217, 119, 87, 0.3);}\n",
+      ".color-box {display: inline-block; width: 16px; height: 16px; border-radius: 4px; vertical-align: middle; margin-right: 8px;}\n",
+      "@media (max-width: 768px) { table {font-size: 0.88rem;} thead th {font-size: 0.7rem;} .report-intro {padding: 1.5rem; margin: 0 0.5rem 2rem;} }\n"
     )
 
-    formatted_tbl <- display_tbl %>%
-      dplyr::mutate(
-        `Blend Edge` = scales::percent(`Blend Edge`, accuracy = 0.1),
-        `Market Home Prob` = scales::percent(`Market Home Prob`, accuracy = 0.1),
-        `Blend Home Prob` = scales::percent(`Blend Home Prob`, accuracy = 0.1),
-        `Market Spread Win%` = scales::percent(`Market Spread Win%`, accuracy = 0.1),
-        `Blend Spread Win%` = scales::percent(`Blend Spread Win%`, accuracy = 0.1),
-        `Market Prob Δ` = scales::percent(`Market Prob Δ`, accuracy = 0.1),
-        `Blend Prob Δ` = scales::percent(`Blend Prob Δ`, accuracy = 0.1),
-        `Market Away Prob` = scales::percent(`Market Away Prob`, accuracy = 0.1),
-        `Blend Away Prob` = scales::percent(`Blend Away Prob`, accuracy = 0.1),
-        `Blend Median Margin` = format_signed_spread(`Blend Median Margin`),
-        `Market Home Spread` = format_signed_spread(`Market Home Spread`),
-        `Market Implied Margin` = format_signed_spread(`Market Implied Margin`),
-        `Market Total` = format(round(`Market Total`, 1), nsmall = 1),
-        `Blend EV Units` = format(round(`Blend EV Units`, 3), nsmall = 3),
-        `Market EV Units` = format(round(`Market EV Units`, 3), nsmall = 3),
-        `Blend Stake (Units)` = dplyr::if_else(
-          is.na(`Blend Stake (Units)`),
-          "",
-          format(round(`Blend Stake (Units)`, 3), nsmall = 3)
-        ),
-        `Blend Beat Market Basis` = dplyr::coalesce(`Blend Beat Market Basis`, ""),
-        Date = suppressWarnings(format(as.Date(Date), "%b %d, %Y")),
-        Date = dplyr::if_else(is.na(Date) | Date == "NA", "", Date),
-        `Blend Favorite` = dplyr::if_else(is.na(`Blend Favorite`), "", `Blend Favorite`),
-        `Market Favorite` = dplyr::if_else(is.na(`Market Favorite`), "", `Market Favorite`),
-        `Blend Prob` = dplyr::if_else(is.na(`Blend Prob`), "", `Blend Prob`),
-        `Market Prob` = dplyr::if_else(is.na(`Market Prob`), "", `Market Prob`),
-        `Blend Pick` = dplyr::if_else(is.na(`Blend Pick`), "", `Blend Pick`),
-        Winner = dplyr::if_else(is.na(Winner) | Winner == "", "TBD", Winner),
-        dplyr::across(
-          dplyr::all_of(moneyline_cols),
-          format_moneyline_strings
-        )
+    # Format columns that exist in display_tbl (fallback for when gt unavailable)
+    formatted_tbl <- display_tbl
+    display_cols_fb <- names(display_tbl)
+
+    # Helper to safely format percent columns
+    safe_percent <- function(df, col) {
+      if (col %in% names(df)) {
+        df[[col]] <- scales::percent(df[[col]], accuracy = 0.1)
+      }
+      df
+    }
+
+    # Format probability columns
+    for (pcol in c("EV Edge (%)", "Raw Prob Edge (pp)", "Blend Home Win %",
+                   "Market Home Win %", "ML Implied Home %")) {
+      formatted_tbl <- safe_percent(formatted_tbl, pcol)
+    }
+
+    # Format spread columns
+    if ("Blend Median Margin" %in% display_cols_fb) {
+      formatted_tbl[["Blend Median Margin"]] <- format_signed_spread(formatted_tbl[["Blend Median Margin"]])
+    }
+    if ("Market Home Spread" %in% display_cols_fb) {
+      formatted_tbl[["Market Home Spread"]] <- format_signed_spread(formatted_tbl[["Market Home Spread"]])
+    }
+
+    # Format numeric columns
+    if ("Market Total" %in% display_cols_fb) {
+      formatted_tbl[["Market Total"]] <- format(round(formatted_tbl[["Market Total"]], 1), nsmall = 1)
+    }
+    if ("Total EV (Units)" %in% display_cols_fb) {
+      formatted_tbl[["Total EV (Units)"]] <- format(round(formatted_tbl[["Total EV (Units)"]], 3), nsmall = 3)
+    }
+    if ("Blend Stake (Units)" %in% display_cols_fb) {
+      formatted_tbl[["Blend Stake (Units)"]] <- dplyr::if_else(
+        is.na(formatted_tbl[["Blend Stake (Units)"]]),
+        "",
+        format(round(formatted_tbl[["Blend Stake (Units)"]], 3), nsmall = 3)
       )
+    }
+
+    # Format text columns
+    if ("Blend Beat Market Basis" %in% display_cols_fb) {
+      formatted_tbl[["Blend Beat Market Basis"]] <- dplyr::coalesce(formatted_tbl[["Blend Beat Market Basis"]], "")
+    }
+    if ("Date" %in% display_cols_fb) {
+      formatted_tbl[["Date"]] <- suppressWarnings(format(as.Date(formatted_tbl[["Date"]]), "%b %d, %Y"))
+      formatted_tbl[["Date"]] <- dplyr::if_else(is.na(formatted_tbl[["Date"]]) | formatted_tbl[["Date"]] == "NA", "", formatted_tbl[["Date"]])
+    }
+    if ("Blend Pick" %in% display_cols_fb) {
+      formatted_tbl[["Blend Pick"]] <- dplyr::if_else(is.na(formatted_tbl[["Blend Pick"]]), "", formatted_tbl[["Blend Pick"]])
+    }
+    if ("Winner" %in% display_cols_fb) {
+      formatted_tbl[["Winner"]] <- dplyr::if_else(is.na(formatted_tbl[["Winner"]]) | formatted_tbl[["Winner"]] == "", "TBD", formatted_tbl[["Winner"]])
+    }
+
+    # Format moneyline columns
+    moneyline_cols_fb <- intersect(c("Market Home Moneyline", "Market Away Moneyline"), display_cols_fb)
+    if (length(moneyline_cols_fb)) {
+      formatted_tbl <- dplyr::mutate(
+        formatted_tbl,
+        dplyr::across(dplyr::all_of(moneyline_cols_fb), format_moneyline_strings)
+      )
+    }
 
     if (requireNamespace("htmltools", quietly = TRUE)) {
       left_align_cols <- c(
