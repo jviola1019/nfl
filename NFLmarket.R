@@ -621,6 +621,98 @@ expected_value_units <- function(prob, odds) {
   out
 }
 
+# ==============================================================================
+# PROFESSIONAL CALIBRATION: Probability shrinkage and conservative staking
+# ==============================================================================
+# NFL betting markets are extremely efficient. Models that show large edges
+# (>5%) are almost certainly overfit or miscalibrated. These functions implement
+# professional-grade adjustments to account for model uncertainty.
+
+#' Shrink model probability toward market consensus
+#'
+#' Professional models recognize that market probabilities incorporate
+#' information the model may not have. This function implements Bayesian
+#' shrinkage toward market prices to reduce overconfidence.
+#'
+#' @param model_prob Model's estimated probability
+#' @param market_prob Market-implied probability
+#' @param shrinkage Shrinkage factor (0-1). Higher = more trust in market.
+#'   Default 0.6 means 60% weight on market, 40% on model.
+#' @return Shrunk probability that blends model and market views
+shrink_probability_toward_market <- function(model_prob, market_prob, shrinkage = 0.6) {
+  model_prob <- clamp_probability(model_prob)
+  market_prob <- clamp_probability(market_prob)
+  shrinkage <- pmax(0, pmin(1, shrinkage))
+
+  # Weighted average: higher shrinkage = more weight on market
+  shrunk <- (1 - shrinkage) * model_prob + shrinkage * market_prob
+
+  clamp_probability(shrunk)
+}
+
+#' Calculate conservative Kelly stake with edge skepticism
+#'
+#' Full Kelly is too aggressive and assumes perfect probability estimates.
+#' This function implements:
+#' 1. Fractional Kelly (default 1/8) to reduce variance
+#' 2. Edge skepticism: larger edges are more likely model errors
+#' 3. Maximum stake caps to prevent catastrophic losses
+#'
+#' @param prob Estimated win probability (should be shrunk toward market)
+#' @param odds American odds for the bet
+#' @param kelly_fraction Fraction of Kelly to use (default 0.125 = 1/8 Kelly)
+#' @param max_edge Maximum believable edge (default 0.10 = 10%)
+#' @param max_stake Maximum stake as fraction of bankroll (default 0.02 = 2%)
+#' @return Conservative stake size
+conservative_kelly_stake <- function(prob, odds,
+                                     kelly_fraction = 0.125,
+                                     max_edge = 0.10,
+                                     max_stake = 0.02) {
+  prob <- clamp_probability(prob)
+  dec <- american_to_decimal(odds)
+  b <- dec - 1
+
+  # Standard Kelly formula
+  kelly <- (prob * b - (1 - prob)) / b
+
+  # Apply edge skepticism: if kelly > max_edge, the model is likely wrong
+  # Progressively reduce stake for "too good to be true" edges
+  edge_penalty <- dplyr::case_when(
+    is.na(kelly) ~ NA_real_,
+    kelly <= max_edge ~ 1.0,
+    kelly <= max_edge * 2 ~ 0.5,  # 50% penalty for 2x max believable edge
+    kelly <= max_edge * 3 ~ 0.25, # 75% penalty for 3x max believable edge
+    TRUE ~ 0.1                     # 90% penalty for extreme edges
+  )
+
+  # Apply fractional Kelly and edge penalty
+  stake <- kelly * kelly_fraction * edge_penalty
+
+  # Cap at maximum stake and floor at 0
+  stake <- pmax(0, pmin(stake, max_stake))
+
+  # Handle invalid values
+  invalid <- is.na(dec) | !is.finite(dec) | b <= 0 | abs(b) < 1e-6 | is.na(stake)
+  stake[invalid] <- NA_real_
+
+  stake
+}
+
+#' Classify edge magnitude for display warnings
+#'
+#' @param edge EV edge as decimal (e.g., 0.15 = 15%)
+#' @return Character classification: "realistic", "suspicious", "implausible"
+classify_edge_magnitude <- function(edge) {
+  dplyr::case_when(
+    is.na(edge) ~ NA_character_,
+    edge <= 0 ~ "negative",
+    edge <= 0.05 ~ "realistic",      # 0-5%: plausible professional edge
+    edge <= 0.10 ~ "optimistic",     # 5-10%: possible but rare
+    edge <= 0.15 ~ "suspicious",     # 10-15%: likely model error
+    TRUE ~ "implausible"             # >15%: almost certainly wrong
+  )
+}
+
 realized_moneyline_units <- function(pick_side, winner_side, odds, stake = 1) {
   pick_side <- tolower(as.character(pick_side))
   winner_side <- tolower(as.character(winner_side))
@@ -1614,10 +1706,36 @@ build_moneyline_comparison_table <- function(market_comparison_result,
       blend_home_ml_vig = apply_moneyline_vig(blend_home_ml, vig = vig),
       blend_away_ml = probability_to_american(blend_away_prob),
       blend_away_ml_vig = apply_moneyline_vig(blend_away_ml, vig = vig),
+
+      # ===========================================================================
+      # PROFESSIONAL CALIBRATION: Shrink probabilities toward market consensus
+      # ===========================================================================
+      # NFL markets are extremely efficient. Raw model probabilities that diverge
+      # significantly from market are almost certainly overfit. We shrink toward
+      # market to produce more realistic betting recommendations.
+      # Default shrinkage = 0.6 (60% market weight, 40% model weight)
+      blend_home_prob_shrunk = shrink_probability_toward_market(
+        blend_home_prob, market_home_prob, shrinkage = 0.6
+      ),
+      blend_away_prob_shrunk = shrink_probability_toward_market(
+        blend_away_prob, market_away_prob, shrinkage = 0.6
+      ),
+
+      # Raw probability edge (for display - shows model's raw view)
       blend_edge_prob_home = blend_home_prob - market_home_prob,
       blend_edge_prob_away = blend_away_prob - market_away_prob,
-      blend_ev_units_home = expected_value_units(blend_home_prob, market_home_ml),
-      blend_ev_units_away = expected_value_units(blend_away_prob, market_away_ml),
+
+      # Shrunk probability edge (for betting decisions - more conservative)
+      blend_edge_prob_home_shrunk = blend_home_prob_shrunk - market_home_prob,
+      blend_edge_prob_away_shrunk = blend_away_prob_shrunk - market_away_prob,
+
+      # EV calculations using SHRUNK probabilities (more realistic)
+      blend_ev_units_home = expected_value_units(blend_home_prob_shrunk, market_home_ml),
+      blend_ev_units_away = expected_value_units(blend_away_prob_shrunk, market_away_ml),
+
+      # Also calculate raw EV for comparison/display
+      blend_ev_units_home_raw = expected_value_units(blend_home_prob, market_home_ml),
+      blend_ev_units_away_raw = expected_value_units(blend_away_prob, market_away_ml),
       blend_favorite_side = dplyr::if_else(blend_home_prob >= blend_away_prob, "home", "away"),
       blend_favorite = dplyr::if_else(blend_favorite_side == "home", home_team, away_team),
       blend_best_ev = dplyr::case_when(
@@ -1664,12 +1782,21 @@ build_moneyline_comparison_table <- function(market_comparison_result,
         !is.na(blend_favorite_side) ~ "favorite_only",
         TRUE ~ NA_character_
       ),
+      # Raw blend probability for the picked side (for display)
       blend_prob_pick = dplyr::case_when(
         blend_pick_side == "home" ~ blend_home_prob,
         blend_pick_side == "away" ~ blend_away_prob,
         # For Pass games, use the favorite's probability
         blend_favorite_side == "home" ~ blend_home_prob,
         blend_favorite_side == "away" ~ blend_away_prob,
+        TRUE ~ NA_real_
+      ),
+      # Shrunk probability for the picked side (for betting decisions)
+      blend_prob_pick_shrunk = dplyr::case_when(
+        blend_pick_side == "home" ~ blend_home_prob_shrunk,
+        blend_pick_side == "away" ~ blend_away_prob_shrunk,
+        blend_favorite_side == "home" ~ blend_home_prob_shrunk,
+        blend_favorite_side == "away" ~ blend_away_prob_shrunk,
         TRUE ~ NA_real_
       ),
       blend_moneyline = dplyr::case_when(
@@ -1878,22 +2005,47 @@ build_moneyline_comparison_table <- function(market_comparison_result,
         TRUE ~ paste(blend_beats_market_note_raw, probability_alignment_note, sep = " | ")
       ),
       blend_beats_market_note = shorten_market_note(blend_beats_market_note),
-      blend_kelly_fraction = dplyr::case_when(
+      # ===========================================================================
+      # CONSERVATIVE KELLY STAKING
+      # ===========================================================================
+      # Use 1/8 Kelly with edge skepticism to account for model uncertainty.
+      # Larger "edges" are more likely model errors, so we apply progressive
+      # penalties for implausibly large edges.
+
+      # Raw Kelly (for reference only - NOT used for staking)
+      blend_kelly_fraction_raw = dplyr::case_when(
         is.na(blend_pick_side) ~ NA_real_,
         TRUE ~ {
           dec <- american_to_decimal(market_moneyline)
           b <- dec - 1
           stake <- (blend_prob_pick * b - (1 - blend_prob_pick)) / b
-          # Check for invalid values including near-zero b to avoid numerical instability
           invalid <- is.na(dec) | !is.finite(dec) | b <= 0 | abs(b) < 1e-6 | is.na(stake)
           stake[invalid] <- NA_real_
           stake
         }
       ),
+
+      # Conservative Kelly using SHRUNK probabilities
+      # Uses 1/8 Kelly (12.5%), max 10% believable edge, max 2% stake
       blend_confidence = dplyr::case_when(
-        is.na(blend_kelly_fraction) ~ NA_real_,
-        blend_kelly_fraction < 0 ~ 0,
-        TRUE ~ blend_kelly_fraction
+        is.na(blend_pick_side) ~ NA_real_,
+        TRUE ~ conservative_kelly_stake(
+          prob = blend_prob_pick_shrunk,
+          odds = market_moneyline,
+          kelly_fraction = 0.125,   # 1/8 Kelly
+          max_edge = 0.10,          # Cap believable edge at 10%
+          max_stake = 0.02          # Max 2% of bankroll per bet
+        )
+      ),
+
+      # Edge magnitude classification for display warnings
+      edge_classification = classify_edge_magnitude(blend_ev_units),
+      edge_classification_raw = classify_edge_magnitude(
+        dplyr::case_when(
+          blend_pick_side == "home" ~ blend_ev_units_home_raw,
+          blend_pick_side == "away" ~ blend_ev_units_away_raw,
+          TRUE ~ NA_real_
+        )
       ),
       actual_winner = dplyr::case_when(
         is.na(actual_home_win) ~ actual_winner,
@@ -2035,15 +2187,28 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     "<h2>📊 NFL Blend vs Market Analysis Report</h2>",
     "<p class=\"report-subtitle\">Comprehensive comparison of blended model predictions against betting market consensus</p>",
 
+    "<div class=\"intro-section\" style=\"background: rgba(220, 38, 38, 0.15); border-left: 4px solid #ef4444;\">",
+    "<h3>⚠️ CRITICAL: PROFESSIONAL CALIBRATION APPLIED</h3>",
+    "<p><strong>NFL betting markets are among the most efficient in sports.</strong> Professional sharps rarely find edges above 3-5%. This model applies:</p>",
+    "<ul>",
+    "<li>🎯 <strong>60% Probability Shrinkage:</strong> Raw model probabilities are shrunk 60% toward market consensus to reduce overconfidence</li>",
+    "<li>📉 <strong>1/8 Kelly Staking:</strong> Only 12.5% of optimal Kelly is used to account for estimation error</li>",
+    "<li>🚫 <strong>Edge Skepticism:</strong> Edges >10% receive additional penalties (likely model error, not real opportunity)</li>",
+    "<li>📊 <strong>Max 2% Stake:</strong> No single bet exceeds 2% of bankroll regardless of calculated edge</li>",
+    "</ul>",
+    "<p style=\"color: #fca5a5; font-weight: 600;\">⚠️ Edges >5% are OPTIMISTIC, >10% are SUSPICIOUS, >15% are almost certainly model errors. Do NOT bet large amounts on \"implausible\" edges!</p>",
+    "</div>",
+
     "<div class=\"intro-section\" style=\"background: rgba(22,101,52,0.2); border-left: 4px solid #22c55e;\">",
     "<h3>✅ METHODOLOGY & TRANSPARENCY</h3>",
     "<p><strong>Key Features:</strong></p>",
     "<ul>",
-    "<li>✅ <strong>EV Edge (%)</strong> correctly calculated as: (Blend Probability × Decimal Odds) - 1</li>",
-    "<li>✅ <strong>Total EV (Units)</strong> correctly calculated as: Stake × EV Edge</li>",
-    "<li>✅ <strong>Prob Edge on Pick (pp)</strong> shows probability advantage on recommended/favorite side</li>",
+    "<li>✅ <strong>EV Edge (%)</strong> calculated using SHRUNK probabilities: (Shrunk Prob × Decimal Odds) - 1</li>",
+    "<li>✅ <strong>Total EV (Units)</strong> calculated as: Conservative Stake × EV Edge</li>",
+    "<li>✅ <strong>Prob Edge on Pick (pp)</strong> shows RAW probability advantage (before shrinkage) for reference</li>",
     "<li>✅ <strong>ML Implied Home %</strong> shows raw moneyline-derived probability for transparency</li>",
     "<li>✅ <strong>Blend Pick*</strong> asterisk indicates Pass games where blend favorite is shown (no positive EV bet)</li>",
+    "<li>✅ <strong>Edge Classification:</strong> realistic (0-5%), optimistic (5-10%), suspicious (10-15%), implausible (>15%)</li>",
     "</ul>",
     "<p style=\"color: #60a5fa; font-weight: 600;\">📊 Market Home Win % uses moneyline when available; spread-derived only as fallback</p>",
     "</div>",
@@ -2143,15 +2308,25 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         TRUE ~ "No"
       ),
       `Blend Beat Market Basis` = blend_beats_market_basis,
-      `Blend Stake (Units)` = blend_confidence,
-      `EV Edge (%)` = blend_ev_units,  # FIXED: Was blend_edge_prob (probability diff), now shows actual EV edge
+      `Blend Stake (Units)` = blend_confidence,  # Conservative 1/8 Kelly with edge skepticism
+      `EV Edge (%)` = blend_ev_units,  # Calculated using SHRUNK probabilities
       `Total EV (Units)` = dplyr::if_else(
         is.na(blend_confidence) | is.na(blend_ev_units),
         NA_real_,
-        blend_confidence * blend_ev_units  # FIXED: Total expected profit = Stake × Edge
+        blend_confidence * blend_ev_units  # Conservative stake × shrunk EV
       ),
-      # Renamed: clarifies this is the prob advantage on the recommended/favorite side
-      `Prob Edge on Pick (pp)` = blend_edge_prob,  # Probability difference for reference
+      # Edge classification for professional warning
+      `Edge Quality` = dplyr::case_when(
+        is.na(edge_classification) ~ "N/A",
+        edge_classification == "negative" ~ "Pass",
+        edge_classification == "realistic" ~ "✓ OK",
+        edge_classification == "optimistic" ~ "⚠ High",
+        edge_classification == "suspicious" ~ "⚠⚠ Suspicious",
+        edge_classification == "implausible" ~ "🚫 Implausible",
+        TRUE ~ edge_classification
+      ),
+      # Renamed: clarifies this is the RAW prob advantage (before shrinkage)
+      `Raw Prob Edge (pp)` = blend_edge_prob,  # RAW probability difference for reference
       `Blend Home Win %` = blend_home_prob,
       `Market Home Win %` = market_home_prob,
       # NEW: Show moneyline-implied probability for transparency
@@ -2188,7 +2363,7 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     gt_tbl <- gt::gt(display_tbl)
     gt_tbl <- gt_apply_if_columns(
       gt_tbl,
-      c("EV Edge (%)", "Prob Edge on Pick (pp)"),
+      c("EV Edge (%)", "Raw Prob Edge (pp)"),
       gt::fmt_percent,
       decimals = 2
     )
@@ -2262,14 +2437,14 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       c("#991B1B", "#dc2626", "#1f2937", "#15803d", "#166534"), c(-0.05, 0.05))
     gt_tbl <- apply_color(gt_tbl, "EV Edge (%)",
       c("#991B1B", "#dc2626", "#1f2937", "#15803d", "#166534"), c(-0.15, 0.15))
-    gt_tbl <- apply_color(gt_tbl, "Prob Edge on Pick (pp)",
+    gt_tbl <- apply_color(gt_tbl, "Raw Prob Edge (pp)",
       c("#7f1d1d", "#991b1b", "#1f2937", "#14532d", "#15532d"), c(-0.30, 0.30))
     gt_tbl <- apply_color(gt_tbl, c("Market Home Spread", "Blend Median Margin"),
       c("#dc2626", "#f87171", "#1f2937", "#4ade80", "#22c55e"), c(-14, 14))
     gt_tbl <- gt::tab_header(
       gt_tbl,
       title = title,
-      subtitle = "✅ CORRECTED CALCULATIONS • 🎯 Spreads • 📊 Probabilities • 💰 True EV Edge • 📈 Total Expected Value"
+      subtitle = "⚠️ PROFESSIONAL CALIBRATION • 60% Shrinkage • 1/8 Kelly • Edge Skepticism • Market-Adjusted Probabilities"
     )
 
     # Add column spanners for better organization
@@ -2287,7 +2462,7 @@ export_moneyline_comparison_html <- function(comparison_tbl,
 
     gt_tbl <- gt::tab_source_note(
       gt_tbl,
-      source_note = "✅ EV Edge = (Prob × Decimal Odds) - 1 | Total EV = Stake × EV Edge | * = Pass game (blend favorite shown) | ML Implied = moneyline-derived probability"
+      source_note = "⚠️ CALIBRATED: 60% shrinkage toward market | 1/8 Kelly staking | Edge skepticism applied | * = Pass game | ✓OK=0-5% | ⚠High=5-10% | ⚠⚠Suspicious=10-15% | 🚫Implausible=>15%"
     )
     gt_tbl <- gt::tab_options(
       gt_tbl,
@@ -2563,7 +2738,7 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     }
 
     # Format probability columns
-    for (pcol in c("EV Edge (%)", "Prob Edge on Pick (pp)", "Blend Home Win %",
+    for (pcol in c("EV Edge (%)", "Raw Prob Edge (pp)", "Blend Home Win %",
                    "Market Home Win %", "ML Implied Home %")) {
       formatted_tbl <- safe_percent(formatted_tbl, pcol)
     }
