@@ -52,6 +52,19 @@ A production-ready statistical model for predicting NFL game outcomes using Mont
    - Performance monitoring procedures
    - Best practices for weekly workflow
 
+### Technical Reports (.Rmd)
+
+7. **📋 [update.Rmd](update.Rmd)** - Professional Analytics Documentation
+   - **Professional Calibration**: 60% shrinkage, 1/8 Kelly, edge skepticism
+   - **CLV Tracking**: Closing Line Value measurement and analysis
+   - **Brier Score Decomposition**: Reliability, resolution, uncertainty components
+   - **Confidence Intervals**: Wilson score intervals for probabilities
+   - **Market Movement Analysis**: Line movement tracking and sharp agreement
+   - **Historical Backtest Framework**: Multi-season validation capability
+   - **ColorBends UI**: Three.js animated gradient background documentation
+   - **R 4.5.1 Compatibility**: Full compatibility verification
+   - **Usage Examples**: Code snippets for all new analytics functions
+
 ---
 
 ## Quick Start

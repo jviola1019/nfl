@@ -703,6 +703,7 @@ conservative_kelly_stake <- function(prob, odds,
 #' @param edge EV edge as decimal (e.g., 0.15 = 15%)
 #' @return Character classification: "realistic", "suspicious", "implausible"
 classify_edge_magnitude <- function(edge) {
+
   dplyr::case_when(
     is.na(edge) ~ NA_character_,
     edge <= 0 ~ "negative",
@@ -711,6 +712,416 @@ classify_edge_magnitude <- function(edge) {
     edge <= 0.15 ~ "suspicious",     # 10-15%: likely model error
     TRUE ~ "implausible"             # >15%: almost certainly wrong
   )
+}
+
+# ==============================================================================
+# PROFESSIONAL ANALYTICS: CLV, Brier Score, Confidence Intervals, Market Movement
+# ==============================================================================
+# These functions implement professional-grade sports betting analytics to
+# evaluate model performance and provide meaningful insights.
+
+#' Calculate Closing Line Value (CLV)
+#'
+#' CLV measures whether the model consistently beats closing market prices.
+#' Positive CLV over time is one of the strongest indicators of a winning model.
+#'
+#' @param model_prob Model's probability estimate at time of prediction
+#' @param closing_prob Market closing probability (after all line movement)
+#' @param opening_prob Optional: Market opening probability for movement analysis
+#' @return List with CLV metrics
+calculate_clv <- function(model_prob, closing_prob, opening_prob = NULL) {
+  model_prob <- clamp_probability(model_prob)
+  closing_prob <- clamp_probability(closing_prob)
+
+  # Logit transformation for proper probability comparison
+  logit <- function(p) log(p / (1 - p))
+
+  # CLV in logit space (standard measure)
+  clv_logit <- logit(model_prob) - logit(closing_prob)
+
+  # CLV in probability points (more interpretable)
+  clv_prob <- model_prob - closing_prob
+
+  # Direction agreement: did model and closing price agree on favorite?
+  model_favorite <- model_prob > 0.5
+  closing_favorite <- closing_prob > 0.5
+  direction_agree <- model_favorite == closing_favorite
+
+  result <- list(
+    clv_logit = clv_logit,
+    clv_prob = clv_prob,
+    direction_agree = direction_agree,
+    model_prob = model_prob,
+    closing_prob = closing_prob
+  )
+
+  # If opening line available, calculate line movement analysis
+  if (!is.null(opening_prob)) {
+    opening_prob <- clamp_probability(opening_prob)
+    line_movement <- closing_prob - opening_prob
+    model_captured_movement <- (model_prob > opening_prob & closing_prob > opening_prob) |
+                               (model_prob < opening_prob & closing_prob < opening_prob)
+    result$opening_prob <- opening_prob
+    result$line_movement <- line_movement
+    result$model_captured_movement <- model_captured_movement
+  }
+
+  result
+}
+
+#' Summarize CLV metrics across multiple games
+#'
+#' @param clv_results List of CLV results from calculate_clv()
+#' @return Summary tibble with aggregate CLV statistics
+summarize_clv <- function(clv_results) {
+  if (!length(clv_results)) {
+    return(tibble::tibble(
+      mean_clv_logit = NA_real_,
+      mean_clv_prob = NA_real_,
+      clv_positive_pct = NA_real_,
+      direction_agree_pct = NA_real_,
+      n_games = 0L
+    ))
+  }
+
+  clv_logits <- sapply(clv_results, function(x) x$clv_logit)
+  clv_probs <- sapply(clv_results, function(x) x$clv_prob)
+  direction_agree <- sapply(clv_results, function(x) x$direction_agree)
+
+  tibble::tibble(
+    mean_clv_logit = mean(clv_logits, na.rm = TRUE),
+    mean_clv_prob = mean(clv_probs, na.rm = TRUE),
+    clv_positive_pct = mean(clv_logits > 0, na.rm = TRUE),
+    direction_agree_pct = mean(direction_agree, na.rm = TRUE),
+    n_games = sum(!is.na(clv_logits))
+  )
+}
+
+#' Calculate Brier Score with decomposition
+#'
+#' Brier score measures probabilistic calibration. Lower is better.
+#' Decomposition shows reliability, resolution, and uncertainty components.
+#'
+#' @param prob Vector of predicted probabilities
+#' @param outcome Vector of actual outcomes (0/1)
+#' @param n_bins Number of bins for calibration analysis (default 10)
+#' @return List with Brier score and components
+calculate_brier_decomposition <- function(prob, outcome, n_bins = 10) {
+  prob <- clamp_probability(prob)
+  outcome <- as.numeric(outcome)
+
+  valid <- !is.na(prob) & !is.na(outcome)
+  prob <- prob[valid]
+  outcome <- outcome[valid]
+
+  n <- length(prob)
+  if (n == 0) {
+    return(list(
+      brier_score = NA_real_,
+      reliability = NA_real_,
+      resolution = NA_real_,
+      uncertainty = NA_real_,
+      calibration_bins = tibble::tibble()
+    ))
+  }
+
+  # Overall Brier score
+  brier_score <- mean((prob - outcome)^2)
+
+  # Base rate (uncertainty)
+  base_rate <- mean(outcome)
+  uncertainty <- base_rate * (1 - base_rate)
+
+  # Bin predictions for calibration analysis
+  breaks <- seq(0, 1, length.out = n_bins + 1)
+  bin_idx <- cut(prob, breaks = breaks, include.lowest = TRUE, labels = FALSE)
+
+  calibration_bins <- tibble::tibble(prob = prob, outcome = outcome, bin = bin_idx) %>%
+    dplyr::group_by(bin) %>%
+    dplyr::summarise(
+      mean_prob = mean(prob),
+      actual_rate = mean(outcome),
+      n = dplyr::n(),
+      .groups = "drop"
+    ) %>%
+    dplyr::mutate(
+      deviation = actual_rate - mean_prob,
+      abs_deviation = abs(deviation)
+    )
+
+  # Reliability (calibration error)
+  reliability <- calibration_bins %>%
+    dplyr::summarise(rel = sum(n * (mean_prob - actual_rate)^2) / sum(n)) %>%
+    dplyr::pull(rel)
+
+  # Resolution (how much predictions vary from base rate)
+  resolution <- calibration_bins %>%
+    dplyr::summarise(res = sum(n * (actual_rate - base_rate)^2) / sum(n)) %>%
+    dplyr::pull(res)
+
+  list(
+    brier_score = brier_score,
+    reliability = reliability,
+    resolution = resolution,
+    uncertainty = uncertainty,
+    base_rate = base_rate,
+    n_games = n,
+    calibration_bins = calibration_bins
+  )
+}
+
+#' Format Brier score results for display
+#'
+#' @param brier_result Result from calculate_brier_decomposition()
+#' @return Character string with formatted metrics
+format_brier_display <- function(brier_result) {
+  if (is.na(brier_result$brier_score)) {
+    return("Brier Score: N/A (insufficient data)")
+  }
+
+  sprintf(
+    "Brier Score: %.4f (Reliability: %.4f, Resolution: %.4f, Uncertainty: %.4f) | N=%d",
+    brier_result$brier_score,
+    brier_result$reliability,
+    brier_result$resolution,
+    brier_result$uncertainty,
+    brier_result$n_games
+  )
+}
+
+#' Calculate confidence intervals using bootstrap
+#'
+#' @param estimate Point estimate (e.g., EV, probability)
+#' @param se Standard error (if known)
+#' @param n Sample size (for t-based CI if se provided)
+#' @param conf_level Confidence level (default 0.95)
+#' @return Named vector with lo, estimate, hi
+calculate_confidence_interval <- function(estimate, se = NULL, n = NULL, conf_level = 0.95) {
+  if (is.na(estimate)) {
+    return(c(lo = NA_real_, estimate = NA_real_, hi = NA_real_))
+  }
+
+  alpha <- (1 - conf_level) / 2
+
+  if (!is.null(se) && !is.na(se) && !is.null(n) && n > 1) {
+    # t-based confidence interval
+    df <- n - 1
+    t_crit <- stats::qt(1 - alpha, df)
+    margin <- t_crit * se
+    c(lo = estimate - margin, estimate = estimate, hi = estimate + margin)
+  } else if (!is.null(se) && !is.na(se)) {
+    # Z-based confidence interval (large sample)
+    z_crit <- stats::qnorm(1 - alpha)
+    margin <- z_crit * se
+    c(lo = estimate - margin, estimate = estimate, hi = estimate + margin)
+  } else {
+    # Return point estimate with NA bounds
+    c(lo = NA_real_, estimate = estimate, hi = NA_real_)
+  }
+}
+
+#' Calculate probability confidence interval using Wilson score
+#'
+#' Wilson score interval is better for probabilities near 0 or 1
+#'
+#' @param prob Probability estimate
+#' @param n Sample size
+#' @param conf_level Confidence level (default 0.95)
+#' @return Named vector with lo, estimate, hi
+wilson_confidence_interval <- function(prob, n, conf_level = 0.95) {
+  if (is.na(prob) || is.na(n) || n <= 0) {
+    return(c(lo = NA_real_, estimate = NA_real_, hi = NA_real_))
+  }
+
+  prob <- clamp_probability(prob)
+  z <- stats::qnorm(1 - (1 - conf_level) / 2)
+  z2 <- z^2
+
+  # Wilson score interval
+  denom <- 1 + z2 / n
+  center <- (prob + z2 / (2 * n)) / denom
+  margin <- z * sqrt((prob * (1 - prob) + z2 / (4 * n)) / n) / denom
+
+  c(
+    lo = clamp_probability(center - margin),
+    estimate = prob,
+    hi = clamp_probability(center + margin)
+  )
+}
+
+#' Analyze market line movement
+#'
+#' Tracks how betting lines moved from open to close and compares to model
+#'
+#' @param open_prob Opening market probability
+#' @param close_prob Closing market probability
+#' @param model_prob Model's probability at time of prediction
+#' @return List with movement analysis
+analyze_line_movement <- function(open_prob, close_prob, model_prob) {
+  open_prob <- clamp_probability(open_prob)
+  close_prob <- clamp_probability(close_prob)
+  model_prob <- clamp_probability(model_prob)
+
+  # Raw movement
+  movement <- close_prob - open_prob
+
+  # Direction of movement
+  movement_direction <- dplyr::case_when(
+    is.na(movement) ~ NA_character_,
+    abs(movement) < 0.005 ~ "stable",     # Less than 0.5pp movement
+    movement > 0 ~ "toward_home",          # Line moved toward home team
+    TRUE ~ "toward_away"                   # Line moved toward away team
+  )
+
+  # Did model agree with sharp money direction?
+  model_vs_open <- model_prob - open_prob
+  sharp_agreement <- (model_vs_open > 0 & movement > 0) |
+                     (model_vs_open < 0 & movement < 0)
+
+  # Movement magnitude classification
+  movement_magnitude <- dplyr::case_when(
+    is.na(movement) ~ NA_character_,
+    abs(movement) < 0.01 ~ "minimal",      # <1pp
+    abs(movement) < 0.03 ~ "moderate",     # 1-3pp
+    abs(movement) < 0.05 ~ "significant",  # 3-5pp
+    TRUE ~ "major"                          # >5pp
+  )
+
+  list(
+    movement = movement,
+    movement_pct = movement * 100,
+    direction = movement_direction,
+    magnitude = movement_magnitude,
+    model_vs_open = model_vs_open,
+    sharp_agreement = sharp_agreement,
+    open_prob = open_prob,
+    close_prob = close_prob,
+    model_prob = model_prob
+  )
+}
+
+#' Historical backtest framework
+#'
+#' Run model predictions against multiple historical seasons
+#'
+#' @param predictions Data frame with model predictions
+#' @param actuals Data frame with actual outcomes
+#' @param seasons Vector of seasons to include
+#' @param join_keys Keys for joining predictions to actuals
+#' @return List with backtest results by season and overall
+run_historical_backtest <- function(predictions, actuals, seasons = NULL,
+                                   join_keys = c("game_id", "season", "week")) {
+  predictions <- standardize_join_keys(predictions)
+  actuals <- standardize_join_keys(actuals)
+
+  if (is.null(seasons) && "season" %in% names(predictions)) {
+    seasons <- sort(unique(predictions$season))
+  }
+
+  if (!is.null(seasons) && "season" %in% names(predictions)) {
+    predictions <- dplyr::filter(predictions, season %in% seasons)
+    actuals <- dplyr::filter(actuals, season %in% seasons)
+  }
+
+  # Find probability column
+  prob_col <- intersect(
+    c("p2_cal", "home_p_2w_cal", "p_model", "home_prob", "blend_home_prob"),
+    names(predictions)
+  )[1]
+
+  if (is.na(prob_col)) {
+    warning("run_historical_backtest(): no probability column found")
+    return(NULL)
+  }
+
+  # Join predictions with actuals
+  combined <- dplyr::inner_join(predictions, actuals, by = join_keys) %>%
+    dplyr::mutate(
+      prob = clamp_probability(.data[[prob_col]]),
+      outcome = dplyr::case_when(
+        "home_win" %in% names(.) ~ as.numeric(home_win),
+        "y2" %in% names(.) ~ as.numeric(y2),
+        "home_score" %in% names(.) & "away_score" %in% names(.) ~
+          as.numeric(home_score > away_score),
+        TRUE ~ NA_real_
+      )
+    ) %>%
+    dplyr::filter(!is.na(prob), !is.na(outcome))
+
+  if (!nrow(combined)) {
+    return(list(
+      overall = tibble::tibble(),
+      by_season = tibble::tibble(),
+      n_games = 0L
+    ))
+  }
+
+  # Overall metrics
+  overall_brier <- calculate_brier_decomposition(combined$prob, combined$outcome)
+  overall_accuracy <- mean((combined$prob > 0.5) == combined$outcome, na.rm = TRUE)
+  overall_logloss <- -mean(
+    combined$outcome * log(combined$prob) +
+    (1 - combined$outcome) * log(1 - combined$prob),
+    na.rm = TRUE
+  )
+
+  overall <- tibble::tibble(
+    n_games = nrow(combined),
+    brier_score = overall_brier$brier_score,
+    log_loss = overall_logloss,
+    accuracy = overall_accuracy,
+    reliability = overall_brier$reliability,
+    resolution = overall_brier$resolution
+  )
+
+  # By-season breakdown
+  by_season <- combined %>%
+    dplyr::group_by(season) %>%
+    dplyr::summarise(
+      n_games = dplyr::n(),
+      brier_score = mean((prob - outcome)^2, na.rm = TRUE),
+      log_loss = -mean(outcome * log(prob) + (1 - outcome) * log(1 - prob), na.rm = TRUE),
+      accuracy = mean((prob > 0.5) == outcome, na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    dplyr::arrange(season)
+
+  list(
+    overall = overall,
+    by_season = by_season,
+    calibration_bins = overall_brier$calibration_bins,
+    n_games = nrow(combined)
+  )
+}
+
+#' Format backtest results for display
+#'
+#' @param backtest_result Result from run_historical_backtest()
+#' @return Character string with formatted summary
+format_backtest_display <- function(backtest_result) {
+  if (is.null(backtest_result) || backtest_result$n_games == 0) {
+    return("Backtest: No data available")
+  }
+
+  overall <- backtest_result$overall
+  seasons <- backtest_result$by_season
+
+  summary_lines <- c(
+    sprintf("=== HISTORICAL BACKTEST RESULTS (%d games) ===", overall$n_games),
+    sprintf("Overall Brier Score: %.4f", overall$brier_score),
+    sprintf("Overall Log Loss: %.4f", overall$log_loss),
+    sprintf("Overall Accuracy: %.1f%%", overall$accuracy * 100),
+    "",
+    "By Season:"
+  )
+
+  season_lines <- purrr::map_chr(seq_len(nrow(seasons)), function(i) {
+    row <- seasons[i, ]
+    sprintf("  %d: Brier=%.4f, LogLoss=%.4f, Accuracy=%.1f%% (n=%d)",
+            row$season, row$brier_score, row$log_loss, row$accuracy * 100, row$n_games)
+  })
+
+  paste(c(summary_lines, season_lines), collapse = "\n")
 }
 
 realized_moneyline_units <- function(pick_side, winner_side, odds, stake = 1) {
@@ -2608,21 +3019,23 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         gt_html <- sub("<table", sprintf("<table id=\"%s\"", table_id), gt_html)
       }
 
-      # Modern Claude-inspired color scheme with warm coral/terracotta accents
+      # Modern Claude-inspired color scheme with ColorBends animated gradient background
       css_block_gt <- paste0(
         # CSS Variables for theming
         ":root {--claude-coral: #D97757; --claude-coral-light: #E89A7A; --claude-cream: #FAF9F6; --claude-warm-gray: #2D2A26; --claude-dark: #1A1815; --accent-glow: rgba(217, 119, 87, 0.3);}\n",
-        # Body with warm gradient
-        "body {font-family: 'Inter','Söhne','Source Sans Pro','Helvetica Neue',Arial,sans-serif; background: linear-gradient(135deg, #1A1815 0%, #2D2A26 50%, #1A1815 100%); color: #F5F4F0; margin: 0; padding-top: 85px; min-height: 100vh;}\n",
-        # Animated gradient background
-        "body::before {content: ''; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: radial-gradient(ellipse at 30% 20%, rgba(217, 119, 87, 0.08) 0%, transparent 50%), radial-gradient(ellipse at 70% 80%, rgba(217, 119, 87, 0.05) 0%, transparent 50%); pointer-events: none; z-index: -1;}\n",
+        # Body with warm gradient and canvas background
+        "body {font-family: 'Inter','Söhne','Source Sans Pro','Helvetica Neue',Arial,sans-serif; background: linear-gradient(135deg, #1A1815 0%, #2D2A26 50%, #1A1815 100%); color: #F5F4F0; margin: 0; padding-top: 85px; min-height: 100vh; overflow-x: hidden;}\n",
+        # ColorBends canvas background
+        "#colorbends-canvas {position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: -2; pointer-events: none;}\n",
+        # Overlay for better text readability over animated background
+        ".canvas-overlay {position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: linear-gradient(135deg, rgba(26, 24, 21, 0.85) 0%, rgba(45, 42, 38, 0.75) 50%, rgba(26, 24, 21, 0.85) 100%); pointer-events: none; z-index: -1;}\n",
         # Search container with glass morphism
         ".search-container {position: fixed; top: 0; left: 0; right: 0; z-index: 1000; background: rgba(26, 24, 21, 0.85); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border-bottom: 1px solid rgba(217, 119, 87, 0.3); padding: 1.25rem 0; box-shadow: 0 4px 30px rgba(0, 0, 0, 0.3);}\n",
         ".search-inner {max-width: 1400px; margin: 0 auto; padding: 0 1.5rem;}\n",
-        ".page-wrapper {max-width: 1400px; margin: 0 auto; padding: 1rem 1.5rem 4rem;}\n",
+        ".page-wrapper {max-width: 1400px; margin: 0 auto; padding: 1rem 1.5rem 4rem; position: relative; z-index: 1;}\n",
         ".table-wrapper {overflow-x: auto; border-radius: 24px; box-shadow: 0 25px 80px rgba(0, 0, 0, 0.4);}\n",
         # Report intro with glass morphism
-        ".report-intro {max-width: 1000px; margin: 0 auto 2.5rem; background: rgba(45, 42, 38, 0.7); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); padding: 2rem 2.25rem; border-radius: 24px; border: 1px solid rgba(217, 119, 87, 0.2); box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.05);}\n",
+        ".report-intro {max-width: 1000px; margin: 0 auto 2.5rem; background: rgba(45, 42, 38, 0.8); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); padding: 2rem 2.25rem; border-radius: 24px; border: 1px solid rgba(217, 119, 87, 0.25); box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.08);}\n",
         ".report-intro h2 {margin: 0 0 1rem; font-size: 1.5rem; color: var(--claude-cream); letter-spacing: -0.01em; font-weight: 600;}\n",
         ".report-intro h3 {color: var(--claude-coral-light); font-size: 1.1rem; margin: 1.5rem 0 0.75rem; font-weight: 600;}\n",
         ".report-intro p {margin: 0 0 1rem; color: #C9C5BE; font-size: 0.95rem; line-height: 1.6;}\n",
@@ -2630,16 +3043,16 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         ".report-intro li {margin-bottom: 0.5rem;}\n",
         ".report-intro strong {color: var(--claude-cream);}\n",
         # Intro section styling
-        ".intro-section {padding: 1.25rem; margin: 1rem 0; border-radius: 16px; background: rgba(26, 24, 21, 0.5); border: 1px solid rgba(217, 119, 87, 0.15);}\n",
+        ".intro-section {padding: 1.25rem; margin: 1rem 0; border-radius: 16px; background: rgba(26, 24, 21, 0.6); border: 1px solid rgba(217, 119, 87, 0.18); backdrop-filter: blur(8px);}\n",
         # GT Table styling
-        ".gt_table {border-radius: 20px; overflow: hidden; box-shadow: 0 30px 80px rgba(0, 0, 0, 0.4); background: rgba(45, 42, 38, 0.9) !important;}\n",
-        ".gt_table thead th {position: sticky; top: 85px; z-index: 100; background: rgba(26, 24, 21, 0.95) !important; backdrop-filter: blur(10px); color: var(--claude-cream) !important; font-weight: 600; letter-spacing: 0.03em; border-bottom: 2px solid var(--claude-coral) !important;}\n",
+        ".gt_table {border-radius: 20px; overflow: hidden; box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5); background: rgba(45, 42, 38, 0.92) !important; backdrop-filter: blur(12px);}\n",
+        ".gt_table thead th {position: sticky; top: 85px; z-index: 100; background: rgba(26, 24, 21, 0.96) !important; backdrop-filter: blur(10px); color: var(--claude-cream) !important; font-weight: 600; letter-spacing: 0.03em; border-bottom: 2px solid var(--claude-coral) !important;}\n",
         ".gt_table tbody tr {transition: all 0.2s ease;}\n",
-        ".gt_table tbody tr:hover {background-color: rgba(217, 119, 87, 0.12) !important; transform: scale(1.002);}\n",
+        ".gt_table tbody tr:hover {background-color: rgba(217, 119, 87, 0.15) !important; transform: scale(1.002);}\n",
         ".gt_table tbody td {border-bottom: 1px solid rgba(217, 119, 87, 0.1) !important;}\n",
         # Search input with coral accent
-        "#table-search {width: 100%; max-width: 550px; padding: 1rem 1.5rem; margin: 0 auto; border-radius: 999px; border: 1px solid rgba(217, 119, 87, 0.3); background: rgba(45, 42, 38, 0.8); color: var(--claude-cream); display: block; box-shadow: 0 4px 20px rgba(217, 119, 87, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.05); transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); font-size: 1rem;}\n",
-        "#table-search:focus {outline: none; border-color: var(--claude-coral); box-shadow: 0 0 0 4px var(--accent-glow), 0 8px 30px rgba(217, 119, 87, 0.2); transform: translateY(-2px);}\n",
+        "#table-search {width: 100%; max-width: 550px; padding: 1rem 1.5rem; margin: 0 auto; border-radius: 999px; border: 1px solid rgba(217, 119, 87, 0.35); background: rgba(45, 42, 38, 0.85); color: var(--claude-cream); display: block; box-shadow: 0 4px 20px rgba(217, 119, 87, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.06); transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); font-size: 1rem; backdrop-filter: blur(8px);}\n",
+        "#table-search:focus {outline: none; border-color: var(--claude-coral); box-shadow: 0 0 0 4px var(--accent-glow), 0 8px 30px rgba(217, 119, 87, 0.25); transform: translateY(-2px);}\n",
         "#table-search::placeholder {color: rgba(201, 197, 190, 0.6);}\n",
         # Color guide boxes
         ".color-box {display: inline-block; width: 16px; height: 16px; border-radius: 4px; vertical-align: middle; margin-right: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.2);}\n",
@@ -2648,6 +3061,66 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         ".result-no {color: #FCA5A5; font-weight: 600;}\n",
         # Responsive adjustments
         "@media (max-width: 768px) { body {padding-top: 75px;} .gt_table {font-size: 0.88rem;} .gt_table thead th {font-size: 0.7rem; top: 75px;} .report-intro {padding: 1.5rem; margin: 0 0.5rem 2rem;} #table-search {font-size: 0.9rem; padding: 0.85rem 1.25rem;} }\n"
+      )
+
+      # ColorBends Three.js animated gradient background script
+      colorbends_script <- paste0(
+        # Three.js CDN and ColorBends shader implementation
+        "<!-- ColorBends Three.js Animated Gradient Background -->",
+        "<script src=\"https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js\"></script>",
+        "<script>",
+        "(function(){",
+        "  if(!window.THREE){console.warn('Three.js not loaded');return;}",
+        "  const container=document.getElementById('colorbends-canvas');",
+        "  if(!container)return;",
+        "  const scene=new THREE.Scene();",
+        "  const camera=new THREE.OrthographicCamera(-1,1,1,-1,0,1);",
+        "  const renderer=new THREE.WebGLRenderer({alpha:true,antialias:true});",
+        "  renderer.setSize(window.innerWidth,window.innerHeight);",
+        "  renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));",
+        "  container.appendChild(renderer.domElement);",
+        "  const colors=['#D97757','#E89A7A','#8B5A3C'];", # Claude coral palette
+        "  const uniforms={",
+        "    time:{value:0},",
+        "    resolution:{value:new THREE.Vector2(window.innerWidth,window.innerHeight)},",
+        "    color1:{value:new THREE.Color(colors[0])},",
+        "    color2:{value:new THREE.Color(colors[1])},",
+        "    color3:{value:new THREE.Color(colors[2])},",
+        "    mouse:{value:new THREE.Vector2(0.5,0.5)}",
+        "  };",
+        "  const vertexShader=`varying vec2 vUv;void main(){vUv=uv;gl_Position=vec4(position,1.0);}`;",
+        "  const fragmentShader=`",
+        "    uniform float time;uniform vec2 resolution;uniform vec3 color1;uniform vec3 color2;uniform vec3 color3;uniform vec2 mouse;varying vec2 vUv;",
+        "    float noise(vec2 p){return fract(sin(dot(p,vec2(12.9898,78.233)))*43758.5453);}",
+        "    float smoothNoise(vec2 p){vec2 i=floor(p);vec2 f=fract(p);f=f*f*(3.0-2.0*f);float a=noise(i);float b=noise(i+vec2(1.0,0.0));float c=noise(i+vec2(0.0,1.0));float d=noise(i+vec2(1.0,1.0));return mix(mix(a,b,f.x),mix(c,d,f.x),f.y);}",
+        "    float fbm(vec2 p){float v=0.0;float a=0.5;for(int i=0;i<4;i++){v+=a*smoothNoise(p);p*=2.0;a*=0.5;}return v;}",
+        "    void main(){",
+        "      vec2 uv=vUv;vec2 q=uv;",
+        "      q.x+=0.1*sin(time*0.3+uv.y*3.0);q.y+=0.1*cos(time*0.2+uv.x*4.0);",
+        "      float n1=fbm(q*2.0+time*0.1);float n2=fbm(q*3.0-time*0.15);float n3=fbm(q*1.5+time*0.08);",
+        "      vec3 c1=mix(color1,color2,n1);vec3 c2=mix(c1,color3,n2*0.6);",
+        "      float dist=length(uv-mouse)*1.5;float glow=exp(-dist*3.0)*0.15;",
+        "      vec3 finalColor=c2*(0.3+n3*0.2)+vec3(glow)*color1;",
+        "      finalColor*=0.4;", # Reduce intensity for subtlety
+        "      gl_FragColor=vec4(finalColor,0.6);",
+        "    }`;",
+        "  const geometry=new THREE.PlaneGeometry(2,2);",
+        "  const material=new THREE.ShaderMaterial({uniforms:uniforms,vertexShader:vertexShader,fragmentShader:fragmentShader,transparent:true});",
+        "  const mesh=new THREE.Mesh(geometry,material);",
+        "  scene.add(mesh);",
+        "  let mouseX=0.5,mouseY=0.5;",
+        "  document.addEventListener('mousemove',function(e){mouseX=e.clientX/window.innerWidth;mouseY=1.0-e.clientY/window.innerHeight;});",
+        "  window.addEventListener('resize',function(){renderer.setSize(window.innerWidth,window.innerHeight);uniforms.resolution.value.set(window.innerWidth,window.innerHeight);});",
+        "  function animate(){",
+        "    requestAnimationFrame(animate);",
+        "    uniforms.time.value+=0.01;",
+        "    uniforms.mouse.value.x+=(mouseX-uniforms.mouse.value.x)*0.05;",
+        "    uniforms.mouse.value.y+=(mouseY-uniforms.mouse.value.y)*0.05;",
+        "    renderer.render(scene,camera);",
+        "  }",
+        "  animate();",
+        "})();",
+        "</script>"
       )
 
       search_box <- htmltools::tags$div(
@@ -2682,9 +3155,25 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         )
       ))
 
+      # ColorBends animated gradient canvas container
+      colorbends_canvas <- htmltools::tags$div(id = "colorbends-canvas")
+      canvas_overlay <- htmltools::tags$div(class = "canvas-overlay")
+
       doc <- htmltools::tags$html(
-        htmltools::tags$head(htmltools::tags$style(css_block_gt)),
-        htmltools::tags$body(search_box, content_wrapper, script_block)
+        htmltools::tags$head(
+          htmltools::tags$meta(charset = "UTF-8"),
+          htmltools::tags$meta(name = "viewport", content = "width=device-width, initial-scale=1.0"),
+          htmltools::tags$title("NFL Blend vs Market Analysis"),
+          htmltools::tags$style(css_block_gt)
+        ),
+        htmltools::tags$body(
+          colorbends_canvas,
+          canvas_overlay,
+          search_box,
+          content_wrapper,
+          script_block,
+          htmltools::HTML(colorbends_script)
+        )
       )
 
       htmltools::save_html(doc, file = file)
@@ -2693,22 +3182,24 @@ export_moneyline_comparison_html <- function(comparison_tbl,
   }
 
   if (!saved) {
-    # Fallback CSS with Claude-inspired color scheme
+    # Fallback CSS with Claude-inspired color scheme and ColorBends canvas
     css_block <- ":root {--claude-coral: #D97757; --claude-coral-light: #E89A7A; --claude-cream: #FAF9F6; --claude-warm-gray: #2D2A26; --claude-dark: #1A1815;}\n"
     css_block <- paste0(
       css_block,
-      "body {font-family: 'Inter','Söhne','Source Sans Pro','Helvetica Neue',Arial,sans-serif; background: linear-gradient(135deg, #1A1815 0%, #2D2A26 50%, #1A1815 100%); color: #F5F4F0; margin: 0; min-height: 100vh;}\n",
-      ".page-wrapper {max-width: 1400px; margin: 0 auto; padding: 3rem 1.5rem 4rem;}\n",
+      "body {font-family: 'Inter','Söhne','Source Sans Pro','Helvetica Neue',Arial,sans-serif; background: linear-gradient(135deg, #1A1815 0%, #2D2A26 50%, #1A1815 100%); color: #F5F4F0; margin: 0; min-height: 100vh; overflow-x: hidden;}\n",
+      "#colorbends-canvas {position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: -2; pointer-events: none;}\n",
+      ".canvas-overlay {position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: linear-gradient(135deg, rgba(26, 24, 21, 0.85) 0%, rgba(45, 42, 38, 0.75) 50%, rgba(26, 24, 21, 0.85) 100%); pointer-events: none; z-index: -1;}\n",
+      ".page-wrapper {max-width: 1400px; margin: 0 auto; padding: 3rem 1.5rem 4rem; position: relative; z-index: 1;}\n",
       ".table-wrapper {overflow-x: auto; border-radius: 24px; box-shadow: 0 25px 80px rgba(0, 0, 0, 0.4);}\n",
-      ".report-intro {max-width: 1000px; margin: 0 auto 2.5rem; background: rgba(45, 42, 38, 0.7); backdrop-filter: blur(10px); padding: 2rem 2.25rem; border-radius: 24px; border: 1px solid rgba(217, 119, 87, 0.2); box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);}\n",
+      ".report-intro {max-width: 1000px; margin: 0 auto 2.5rem; background: rgba(45, 42, 38, 0.8); backdrop-filter: blur(16px); padding: 2rem 2.25rem; border-radius: 24px; border: 1px solid rgba(217, 119, 87, 0.25); box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);}\n",
       ".report-intro h2 {margin: 0 0 1rem; font-size: 1.5rem; color: var(--claude-cream); font-weight: 600;}\n",
       ".report-intro h3 {color: var(--claude-coral-light); font-size: 1.1rem; margin: 1.5rem 0 0.75rem; font-weight: 600;}\n",
       ".report-intro p {margin: 0 0 1rem; color: #C9C5BE; font-size: 0.95rem; line-height: 1.6;}\n",
       ".report-intro ul {margin: 0; padding-left: 1.25rem; color: #E8E6E1; line-height: 1.7;}\n",
       ".report-intro li {margin-bottom: 0.5rem;}\n",
-      ".intro-section {padding: 1.25rem; margin: 1rem 0; border-radius: 16px; background: rgba(26, 24, 21, 0.5); border: 1px solid rgba(217, 119, 87, 0.15);}\n",
-      "table {width: 100%; border-collapse: separate; border-spacing: 0; background-color: rgba(45, 42, 38, 0.9); color: #F5F4F0; border-radius: 24px; overflow: hidden; box-shadow: 0 30px 80px rgba(0, 0, 0, 0.4); border: 1px solid rgba(217, 119, 87, 0.2);}\n",
-      "thead th {background-color: rgba(26, 24, 21, 0.95); color: var(--claude-cream); text-transform: uppercase; letter-spacing: 0.08em; position: sticky; top: 0; z-index: 2; border-bottom: 2px solid var(--claude-coral);}\n",
+      ".intro-section {padding: 1.25rem; margin: 1rem 0; border-radius: 16px; background: rgba(26, 24, 21, 0.6); border: 1px solid rgba(217, 119, 87, 0.18); backdrop-filter: blur(8px);}\n",
+      "table {width: 100%; border-collapse: separate; border-spacing: 0; background-color: rgba(45, 42, 38, 0.92); color: #F5F4F0; border-radius: 24px; overflow: hidden; box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5); border: 1px solid rgba(217, 119, 87, 0.2); backdrop-filter: blur(12px);}\n",
+      "thead th {background-color: rgba(26, 24, 21, 0.96); color: var(--claude-cream); text-transform: uppercase; letter-spacing: 0.08em; position: sticky; top: 0; z-index: 2; border-bottom: 2px solid var(--claude-coral);}\n",
       "td, th {padding: 14px 12px; border-bottom: 1px solid rgba(217, 119, 87, 0.1); text-align: center;}\n",
       "td.text-left {text-align: left;}\n",
       "td.note-cell {max-width: 260px; white-space: normal; word-wrap: break-word;}\n",
@@ -2717,12 +3208,43 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       "tr.blend-win td {color: #D1FAE5;}\n",
       "td.blend-reco {background-color: var(--claude-coral) !important; color: var(--claude-cream) !important; font-weight: 600;}\n",
       "td.winner-cell {color: var(--claude-coral-light); font-weight: 600;}\n",
-      "tbody tr:hover {background-color: rgba(217, 119, 87, 0.12); transition: all 0.2s ease;}\n",
+      "tbody tr:hover {background-color: rgba(217, 119, 87, 0.15); transition: all 0.2s ease;}\n",
       "caption {caption-side: top; font-size: 1.35rem; font-weight: 600; margin-bottom: 0.75rem; color: var(--claude-cream);}\n",
-      "#table-search {width: 100%; max-width: 550px; padding: 1rem 1.5rem; margin: 0 auto 1.5rem; border-radius: 999px; border: 1px solid rgba(217, 119, 87, 0.3); background-color: rgba(45, 42, 38, 0.8); color: var(--claude-cream); display: block; box-shadow: 0 4px 20px rgba(217, 119, 87, 0.1); transition: all 0.3s ease;}\n",
+      "#table-search {width: 100%; max-width: 550px; padding: 1rem 1.5rem; margin: 0 auto 1.5rem; border-radius: 999px; border: 1px solid rgba(217, 119, 87, 0.35); background-color: rgba(45, 42, 38, 0.85); color: var(--claude-cream); display: block; box-shadow: 0 4px 20px rgba(217, 119, 87, 0.12); transition: all 0.3s ease; backdrop-filter: blur(8px);}\n",
       "#table-search:focus {outline: none; border-color: var(--claude-coral); box-shadow: 0 0 0 4px rgba(217, 119, 87, 0.3);}\n",
       ".color-box {display: inline-block; width: 16px; height: 16px; border-radius: 4px; vertical-align: middle; margin-right: 8px;}\n",
       "@media (max-width: 768px) { table {font-size: 0.88rem;} thead th {font-size: 0.7rem;} .report-intro {padding: 1.5rem; margin: 0 0.5rem 2rem;} }\n"
+    )
+
+    # ColorBends Three.js script for fallback HTML
+    colorbends_script_fallback <- paste0(
+      "<script src=\"https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js\"></script>",
+      "<script>",
+      "(function(){",
+      "  if(!window.THREE){console.warn('Three.js not loaded');return;}",
+      "  var container=document.getElementById('colorbends-canvas');",
+      "  if(!container)return;",
+      "  var scene=new THREE.Scene();",
+      "  var camera=new THREE.OrthographicCamera(-1,1,1,-1,0,1);",
+      "  var renderer=new THREE.WebGLRenderer({alpha:true,antialias:true});",
+      "  renderer.setSize(window.innerWidth,window.innerHeight);",
+      "  renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));",
+      "  container.appendChild(renderer.domElement);",
+      "  var colors=['#D97757','#E89A7A','#8B5A3C'];",
+      "  var uniforms={time:{value:0},resolution:{value:new THREE.Vector2(window.innerWidth,window.innerHeight)},color1:{value:new THREE.Color(colors[0])},color2:{value:new THREE.Color(colors[1])},color3:{value:new THREE.Color(colors[2])},mouse:{value:new THREE.Vector2(0.5,0.5)}};",
+      "  var vertexShader='varying vec2 vUv;void main(){vUv=uv;gl_Position=vec4(position,1.0);}';",
+      "  var fragmentShader='uniform float time;uniform vec2 resolution;uniform vec3 color1;uniform vec3 color2;uniform vec3 color3;uniform vec2 mouse;varying vec2 vUv;float noise(vec2 p){return fract(sin(dot(p,vec2(12.9898,78.233)))*43758.5453);}float smoothNoise(vec2 p){vec2 i=floor(p);vec2 f=fract(p);f=f*f*(3.0-2.0*f);float a=noise(i);float b=noise(i+vec2(1.0,0.0));float c=noise(i+vec2(0.0,1.0));float d=noise(i+vec2(1.0,1.0));return mix(mix(a,b,f.x),mix(c,d,f.x),f.y);}float fbm(vec2 p){float v=0.0;float a=0.5;for(int i=0;i<4;i++){v+=a*smoothNoise(p);p*=2.0;a*=0.5;}return v;}void main(){vec2 uv=vUv;vec2 q=uv;q.x+=0.1*sin(time*0.3+uv.y*3.0);q.y+=0.1*cos(time*0.2+uv.x*4.0);float n1=fbm(q*2.0+time*0.1);float n2=fbm(q*3.0-time*0.15);float n3=fbm(q*1.5+time*0.08);vec3 c1=mix(color1,color2,n1);vec3 c2=mix(c1,color3,n2*0.6);float dist=length(uv-mouse)*1.5;float glow=exp(-dist*3.0)*0.15;vec3 finalColor=c2*(0.3+n3*0.2)+vec3(glow)*color1;finalColor*=0.4;gl_FragColor=vec4(finalColor,0.6);}';",
+      "  var geometry=new THREE.PlaneGeometry(2,2);",
+      "  var material=new THREE.ShaderMaterial({uniforms:uniforms,vertexShader:vertexShader,fragmentShader:fragmentShader,transparent:true});",
+      "  var mesh=new THREE.Mesh(geometry,material);",
+      "  scene.add(mesh);",
+      "  var mouseX=0.5,mouseY=0.5;",
+      "  document.addEventListener('mousemove',function(e){mouseX=e.clientX/window.innerWidth;mouseY=1.0-e.clientY/window.innerHeight;});",
+      "  window.addEventListener('resize',function(){renderer.setSize(window.innerWidth,window.innerHeight);uniforms.resolution.value.set(window.innerWidth,window.innerHeight);});",
+      "  function animate(){requestAnimationFrame(animate);uniforms.time.value+=0.01;uniforms.mouse.value.x+=(mouseX-uniforms.mouse.value.x)*0.05;uniforms.mouse.value.y+=(mouseY-uniforms.mouse.value.y)*0.05;renderer.render(scene,camera);}",
+      "  animate();",
+      "})();",
+      "</script>"
     )
 
     # Format columns that exist in display_tbl (fallback for when gt unavailable)
@@ -2865,9 +3387,24 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         )
       ))
 
+      # ColorBends canvas elements
+      colorbends_canvas_fb <- htmltools::tags$div(id = "colorbends-canvas")
+      canvas_overlay_fb <- htmltools::tags$div(class = "canvas-overlay")
+
       doc <- htmltools::tags$html(
-        htmltools::tags$head(htmltools::tags$style(css_block)),
-        htmltools::tags$body(wrapper, script_block)
+        htmltools::tags$head(
+          htmltools::tags$meta(charset = "UTF-8"),
+          htmltools::tags$meta(name = "viewport", content = "width=device-width, initial-scale=1.0"),
+          htmltools::tags$title("NFL Blend vs Market Analysis"),
+          htmltools::tags$style(css_block)
+        ),
+        htmltools::tags$body(
+          colorbends_canvas_fb,
+          canvas_overlay_fb,
+          wrapper,
+          script_block,
+          htmltools::HTML(colorbends_script_fallback)
+        )
       )
 
       htmltools::save_html(doc, file = file)
@@ -2919,9 +3456,12 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         }
       )
       html <- paste0(
-        "<html><head><style>",
+        "<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\"><title>NFL Blend vs Market Analysis</title><style>",
         css_block,
-        "</style></head><body><div class=\"page-wrapper\"><input id=\"table-search\" type=\"search\" placeholder=\"Search teams, wagers, or math checks...\" aria-label=\"Search moneyline table\"/>",
+        "</style></head><body>",
+        "<div id=\"colorbends-canvas\"></div>",
+        "<div class=\"canvas-overlay\"></div>",
+        "<div class=\"page-wrapper\"><input id=\"table-search\" type=\"search\" placeholder=\"Search teams, wagers, or math checks...\" aria-label=\"Search moneyline table\"/>",
         intro_html,
         "<div class=\"table-wrapper\"><table id=\"",
         table_id,
@@ -2933,7 +3473,9 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         paste(body, collapse = ""),
         "</tbody></table></div></div><script>(function(){var input=document.getElementById('table-search');var table=document.getElementById('",
         table_id,
-        "');if(!input||!table){return;}var rows=table.getElementsByTagName('tbody')[0].rows;input.addEventListener('input',function(){var query=this.value.toLowerCase();Array.prototype.forEach.call(rows,function(row){var text=row.textContent.toLowerCase();row.style.display=text.indexOf(query)>-1?'':'none';});});})();</script></body></html>"
+        "');if(!input||!table){return;}var rows=table.getElementsByTagName('tbody')[0].rows;input.addEventListener('input',function(){var query=this.value.toLowerCase();Array.prototype.forEach.call(rows,function(row){var text=row.textContent.toLowerCase();row.style.display=text.indexOf(query)>-1?'':'none';});});})();</script>",
+        colorbends_script_fallback,
+        "</body></html>"
       )
       writeLines(html, con = file)
       saved <- TRUE
