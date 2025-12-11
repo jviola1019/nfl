@@ -2,8 +2,379 @@
 
 Complete history of fixes, improvements, and changes.
 
-**Current Version**: 2.1
-**Last Updated**: December 9, 2025
+**Current Version**: 2.2
+**Last Updated**: December 11, 2025
+
+---
+
+## Version 2.2 (December 11, 2025) - Professional Analytics & Modern UI
+
+### Summary of Changes
+
+This update adds comprehensive professional betting analytics and modernizes the UI:
+
+1. **Professional Calibration** - Addressing overconfidence issues
+2. **Professional Analytics** - CLV, Brier Score, Confidence Intervals, Market Movement
+3. **UI Modernization** - ColorBends animated gradient background with Claude-inspired design
+4. **Historical Backtest Framework** - Multi-season validation capability
+
+---
+
+### Professional Calibration Updates
+
+#### Problem Identified
+
+A data scientist review identified critical issues with the model's betting recommendations:
+
+- **Unrealistically large EV edges** (27%, 21%, 17%) - Professional sharps rarely find edges >3-5%
+- **Hit rate too high** (69% of games showing +EV) - Should be 10-20%
+- **Stake sizing not scaling properly** with Kelly criterion
+- **Missing professional model indicators** (CLV, Brier scores, calibration metrics)
+
+#### Solutions Implemented
+
+**1. Probability Shrinkage (60% toward market)**
+
+File: `NFLmarket.R` (lines ~732-770)
+
+```r
+shrink_probability_toward_market <- function(model_prob, market_prob, shrinkage = 0.6) {
+  # Weighted average: higher shrinkage = more weight on market
+  shrunk <- (1 - shrinkage) * model_prob + shrinkage * market_prob
+  clamp_probability(shrunk)
+}
+```
+
+**Rationale:** NFL markets are extremely efficient. Raw model probabilities that diverge significantly from market are almost certainly overfit. We shrink 60% toward market consensus.
+
+**2. Conservative Kelly Staking (1/8 Kelly with edge skepticism)**
+
+File: `NFLmarket.R` (lines ~667-699)
+
+```r
+conservative_kelly_stake <- function(prob, odds,
+                                     kelly_fraction = 0.125,  # 1/8 Kelly
+                                     max_edge = 0.10,         # 10% max believable edge
+                                     max_stake = 0.02) {      # 2% max stake
+  # Standard Kelly formula with edge skepticism penalties
+  # Larger edges receive progressive penalties (likely model errors)
+}
+```
+
+**3. Edge Classification System**
+
+File: `NFLmarket.R` (lines ~705-714)
+
+```r
+classify_edge_magnitude <- function(edge) {
+  case_when(
+    edge <= 0.05 ~ "realistic",      # 0-5%: plausible professional edge
+    edge <= 0.10 ~ "optimistic",     # 5-10%: possible but rare
+    edge <= 0.15 ~ "suspicious",     # 10-15%: likely model error
+    TRUE ~ "implausible"             # >15%: almost certainly wrong
+  )
+}
+```
+
+---
+
+### Professional Analytics Implementation
+
+#### CLV (Closing Line Value) Tracking
+
+CLV measures whether the model consistently beats closing market prices. Positive CLV over time is one of the strongest indicators of a winning model.
+
+File: `NFLmarket.R` (lines ~723-798)
+
+```r
+calculate_clv <- function(model_prob, closing_prob, opening_prob = NULL) {
+  # CLV in logit space (standard measure)
+  clv_logit <- logit(model_prob) - logit(closing_prob)
+
+  # CLV in probability points (more interpretable)
+  clv_prob <- model_prob - closing_prob
+
+  # Direction agreement: did model and closing price agree on favorite?
+  direction_agree <- model_favorite == closing_favorite
+}
+
+summarize_clv <- function(clv_results) {
+  # Aggregate CLV statistics across multiple games
+  tibble::tibble(
+    mean_clv_logit = mean(clv_logits, na.rm = TRUE),
+    mean_clv_prob = mean(clv_probs, na.rm = TRUE),
+    clv_positive_pct = mean(clv_logits > 0, na.rm = TRUE),
+    direction_agree_pct = mean(direction_agree, na.rm = TRUE),
+    n_games = sum(!is.na(clv_logits))
+  )
+}
+```
+
+**Key Metrics:**
+- `mean_clv_logit`: Average CLV in logit space (professional standard)
+- `mean_clv_prob`: Average CLV in probability points (interpretable)
+- `clv_positive_pct`: Percentage of games where model beat closing line
+- `direction_agree_pct`: Percentage of games where model agreed with closing favorite
+
+#### Brier Score with Decomposition
+
+Brier score measures probabilistic calibration. Decomposition shows reliability, resolution, and uncertainty components.
+
+File: `NFLmarket.R` (lines ~800-890)
+
+```r
+calculate_brier_decomposition <- function(prob, outcome, n_bins = 10) {
+  # Overall Brier score: mean((prob - outcome)^2)
+  brier_score <- mean((prob - outcome)^2)
+
+  # Base rate (uncertainty)
+  base_rate <- mean(outcome)
+  uncertainty <- base_rate * (1 - base_rate)
+
+  # Reliability (calibration error)
+  reliability <- sum(n * (mean_prob - actual_rate)^2) / sum(n)
+
+  # Resolution (how much predictions vary from base rate)
+  resolution <- sum(n * (actual_rate - base_rate)^2) / sum(n)
+
+  # Brier = Reliability - Resolution + Uncertainty
+  # Lower is better; good models have low reliability and high resolution
+}
+```
+
+**Components Explained:**
+- **Brier Score**: Overall accuracy (lower is better, Vegas ≈ 0.208)
+- **Reliability**: Calibration error (lower is better)
+- **Resolution**: Predictive power (higher is better)
+- **Uncertainty**: Irreducible randomness in outcomes
+
+#### Confidence Intervals
+
+Two methods for uncertainty quantification:
+
+**Standard Confidence Intervals:**
+```r
+calculate_confidence_interval <- function(estimate, se, n, conf_level = 0.95) {
+  # t-based confidence interval for small samples
+  # z-based confidence interval for large samples
+}
+```
+
+**Wilson Score Intervals (for probabilities):**
+```r
+wilson_confidence_interval <- function(prob, n, conf_level = 0.95) {
+  # Better for probabilities near 0 or 1
+  z <- stats::qnorm(1 - (1 - conf_level) / 2)
+  z2 <- z^2
+
+  # Wilson score interval
+  denom <- 1 + z2 / n
+  center <- (prob + z2 / (2 * n)) / denom
+  margin <- z * sqrt((prob * (1 - prob) + z2 / (4 * n)) / n) / denom
+}
+```
+
+#### Market Movement Analysis
+
+Tracks how betting lines moved from open to close and compares to model predictions.
+
+File: `NFLmarket.R` (lines ~952-1001)
+
+```r
+analyze_line_movement <- function(open_prob, close_prob, model_prob) {
+  # Raw movement
+  movement <- close_prob - open_prob
+
+  # Direction of movement
+  movement_direction <- case_when(
+    abs(movement) < 0.005 ~ "stable",     # Less than 0.5pp movement
+    movement > 0 ~ "toward_home",
+    TRUE ~ "toward_away"
+  )
+
+  # Did model agree with sharp money direction?
+  model_vs_open <- model_prob - open_prob
+  sharp_agreement <- (model_vs_open > 0 & movement > 0) |
+                     (model_vs_open < 0 & movement < 0)
+
+  # Movement magnitude classification
+  movement_magnitude <- case_when(
+    abs(movement) < 0.01 ~ "minimal",      # <1pp
+    abs(movement) < 0.03 ~ "moderate",     # 1-3pp
+    abs(movement) < 0.05 ~ "significant",  # 3-5pp
+    TRUE ~ "major"                          # >5pp
+  )
+}
+```
+
+---
+
+### Historical Backtest Framework
+
+#### Multi-Season Validation
+
+File: `NFLmarket.R` (lines ~1003-1125)
+
+```r
+run_historical_backtest <- function(predictions, actuals, seasons = NULL,
+                                   join_keys = c("game_id", "season", "week")) {
+  # Join predictions with actuals across multiple seasons
+  combined <- dplyr::inner_join(predictions, actuals, by = join_keys)
+
+  # Overall metrics
+  overall_brier <- calculate_brier_decomposition(combined$prob, combined$outcome)
+  overall_accuracy <- mean((combined$prob > 0.5) == combined$outcome, na.rm = TRUE)
+  overall_logloss <- -mean(outcome * log(prob) + (1 - outcome) * log(1 - prob))
+
+  # By-season breakdown
+  by_season <- combined %>%
+    dplyr::group_by(season) %>%
+    dplyr::summarise(
+      n_games = dplyr::n(),
+      brier_score = mean((prob - outcome)^2),
+      log_loss = -mean(outcome * log(prob) + (1 - outcome) * log(1 - prob)),
+      accuracy = mean((prob > 0.5) == outcome)
+    )
+
+  return(list(overall, by_season, calibration_bins, n_games))
+}
+```
+
+**Usage Example:**
+```r
+# Run 3-season backtest
+backtest_results <- run_historical_backtest(
+  predictions = model_predictions,
+  actuals = game_results,
+  seasons = 2022:2024
+)
+
+# Display formatted results
+cat(format_backtest_display(backtest_results))
+```
+
+---
+
+### UI Modernization: ColorBends Three.js Background
+
+#### Implementation
+
+The HTML report now features an animated WebGL gradient background using Three.js shaders.
+
+**Features:**
+- Animated coral/terracotta gradient matching Claude's color scheme
+- Mouse-reactive glow effect
+- Subtle noise-based movement
+- Glass morphism overlays for content readability
+
+**Color Palette:**
+```css
+:root {
+  --claude-coral: #D97757;
+  --claude-coral-light: #E89A7A;
+  --claude-cream: #FAF9F6;
+  --claude-warm-gray: #2D2A26;
+  --claude-dark: #1A1815;
+}
+```
+
+**Three.js Shader (Fragment):**
+```glsl
+// Fractional Brownian Motion for smooth noise
+float fbm(vec2 p) {
+  float v = 0.0;
+  float a = 0.5;
+  for(int i = 0; i < 4; i++) {
+    v += a * smoothNoise(p);
+    p *= 2.0;
+    a *= 0.5;
+  }
+  return v;
+}
+
+// Animated color mixing with mouse interaction
+vec3 c1 = mix(color1, color2, n1);
+vec3 c2 = mix(c1, color3, n2 * 0.6);
+float glow = exp(-dist * 3.0) * 0.15;
+vec3 finalColor = c2 * (0.3 + n3 * 0.2) + vec3(glow) * color1;
+```
+
+---
+
+### Key Parameters Summary
+
+| Parameter | Value | Rationale |
+|-----------|-------|-----------|
+| Shrinkage | 60% | High trust in market efficiency |
+| Kelly Fraction | 12.5% (1/8) | Conservative for estimation error |
+| Max Believable Edge | 10% | Professional sharps rarely exceed |
+| Max Stake | 2% | Bankroll protection |
+| Brier Score Target | <0.215 | Competitive with FiveThirtyEight |
+
+---
+
+### R 4.5.1 Compatibility
+
+All code verified for R 4.5.1 compatibility:
+
+- No deprecated tidyverse functions
+- Safe column existence checks with `dplyr::any_of()` and `intersect()`
+- Fallback formatting for all display scenarios
+- Proper NA handling throughout
+- Wilson score intervals for boundary probabilities
+
+---
+
+### Usage Guide
+
+#### Running Professional Analytics
+
+```r
+# Source the market comparison module
+source("NFLmarket.R")
+
+# Calculate CLV for a set of predictions
+clv_results <- purrr::map2(
+  model_probs, closing_probs,
+  ~calculate_clv(.x, .y)
+)
+clv_summary <- summarize_clv(clv_results)
+print(clv_summary)
+
+# Calculate Brier score with decomposition
+brier <- calculate_brier_decomposition(model_probs, actual_outcomes)
+cat(format_brier_display(brier))
+
+# Run historical backtest
+backtest <- run_historical_backtest(predictions, actuals, seasons = 2022:2024)
+cat(format_backtest_display(backtest))
+
+# Analyze line movement
+movement <- analyze_line_movement(open_prob, close_prob, model_prob)
+print(movement)
+```
+
+#### Generating Reports
+
+```r
+# Generate HTML report with ColorBends background
+moneyline_report(
+  market_comparison_result = comparison,
+  schedule = schedule_data,
+  file = "NFLvsmarket_report.html",
+  title = "Week 15 Analysis"
+)
+```
+
+---
+
+### Future Recommendations
+
+1. **Track CLV Over Time** - Monitor rolling CLV to detect model degradation
+2. **Automated Calibration Plots** - Add visual calibration curves to reports
+3. **Ensemble Confidence** - Weight by historical accuracy per matchup type
+4. **Real-time Line Monitoring** - Alert when lines move favorably
+5. **Seasonal Recalibration** - Retrain shrinkage parameters annually
 
 ---
 
