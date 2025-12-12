@@ -134,10 +134,10 @@ feature_cols <- c(
 
 # Create clean matrix
 model_data <- game_features %>%
-  select(all_of(feature_cols), home_win) %>%
-  drop_na()
+  dplyr::select(dplyr::all_of(feature_cols), home_win) %>%
+  tidyr::drop_na()
 
-X <- as.matrix(model_data %>% select(-home_win))
+X <- as.matrix(model_data %>% dplyr::select(-home_win))
 y <- model_data$home_win
 
 cat(sprintf("✓ Feature matrix: %d games × %d features\n", nrow(X), ncol(X)))

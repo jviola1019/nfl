@@ -1476,7 +1476,29 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
       "</section>"
     )
 
+    # FIX: Override recommendation to Pass if stake < 0.01 to avoid "Bet X" with 0.000 stake
+    MIN_STAKE_THRESHOLD <- 0.01
+
     display_tbl <- comparison_tbl %>%
+      dplyr::mutate(
+        # Override: If stake is too small (<0.01), treat as Pass
+        effective_recommendation = dplyr::case_when(
+          blend_recommendation %in% c("Pass", "No Play") ~ blend_recommendation,
+          is.na(blend_confidence) | blend_confidence < MIN_STAKE_THRESHOLD ~ "Pass",
+          TRUE ~ blend_recommendation
+        ),
+        # Zero out stake and EV for Pass recommendations
+        effective_stake = dplyr::case_when(
+          effective_recommendation %in% c("Pass", "No Play") ~ 0,
+          is.na(blend_confidence) ~ NA_real_,
+          TRUE ~ blend_confidence
+        ),
+        effective_ev_units = dplyr::case_when(
+          effective_recommendation %in% c("Pass", "No Play") ~ 0,
+          is.na(blend_ev_units) ~ NA_real_,
+          TRUE ~ blend_ev_units
+        )
+      ) %>%
       dplyr::transmute(
         Season = season,
         Week = week,
@@ -1484,23 +1506,33 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
         Matchup = matchup,
         Winner = dplyr::coalesce(actual_winner, "TBD"),
         `Blend Pick` = blend_pick,
-        `Blend Recommendation` = blend_recommendation,
+        `Blend Recommendation` = effective_recommendation,
         `Blend Beat Market?` = dplyr::case_when(
-          is.na(blend_beats_market) ~ "N/A",
+          is.na(blend_beats_market) | effective_recommendation %in% c("Pass", "No Play") ~ "N/A",
           blend_beats_market ~ "Yes",
           TRUE ~ "No"
         ),
-        `Blend Beat Market Basis` = blend_beats_market_basis,
-        `Blend Stake (Units)` = blend_confidence,
-        `EV Edge (%)` = blend_ev_units,  # FIXED: Was blend_edge_prob (probability diff), now shows actual EV edge
-        `Total EV (Units)` = dplyr::if_else(
-          is.na(blend_confidence) | is.na(blend_ev_units),
-          NA_real_,
-          blend_confidence * blend_ev_units  # FIXED: Total expected profit = Stake × Edge
+        `Blend Beat Market Basis` = dplyr::if_else(
+          effective_recommendation %in% c("Pass", "No Play"),
+          NA_character_,
+          blend_beats_market_basis
         ),
-        `Prob Advantage (pp)` = blend_edge_prob,  # Probability difference for reference
+        `Blend Stake (Units)` = effective_stake,
+        `EV Edge (%)` = effective_ev_units,
+        `Total EV (Units)` = dplyr::case_when(
+          effective_recommendation %in% c("Pass", "No Play") ~ 0,
+          is.na(effective_stake) | is.na(effective_ev_units) ~ NA_real_,
+          TRUE ~ effective_stake * effective_ev_units
+        ),
+        # NEW: Pick-side probabilities for clarity
+        `Blend Pick Win %` = blend_prob_pick,
+        `Market Pick Win % (Fair)` = market_prob_pick,
+        `Prob Edge on Pick (pp)` = dplyr::case_when(
+          is.na(blend_prob_pick) | is.na(market_prob_pick) ~ NA_real_,
+          TRUE ~ blend_prob_pick - market_prob_pick
+        ),
         `Blend Home Win %` = blend_home_prob,
-        `Market Home Win %` = market_home_prob,
+        `Market Home Win % (Fair)` = market_home_prob,
         `Blend Median Margin` = blend_median_margin,
         `Market Home Spread` = market_home_spread,
         `Market Total` = market_total,
@@ -1533,13 +1565,14 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
       gt_tbl <- gt::gt(display_tbl)
       gt_tbl <- gt_apply_if_columns(
         gt_tbl,
-        c("EV Edge (%)", "Prob Advantage (pp)"),
+        c("EV Edge (%)", "Prob Edge on Pick (pp)"),
         gt::fmt_percent,
         decimals = 2
       )
       gt_tbl <- gt_apply_if_columns(
         gt_tbl,
-        c("Blend Home Win %", "Market Home Win %"),
+        c("Blend Home Win %", "Market Home Win % (Fair)",
+          "Blend Pick Win %", "Market Pick Win % (Fair)"),
         gt::fmt_percent,
         decimals = 1
       )
@@ -1556,11 +1589,19 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
         decimals = 1,
         drop_trailing_zeros = TRUE
       )
+      # Total EV with high precision (5 decimals), Stake with 4 decimals
       gt_tbl <- gt_apply_if_columns(
         gt_tbl,
-        c("Total EV (Units)", "Blend Stake (Units)"),
+        c("Total EV (Units)"),
         gt::fmt_number,
-        decimals = 3,
+        decimals = 5,
+        drop_trailing_zeros = FALSE
+      )
+      gt_tbl <- gt_apply_if_columns(
+        gt_tbl,
+        c("Blend Stake (Units)"),
+        gt::fmt_number,
+        decimals = 4,
         drop_trailing_zeros = FALSE
       )
       gt_tbl <- gt_apply_if_columns(
@@ -1595,22 +1636,29 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
         if (!cols_exist) return(gt_tbl)
         tryCatch(
           gt::data_color(gt_tbl, columns = columns,
-            colors = scales::col_numeric(palette = palette, domain = domain, na.color = "#374151")),
+            fn = scales::col_numeric(palette = palette, domain = domain, na.color = "#374151")),
           error = function(e) gt_tbl
         )
       }
 
       # Apply color coding for all metric columns
-      gt_tbl <- apply_color(gt_tbl, c("Blend Home Win %", "Market Home Win %"),
+      # Home win probabilities (blue scale, expanded domain to handle edge cases)
+      gt_tbl <- apply_color(gt_tbl, c("Blend Home Win %", "Market Home Win % (Fair)"),
         c("#1e3a8a", "#2563eb", "#3b82f6", "#60a5fa", "#93c5fd"), c(0, 1))
+      # Pick win probabilities (same blue scale)
+      gt_tbl <- apply_color(gt_tbl, c("Blend Pick Win %", "Market Pick Win % (Fair)"),
+        c("#1e3a8a", "#2563eb", "#3b82f6", "#60a5fa", "#93c5fd"), c(0, 1))
+      # Total EV (expanded domain to avoid clipping warnings)
       gt_tbl <- apply_color(gt_tbl, "Total EV (Units)",
-        c("#991B1B", "#dc2626", "#1f2937", "#15803d", "#166534"), c(-0.05, 0.05))
+        c("#991B1B", "#dc2626", "#1f2937", "#15803d", "#166534"), c(-0.10, 0.10))
+      # EV Edge (expanded domain to avoid clipping warnings)
       gt_tbl <- apply_color(gt_tbl, "EV Edge (%)",
-        c("#991B1B", "#dc2626", "#1f2937", "#15803d", "#166534"), c(-0.15, 0.15))
-      gt_tbl <- apply_color(gt_tbl, "Prob Advantage (pp)",
-        c("#7f1d1d", "#991b1b", "#1f2937", "#14532d", "#15532d"), c(-0.30, 0.30))
+        c("#991B1B", "#dc2626", "#1f2937", "#15803d", "#166534"), c(-0.25, 0.25))
+      # Prob Edge on Pick (expanded domain)
+      gt_tbl <- apply_color(gt_tbl, "Prob Edge on Pick (pp)",
+        c("#7f1d1d", "#991b1b", "#1f2937", "#14532d", "#15532d"), c(-0.40, 0.40))
       gt_tbl <- apply_color(gt_tbl, c("Market Home Spread", "Blend Median Margin"),
-        c("#dc2626", "#f87171", "#1f2937", "#4ade80", "#22c55e"), c(-14, 14))
+        c("#dc2626", "#f87171", "#1f2937", "#4ade80", "#22c55e"), c(-21, 21))
       gt_tbl <- gt::tab_header(
         gt_tbl,
         title = title,
@@ -1660,7 +1708,7 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
         gt_tbl <- gt::data_color(
           gt_tbl,
           columns = "Blend Beat Market?",
-          colors = scales::col_factor(
+          fn = scales::col_factor(
             palette = c("No" = "#1f2937", "Yes" = "#166534", "N/A" = "#374151"),
             domain = c("No", "Yes", "N/A")
           )
@@ -1723,28 +1771,35 @@ if (!exists("export_moneyline_comparison_html", inherits = FALSE)) {
         "@media (max-width: 768px) { body {padding-top: 75px;} thead th {top: 75px;} table {font-size: 0.88rem;} th {font-size: 0.7rem;} .report-intro {padding: 1.25rem;} #table-search {font-size: 0.9rem; padding: 0.75rem 1rem;} }\n"
       )
   
+      # Helper to safely format percent columns
+      safe_percent_fmt <- function(x) {
+        if (all(is.na(x))) return(rep("", length(x)))
+        scales::percent(x, accuracy = 0.1)
+      }
+
       formatted_tbl <- display_tbl %>%
         dplyr::mutate(
-          `EV Edge (%)` = scales::percent(`EV Edge (%)`, accuracy = 0.1),
-          `Prob Advantage (pp)` = scales::percent(`Prob Advantage (pp)`, accuracy = 0.1),
-          `Market Home Win %` = scales::percent(`Market Home Win %`, accuracy = 0.1),
-          `Blend Home Win %` = scales::percent(`Blend Home Win %`, accuracy = 0.1),
+          `EV Edge (%)` = safe_percent_fmt(`EV Edge (%)`),
+          `Prob Edge on Pick (pp)` = safe_percent_fmt(`Prob Edge on Pick (pp)`),
+          `Market Home Win % (Fair)` = safe_percent_fmt(`Market Home Win % (Fair)`),
+          `Blend Home Win %` = safe_percent_fmt(`Blend Home Win %`),
+          `Blend Pick Win %` = safe_percent_fmt(`Blend Pick Win %`),
+          `Market Pick Win % (Fair)` = safe_percent_fmt(`Market Pick Win % (Fair)`),
           `Blend Median Margin` = format_signed_spread(`Blend Median Margin`),
           `Market Home Spread` = format_signed_spread(`Market Home Spread`),
           `Market Total` = format(round(`Market Total`, 1), nsmall = 1),
-          `Total EV (Units)` = format(round(`Total EV (Units)`, 3), nsmall = 3),
+          # Increase precision for Total EV to 5 decimals
+          `Total EV (Units)` = format(round(`Total EV (Units)`, 5), nsmall = 5),
           `Blend Stake (Units)` = dplyr::if_else(
             is.na(`Blend Stake (Units)`),
             "",
-            format(round(`Blend Stake (Units)`, 3), nsmall = 3)
+            format(round(`Blend Stake (Units)`, 4), nsmall = 4)
           ),
           dplyr::across(
             c("Market Home Moneyline", "Market Away Moneyline"),
             format_moneyline_strings
           ),
           `Blend Pick` = dplyr::if_else(is.na(`Blend Pick`), "", `Blend Pick`),
-          `Blend Prob` = dplyr::if_else(is.na(`Blend Prob`), "", `Blend Prob`),
-          `Market Prob` = dplyr::if_else(is.na(`Market Prob`), "", `Market Prob`),
           `Blend Recommendation` = dplyr::if_else(
             is.na(`Blend Recommendation`),
             "",
