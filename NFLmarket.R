@@ -2702,27 +2702,43 @@ export_moneyline_comparison_html <- function(comparison_tbl,
   )
 
   # FIX: Override recommendation to Pass if stake < 0.01 to avoid "Bet X" with 0.000 stake
+  # BUT: Keep showing the actual EV value so users understand WHY it's a Pass
   MIN_STAKE_THRESHOLD <- 0.01
+
+  # === TYPE GUARDS: Ensure probability columns are numeric ===
+  # These guards prevent column type contamination
+  ensure_numeric_prob <- function(x) {
+    if (is.character(x) || !is.numeric(x)) {
+      warning("Column type contamination detected: non-numeric value in probability column")
+      # Try to coerce, replacing non-numeric with NA
+      result <- suppressWarnings(as.numeric(x))
+      return(result)
+    }
+    as.numeric(x)
+  }
 
   display_tbl <- comparison_tbl %>%
     dplyr::mutate(
+      # Ensure all probability columns are numeric (guard against contamination)
+      blend_prob_pick_safe = ensure_numeric_prob(blend_prob_pick),
+      market_prob_pick_safe = ensure_numeric_prob(market_prob_pick),
+      blend_home_prob_safe = ensure_numeric_prob(blend_home_prob),
+      market_home_prob_safe = ensure_numeric_prob(market_home_prob),
+      ml_implied_home_prob_safe = ensure_numeric_prob(ml_implied_home_prob),
+
       # Override: If stake is too small (<0.01), treat as Pass
       effective_recommendation = dplyr::case_when(
         blend_recommendation %in% c("Pass", "No Play") ~ blend_recommendation,
         is.na(blend_confidence) | blend_confidence < MIN_STAKE_THRESHOLD ~ "Pass",
         TRUE ~ blend_recommendation
       ),
-      # Zero out stake and EV for Pass recommendations
+      # Zero out stake for Pass recommendations (but NOT EV - we want to see why it's a Pass)
       effective_stake = dplyr::case_when(
         effective_recommendation %in% c("Pass", "No Play") ~ 0,
         is.na(blend_confidence) ~ NA_real_,
         TRUE ~ blend_confidence
-      ),
-      effective_ev_units = dplyr::case_when(
-        effective_recommendation %in% c("Pass", "No Play") ~ 0,
-        is.na(blend_ev_units) ~ NA_real_,
-        TRUE ~ blend_ev_units
       )
+      # NOTE: We no longer zero out EV - users want to see negative EV to understand why it's Pass
     ) %>%
     dplyr::transmute(
       Season = season,
@@ -2746,41 +2762,56 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         NA_character_,
         blend_beats_market_basis
       ),
-      `Blend Stake (Units)` = effective_stake,  # Conservative 1/8 Kelly with edge skepticism
-      `EV Edge (%)` = effective_ev_units,  # Calculated using SHRUNK probabilities
+      # Stake: 0 for Pass, actual value for Bet
+      `Blend Stake (Units)` = effective_stake,
+      # EV Edge: ALWAYS show actual value (negative for Pass, positive for Bet)
+      # This lets users understand WHY a game is Pass vs Bet
+      `EV Edge (%)` = blend_ev_units,
+      # Total EV: 0 for Pass (no bet = no EV), stake × EV for Bet
       `Total EV (Units)` = dplyr::case_when(
         effective_recommendation %in% c("Pass", "No Play") ~ 0,
-        is.na(effective_stake) | is.na(effective_ev_units) ~ NA_real_,
-        TRUE ~ effective_stake * effective_ev_units  # Conservative stake × shrunk EV
+        is.na(effective_stake) | is.na(blend_ev_units) ~ NA_real_,
+        TRUE ~ effective_stake * blend_ev_units
       ),
-      # Edge classification for professional warning
+      # Edge Quality: Based on ACTUAL EV (consistent with displayed value)
       `Edge Quality` = dplyr::case_when(
-        is.na(edge_classification) ~ "N/A",
-        edge_classification == "negative" ~ "Pass",
-        edge_classification == "realistic" ~ "✓ OK",
-        edge_classification == "optimistic" ~ "⚠ High",
-        edge_classification == "suspicious" ~ "⚠⚠ Suspicious",
-        edge_classification == "implausible" ~ "🚫 Implausible",
-        TRUE ~ edge_classification
+        is.na(blend_ev_units) ~ "N/A",
+        blend_ev_units <= 0 ~ "Pass",
+        blend_ev_units <= 0.05 ~ "✓ OK",
+        blend_ev_units <= 0.10 ~ "⚠ High",
+        blend_ev_units <= 0.15 ~ "⚠⚠ Suspicious",
+        TRUE ~ "🚫 Implausible"
       ),
-      # NEW: Pick-side probabilities for clarity (Prob Edge is on the pick, not home)
-      `Blend Pick Win %` = blend_prob_pick,  # Blend's probability for picked side
-      `Market Pick Win % (Fair)` = market_prob_pick,  # Fair vig-adjusted market prob for picked side
-      # Renamed: clarifies this is the RAW prob advantage (before shrinkage)
+      # Pick-side probabilities (using safe numeric values)
+      `Blend Pick Win %` = blend_prob_pick_safe,
+      `Market Pick Win % (Fair)` = market_prob_pick_safe,
+      # Prob Edge on Pick: blend - market probability difference
       `Prob Edge on Pick (pp)` = dplyr::case_when(
-        is.na(blend_prob_pick) | is.na(market_prob_pick) ~ NA_real_,
-        TRUE ~ blend_prob_pick - market_prob_pick
+        is.na(blend_prob_pick_safe) | is.na(market_prob_pick_safe) ~ NA_real_,
+        TRUE ~ blend_prob_pick_safe - market_prob_pick_safe
       ),
-      `Blend Home Win %` = blend_home_prob,
-      `Market Home Win % (Fair)` = market_home_prob,  # Renamed: clarifies this is fair (vig-adjusted)
-      # NEW: Show moneyline-implied probability for transparency
-      `ML Implied Home %` = ml_implied_home_prob,
+      `Blend Home Win %` = blend_home_prob_safe,
+      `Market Home Win % (Fair)` = market_home_prob_safe,
+      `ML Implied Home %` = ml_implied_home_prob_safe,
       `Blend Median Margin` = blend_median_margin,
       `Market Home Spread` = market_home_spread,
       `Market Total` = market_total,
       `Market Home Moneyline` = market_home_ml,
       `Market Away Moneyline` = market_away_ml
     )
+
+  # === FINAL TYPE VALIDATION ===
+  # Verify all probability columns are numeric (fail early if contaminated)
+  prob_cols <- c("Blend Pick Win %", "Market Pick Win % (Fair)", "Prob Edge on Pick (pp)",
+                 "Blend Home Win %", "Market Home Win % (Fair)", "ML Implied Home %")
+  for (col in prob_cols) {
+    if (col %in% names(display_tbl)) {
+      if (!is.numeric(display_tbl[[col]])) {
+        warning(sprintf("COLUMN TYPE ERROR: '%s' contains non-numeric values", col))
+        display_tbl[[col]] <- as.numeric(display_tbl[[col]])
+      }
+    }
+  }
 
   saved <- FALSE
 
@@ -2993,6 +3024,27 @@ export_moneyline_comparison_html <- function(comparison_tbl,
           columns = "Blend Recommendation",
           rows = !is.na(`Blend Recommendation`) & `Blend Recommendation` != "Pass"
         )
+      )
+    }
+    # Edge Quality color coding
+    if ("Edge Quality" %in% display_cols) {
+      gt_tbl <- gt::data_color(
+        gt_tbl,
+        columns = "Edge Quality",
+        fn = function(values) {
+          palette <- c(
+            "Pass" = "#4A4640",
+            "✓ OK" = "#059669",
+            "⚠ High" = "#d97706",
+            "⚠⚠ Suspicious" = "#dc2626",
+            "🚫 Implausible" = "#7f1d1d",
+            "N/A" = "#374151"
+          )
+          mapped <- palette[as.character(values)]
+          default <- palette[["N/A"]]
+          mapped[is.na(mapped)] <- default
+          unname(mapped)
+        }
       )
     }
     if ("Winner" %in% display_cols) {
