@@ -2,116 +2,77 @@
 
 A beginner-friendly guide to running NFL game predictions using this statistical model.
 
-**Version**: 2.0
-**R Version Required**: 4.5.1 or higher
+**Version**: 2.1
+**R Version Required**: 4.3.0+ (tested on 4.5.1)
 **Last Updated**: December 2025
 
 ---
 
 ## Quick Start (5 Minutes)
 
-### 1. Install R 4.5.1+
+### 1. Install R (4.3.0+)
 
 Download and install R from [CRAN](https://cran.r-project.org/):
-- **Windows**: Download `R-4.5.1-win.exe`
-- **Mac**: Download `R-4.5.1-arm64.pkg` (Apple Silicon) or `R-4.5.1-x86_64.pkg` (Intel)
+- **Windows**: Download `R-4.x.x-win.exe`
+- **Mac**: Download `R-4.x.x-arm64.pkg` (Apple Silicon) or `R-4.x.x-x86_64.pkg` (Intel)
 - **Linux**: `sudo apt-get install r-base` (Ubuntu/Debian)
 
-### 2. Choose Your IDE
+### 2. Install Dependencies (Recommended: renv)
 
-#### Option A: RStudio (Recommended for Beginners)
-
-**Install RStudio Desktop** (Free):
-1. Download from [posit.co/download/rstudio-desktop](https://posit.co/download/rstudio-desktop/)
-2. Install and launch RStudio
-3. Open this project: `File > Open Project` → select the `nfl` folder
-
-**Run Predictions in RStudio**:
-1. Open `config.R` in RStudio
-2. Change the week: Find line 37 and modify:
-   ```r
-   WEEK_TO_SIM <- 14  # Change this to your desired week (1-18)
-   ```
-3. Run the model:
-   - Click `Source` button (top right of editor), OR
-   - Press `Ctrl+Shift+S` (Windows/Linux) or `Cmd+Shift+S` (Mac), OR
-   - Type in Console: `source("NFLsimulation.R")`
-4. View results in the Console and check the `output/` folder
-
-#### Option B: Visual Studio Code (For Developers)
-
-**Install VS Code + R Extension**:
-1. Download [VS Code](https://code.visualstudio.com/)
-2. Install the **R Extension**:
-   - Open VS Code
-   - Go to Extensions (`Ctrl+Shift+X` or `Cmd+Shift+X`)
-   - Search for "R" by REditorSupport
-   - Click Install
-3. Install **languageserver** R package:
-   ```r
-   install.packages("languageserver")
-   ```
-
-**Configure R in VS Code**:
-1. Open Settings (`Ctrl+,` or `Cmd+,`)
-2. Search for "r.rterm"
-3. Set R path:
-   - **Windows**: `C:/Program Files/R/R-4.5.1/bin/R.exe`
-   - **Mac**: `/Library/Frameworks/R.framework/Resources/bin/R`
-   - **Linux**: `/usr/bin/R`
-
-**Run Predictions in VS Code**:
-1. Open the `nfl` folder: `File > Open Folder`
-2. Open `config.R` and change week (line 37)
-3. Run the model:
-   - Open integrated terminal (`Ctrl+` ` or `Cmd+` `)
-   - Type: `Rscript NFLsimulation.R`
-   - OR select code and press `Ctrl+Enter` (sends to R console)
-4. View output in terminal and `output/` folder
-
----
-
-## Understanding the Output
-
-When you run `NFLsimulation.R`, you'll see:
-
-### Console Output
-```
-Loading NFL data for 2025 season, week 14...
-✓ Loaded 18234 play-by-play records
-✓ Loaded 512 games (2022-2025)
-✓ Loaded 96 injury records for season 2025 from nflreadr
-
-Calculating team statistics...
-Running 100,000 Monte Carlo simulations per game...
-
-WEEK 14 PREDICTIONS:
-Game: KC vs BUF
-  Home Win Probability: 58.3%
-  Predicted Score: KC 24.2, BUF 21.7
-  Spread: KC -2.5
-  Confidence Interval (90%): KC 17-32, BUF 14-29
+```bash
+# Install renv and restore all packages
+R -e "install.packages('renv'); renv::restore()"
 ```
 
-### Output Files (in `output/` folder)
-- `predictions_week_14.csv` - All predictions in spreadsheet format
-- `simulation_details.rds` - Full simulation results (for advanced analysis)
-- `brier_logloss_report.html` - Performance metrics and charts
-
----
-
-## Model Configuration
-
-Edit `config.R` to change settings:
-
+Or install packages manually:
 ```r
-SEASON <- 2025              # Current season
-WEEK_TO_SIM <- 14          # Week to predict (1-18 for regular season)
-N_TRIALS <- 100000         # Simulation count (reduce to 10000 for faster testing)
+install.packages(c("tidyverse", "nflreadr", "gt", "glmnet", "zoo"))
 ```
 
-**All model parameters** (injuries, weather, rest, etc.) are statistically validated.
-**See [README.md](README.md#configuration) for basic settings or [DOCUMENTATION.md](DOCUMENTATION.md) for complete parameter reference.**
+### 3. Run Weekly Predictions
+
+**Recommended method (command line):**
+```bash
+# Run for current week (uses config.R defaults)
+Rscript run_week.R
+
+# Specify week and season
+Rscript run_week.R 15        # Week 15, current season
+Rscript run_week.R 15 2024   # Week 15, 2024 season
+```
+
+**Alternative: Edit config.R first**
+```bash
+# 1. Edit WEEK_TO_SIM in config.R
+# 2. Run the simulation
+Rscript NFLsimulation.R
+```
+
+### 4. View Results
+
+The script generates an HTML report with:
+- Game-by-game predictions with win probabilities
+- EV analysis and betting recommendations
+- Market comparison (model vs Vegas)
+- Stake sizing using Kelly criterion
+
+Output file: `NFLvsmarket_week15_2024.html` (or similar)
+
+---
+
+## IDE Setup (Optional)
+
+### RStudio (Recommended for Beginners)
+
+1. Download from [posit.co/download/rstudio-desktop](https://posit.co/download/rstudio-desktop/)
+2. Open project: `File > Open Project` → select the `nfl` folder
+3. Run in Console: `source("run_week.R")`
+
+### VS Code
+
+1. Install [R Extension](https://marketplace.visualstudio.com/items?itemName=REditorSupport.r)
+2. Open folder and use integrated terminal
+3. Run: `Rscript run_week.R 15`
 
 ---
 
@@ -122,7 +83,7 @@ N_TRIALS <- 100000         # Simulation count (reduce to 10000 for faster testin
 - **Accuracy**: 67.1% - Correctly predicts 2 out of 3 games
 - **Beats** FiveThirtyEight (0.215) and ESPN FPI (0.218)
 
-**See [RESULTS.md](RESULTS.md) for complete validation results, statistical tests, and methodology.**
+**See [RESULTS.md](RESULTS.md) for complete validation results.**
 
 ---
 
@@ -130,191 +91,71 @@ N_TRIALS <- 100000         # Simulation count (reduce to 10000 for faster testin
 
 ### "Error: could not find function 'year'"
 ```r
-# Install lubridate package
 install.packages("lubridate")
 ```
 
-### "Error: object 'RHO_SCORE' not found"
-- This was fixed in v2.0
-- Make sure you have the latest code: `git pull origin main`
-
 ### "No injury data loaded"
-The model will still run but with zero injury impact. To fix:
+The model gracefully handles missing injury data. To check:
 ```r
-# Update nflreadr package
-install.packages("nflreadr")
-
-# Check if data loads
 library(nflreadr)
 injuries <- load_injuries(seasons = 2025)
 ```
 
 ### "Predictions seem incorrect"
-Check these settings in `config.R`:
-1. `WEEK_TO_SIM` matches the current week
-2. `SEASON` is set to current year (2025)
-3. Wait 1-2 days after games for nflverse data to update
+1. Verify `WEEK_TO_SIM` and `SEASON` in `config.R`
+2. Wait 1-2 days after games for nflverse data updates
 
-### RStudio-Specific Issues
-
-**Package installation fails**:
-- In RStudio: `Tools > Global Options > Packages`
-- Check "Use secure download method for HTTP"
-- Try different CRAN mirror: `Tools > Global Options > Packages > Change`
-
-**Script won't source**:
-- Check working directory: `Session > Set Working Directory > To Source File Location`
-- Clear workspace: `Session > Clear Workspace`
-
-### VS Code-Specific Issues
-
-**R terminal not found**:
-- Install `radian` for better R terminal: `pip install radian`
-- In VS Code settings, set `r.rterm.windows/mac/linux` to radian path
-
-**Code won't execute**:
-- Make sure R extension is activated (check bottom-right status bar)
-- Open R terminal manually: `View > Terminal` then type `R`
+### Package installation issues
+```r
+# Use renv for reproducible package management
+renv::restore()
+```
 
 ---
 
 ## Common Workflows
 
-### Workflow 1: Weekly Predictions
+### Weekly Predictions
+```bash
+# Every Tuesday after Monday Night Football
+Rscript run_week.R 16  # Increment week number
+```
 
-**Every Tuesday** (after Monday Night Football):
-1. Open `config.R`
-2. Increment `WEEK_TO_SIM` by 1
-3. Run `source("NFLsimulation.R")`
-4. Check `output/predictions_week_X.csv` for results
-
-### Workflow 2: Testing Changes
-
-Before changing parameters:
-1. **Backup current config**:
-   ```r
-   # Save current values
-   old_glmm_w <- GLMM_BLEND_W
-   old_sos <- SOS_STRENGTH
-   ```
-2. **Make changes** in `config.R`
-3. **Run validation**:
-   ```r
-   source("validation_pipeline.R")
-   results <- tune_hyperparams()  # 10-30 minutes
-   ```
-4. **Compare results** before committing changes
-
-### Workflow 3: Full Season Backtest
-
-Test model on past seasons:
+### Full Season Backtest
 ```r
 source("professional_model_benchmarking.R")
-# Tests against FiveThirtyEight and ESPN FPI
-# Takes 15-20 minutes
+# Tests against FiveThirtyEight and ESPN FPI (15-20 min)
+```
+
+### Enable Debug Mode
+```r
+options(nfl.ev_debug = TRUE)
+source("run_week.R")  # Shows EV calculation trace
 ```
 
 ---
 
-## File Structure Overview
+## File Structure
 
 **To run predictions**:
-- `config.R` - Edit settings here (WEEK_TO_SIM, SEASON)
-- `NFLsimulation.R` - Main prediction engine
+- `run_week.R` - Main entry point (recommended)
+- `config.R` - Edit settings (WEEK_TO_SIM, SEASON)
+- `NFLsimulation.R` - Core prediction engine
 
 **Documentation**:
-- `GETTING_STARTED.md` - This guide (start here)
 - `README.md` - Project overview
+- `GETTING_STARTED.md` - This guide
 - `DOCUMENTATION.md` - Technical reference
 - `RESULTS.md` - Validation results
-
-**See [DOCUMENTATION.md](DOCUMENTATION.md#file-reference-table) for complete file listing (20 R files, 6 docs).**
-
----
-
-## Getting Help
-
-### Learning Resources
-
-**New to R?**
-- [R for Data Science](https://r4ds.had.co.nz/) (free online book)
-- [RStudio Education](https://education.rstudio.com/learn/beginner/)
-
-**Understanding the Model**:
-1. Read `DOCUMENTATION.md` for technical details
-2. Check `RESULTS.md` for validation methodology
-3. Examine code comments in `NFLsimulation.R`
-
-### Support
-
-**Found a bug?**
-1. Check `UPDATES.md` to see if it's already fixed
-2. Open an issue on GitHub with:
-   - R version (`R.version.string`)
-   - Error message (copy full output)
-   - Steps to reproduce
-
-**Questions about statistics or methodology?**
-- Read `DOCUMENTATION.md` sections on statistical validation
-- Check `RESULTS.md` for p-values and effect sizes
-- Review validation scripts for implementation details
-
----
-
-## Next Steps
-
-### For Beginners
-1. ✅ Run your first prediction following Quick Start above
-2. Read `RESULTS.md` to understand model performance
-3. Explore `output/` folder to see prediction formats
-4. Try changing `N_TRIALS` to see impact on runtime
-
-### For Advanced Users
-1. Read full `DOCUMENTATION.md` for technical architecture
-2. Run `validation_pipeline.R` to understand hyperparameter tuning
-3. Modify parameters in `config.R` and re-validate
-4. Integrate predictions into your own analysis workflow
-
-### For Developers
-1. Review code structure in `DOCUMENTATION.md`
-2. Run test suite: `source("comprehensive_r451_test_suite.R")`
-3. Check `rolling_validation_system.R` for monitoring logic
-4. Contribute improvements via GitHub pull requests
-
----
-
-## IDE Keyboard Shortcuts
-
-### RStudio
-| Action | Windows/Linux | Mac |
-|--------|---------------|-----|
-| Run current line | `Ctrl+Enter` | `Cmd+Enter` |
-| Source file | `Ctrl+Shift+S` | `Cmd+Shift+S` |
-| Help on function | `F1` (cursor on function) | `F1` |
-| Clear console | `Ctrl+L` | `Cmd+L` |
-| New R script | `Ctrl+Shift+N` | `Cmd+Shift+N` |
-| Find in files | `Ctrl+Shift+F` | `Cmd+Shift+F` |
-
-### VS Code
-| Action | Windows/Linux | Mac |
-|--------|---------------|-----|
-| Run selection in terminal | `Ctrl+Enter` | `Cmd+Enter` |
-| Open terminal | `Ctrl+` ` | `Cmd+` ` |
-| Command palette | `Ctrl+Shift+P` | `Cmd+Shift+P` |
-| Find in files | `Ctrl+Shift+F` | `Cmd+Shift+F` |
-| Settings | `Ctrl+,` | `Cmd+,` |
-| Toggle sidebar | `Ctrl+B` | `Cmd+B` |
 
 ---
 
 ## Requirements
 
-- **R**: Version 4.5.1+ (required)
-- **RAM**: 8 GB minimum (16 GB recommended)
-- **Packages**: Auto-installed by config.R
-
-**See [README.md](README.md#requirements) for complete system requirements.**
+- **R**: Version 4.3.0+ (tested on 4.5.1)
+- **RAM**: 8 GB minimum
+- **Packages**: Managed via `renv.lock`
 
 ---
 
-**Ready to run your first prediction? Go back to [Quick Start](#quick-start-5-minutes)!**
+**Ready? Run `Rscript run_week.R` to get started!**
