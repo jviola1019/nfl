@@ -282,9 +282,9 @@ The model uses nflreadr as the primary source:
 
 ## Requirements
 
-- **R Version**: 4.5.1+ (required)
+- **R Version**: 4.3.0+ (tested on 4.5.1)
 - **RAM**: 8 GB minimum
-- **Packages**: Auto-installed by config.R (tidyverse, nflreadr, lubridate, glmnet, lme4)
+- **Packages**: Managed via `renv.lock` - run `renv::restore()` to install
 
 **See [GETTING_STARTED.md](GETTING_STARTED.md#requirements) for complete system requirements.**
 
@@ -301,8 +301,13 @@ This model is built on publicly available NFL data from the nflverse project. Al
 
 ## Updates & Maintenance
 
-**Current Version**: 2.0 (December 2025)
+**Current Version**: 2.1 (December 2025)
 
-**Recent fixes**: R 4.5.1 compatibility, bug fixes, documentation consolidation
+**Recent fixes**:
+- EV/pick/odds alignment bug fix with invariant checks
+- Reproducibility setup with renv
+- New `run_week.R` entry script
+- GitHub Actions CI workflow
+- Color scale warning fixes
 
 **See [UPDATES.md](UPDATES.md) for complete changelog and version history.**
