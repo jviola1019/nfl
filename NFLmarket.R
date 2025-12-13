@@ -2488,6 +2488,91 @@ build_moneyline_comparison_table <- function(market_comparison_result,
     ))) %>%
     dplyr::arrange(season, week, game_date, matchup)
 
+  # ===========================================================================
+  # INVARIANT CHECKS: Validate EV/pick/odds alignment
+
+  # These assertions ensure the calculations are internally consistent
+  # Enable debug trace with: options(nfl.ev_debug = TRUE)
+  # ===========================================================================
+
+  ev_debug <- getOption("nfl.ev_debug", default = FALSE)
+
+  if (ev_debug && nrow(combined) > 0) {
+    message("\n=== EV CALCULATION DEBUG TRACE ===")
+    sample_rows <- head(combined, 3)
+    for (i in seq_len(nrow(sample_rows))) {
+      r <- sample_rows[i, ]
+      message(sprintf("\nGame: %s @ %s", r$away_team, r$home_team))
+      message(sprintf("  Pick side: %s", ifelse(is.na(r$blend_pick_side), "NA (Pass)", r$blend_pick_side)))
+      message(sprintf("  Shrunk prob (pick): %.4f", ifelse(is.na(r$blend_prob_pick_shrunk), NA, r$blend_prob_pick_shrunk)))
+      message(sprintf("  Market moneyline: %+d", ifelse(is.na(r$market_moneyline), NA, as.integer(r$market_moneyline))))
+      message(sprintf("  Decimal odds: %.4f", american_to_decimal(r$market_moneyline)))
+      message(sprintf("  Expected EV: %.4f", r$blend_prob_pick_shrunk * american_to_decimal(r$market_moneyline) - 1))
+      message(sprintf("  Actual EV: %.4f", r$blend_ev_units))
+      message(sprintf("  Recommendation: %s", r$blend_recommendation))
+    }
+    message("\n=== END DEBUG TRACE ===\n")
+  }
+
+  # Check 1: For Bet recommendations (positive EV), verify pick_side matches odds
+  bet_rows <- !is.na(combined$blend_pick_side) & combined$blend_ev_units > 0
+  if (any(bet_rows, na.rm = TRUE)) {
+    # Verify home pick uses home odds
+    home_picks <- combined$blend_pick_side == "home" & bet_rows
+    if (any(home_picks, na.rm = TRUE)) {
+      odds_match <- all(
+        combined$market_moneyline[home_picks] == combined$market_home_ml[home_picks],
+        na.rm = TRUE
+      )
+      if (!odds_match) {
+        warning("INVARIANT VIOLATION: Home picks using wrong odds! Check market_moneyline vs market_home_ml")
+      }
+    }
+
+    # Verify away pick uses away odds
+    away_picks <- combined$blend_pick_side == "away" & bet_rows
+    if (any(away_picks, na.rm = TRUE)) {
+      odds_match <- all(
+        combined$market_moneyline[away_picks] == combined$market_away_ml[away_picks],
+        na.rm = TRUE
+      )
+      if (!odds_match) {
+        warning("INVARIANT VIOLATION: Away picks using wrong odds! Check market_moneyline vs market_away_ml")
+      }
+    }
+  }
+
+  # Check 2: Verify EV calculation matches formula: EV = prob × decimal_odds - 1
+  # Allow small tolerance for floating point
+  if (any(bet_rows, na.rm = TRUE)) {
+    ev_tolerance <- 0.001
+    decimal_odds <- american_to_decimal(combined$market_moneyline[bet_rows])
+    expected_ev <- combined$blend_prob_pick_shrunk[bet_rows] * decimal_odds - 1
+    actual_ev <- combined$blend_ev_units[bet_rows]
+    ev_mismatch <- abs(expected_ev - actual_ev) > ev_tolerance
+    if (any(ev_mismatch, na.rm = TRUE)) {
+      n_mismatches <- sum(ev_mismatch, na.rm = TRUE)
+      warning(sprintf(
+        "INVARIANT VIOLATION: %d games have EV mismatch! Expected EV != prob × odds - 1",
+        n_mismatches
+      ))
+    }
+  }
+
+  # Check 3: Sanity bounds - if shrunk prob is low (<25%), EV can't be huge (>20%)
+  # unless odds are extremely high (which we'll warn about)
+  extreme_ev_low_prob <- bet_rows &
+    !is.na(combined$blend_prob_pick_shrunk) &
+    combined$blend_prob_pick_shrunk < 0.25 &
+    combined$blend_ev_units > 0.20
+  if (any(extreme_ev_low_prob, na.rm = TRUE)) {
+    n_extreme <- sum(extreme_ev_low_prob, na.rm = TRUE)
+    message(sprintf(
+      "INFO: %d games have low probability (<25%%) but high EV (>20%%). These are underdog bets - verify odds are correct.",
+      n_extreme
+    ))
+  }
+
   combined
 }
 
@@ -2664,8 +2749,8 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     "<li><span class=\"metric-icon\">📈</span> <strong>EV Edge (%):</strong> Expected return per dollar bet, calculated as (Blend Probability × Decimal Odds) - 1. This is the TRUE betting edge. Example: 10% edge means you expect to profit $0.10 for every $1 bet. <em>Color coded: green (positive edge), red (negative edge).</em></li>",
     "<li><span class=\"metric-icon\">💰</span> <strong>Total EV (Units):</strong> Total expected profit = Stake × EV Edge. This is your actual expected profit in units for the recommended bet size. <em>Color coded: green (profitable), red (unprofitable).</em></li>",
     "<li><span class=\"metric-icon\">📊</span> <strong>Prob Edge on Pick (pp):</strong> Probability difference (in percentage points) between blend and market for the <em>recommended/favorite side</em>. <strong>IMPORTANT:</strong> This is NOT the same as EV Edge! Prob Edge doesn't account for odds/pricing, while EV Edge does. Use EV Edge for betting decisions.</li>",
-    "<li><span class=\"metric-icon\">🎯</span> <strong>Blend Pick Win % / Market Pick Win % (Fair):</strong> Win probabilities for the <em>picked</em> (or favorite) team. These show the edge on the actual recommended side, not just home team. Market Pick Win % is vig-adjusted (fair probability).</li>",
-    "<li><span class=\"metric-icon\">🏠</span> <strong>Blend/Market Home Win % (Fair):</strong> Win probability for the <em>home team</em> specifically. Market values are vig-adjusted to show fair probabilities, not raw implied odds.</li>",
+    "<li><span class=\"metric-icon\">🎯</span> <strong>Blend Pick Win % (Shrunk) / Market Pick Win % (Fair):</strong> Win probabilities for the <em>picked</em> (or favorite) team. <strong>IMPORTANT:</strong> Blend uses SHRUNK probabilities (60% market, 40% model blend) for realistic betting. This matches how EV is calculated. Market Pick Win % is vig-adjusted (fair probability).</li>",
+    "<li><span class=\"metric-icon\">🏠</span> <strong>Blend/Market Home Win % (Shrunk/Fair):</strong> Win probability for the <em>home team</em> specifically. Blend uses SHRUNK probabilities; market values are vig-adjusted to show fair probabilities.</li>",
     "<li><span class=\"metric-icon\">📈</span> <strong>ML Implied Home %:</strong> Raw probability derived <em>directly</em> from moneyline odds (includes vig). Compare with Market Home Win % (Fair) to see the difference between raw and fair probabilities.</li>",
     "<li><span class=\"metric-icon\">🏈</span> <strong>Spreads:</strong> All spreads shown from home team's perspective:",
     "<ul class=\"basis-list\">",
@@ -2720,11 +2805,25 @@ export_moneyline_comparison_html <- function(comparison_tbl,
   display_tbl <- comparison_tbl %>%
     dplyr::mutate(
       # Ensure all probability columns are numeric (guard against contamination)
-      blend_prob_pick_safe = ensure_numeric_prob(blend_prob_pick),
+      # CRITICAL FIX: Use SHRUNK probabilities for display (matches EV calculation)
+      blend_prob_pick_shrunk_safe = ensure_numeric_prob(blend_prob_pick_shrunk),
+      blend_prob_pick_raw_safe = ensure_numeric_prob(blend_prob_pick),
       market_prob_pick_safe = ensure_numeric_prob(market_prob_pick),
       blend_home_prob_safe = ensure_numeric_prob(blend_home_prob),
+      blend_home_prob_shrunk_safe = ensure_numeric_prob(blend_home_prob_shrunk),
       market_home_prob_safe = ensure_numeric_prob(market_home_prob),
       ml_implied_home_prob_safe = ensure_numeric_prob(ml_implied_home_prob),
+
+      # CRITICAL FIX: For Pass games, calculate EV for the DISPLAYED pick (favorite)
+      # not the best EV side, to maintain consistency between columns
+      display_ev = dplyr::case_when(
+        # For Bet games (positive EV), use blend_ev_units (already correct)
+        !is.na(blend_pick_side) & blend_ev_units > 0 ~ blend_ev_units,
+        # For Pass games, calculate EV for the favorite (which is what we display)
+        blend_favorite_side == "home" ~ expected_value_units(blend_home_prob_shrunk, market_home_ml),
+        blend_favorite_side == "away" ~ expected_value_units(blend_away_prob_shrunk, market_away_ml),
+        TRUE ~ blend_ev_units
+      ),
 
       # Override: If stake is too small (<0.01), treat as Pass
       effective_recommendation = dplyr::case_when(
@@ -2764,33 +2863,35 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       ),
       # Stake: 0 for Pass, actual value for Bet
       `Blend Stake (Units)` = effective_stake,
-      # EV Edge: ALWAYS show actual value (negative for Pass, positive for Bet)
-      # This lets users understand WHY a game is Pass vs Bet
-      `EV Edge (%)` = blend_ev_units,
+      # EV Edge: Show EV for the DISPLAYED pick (consistent with Blend Pick column)
+      # For Bet games: the positive EV side
+      # For Pass games: the favorite's EV (matches displayed team with *)
+      `EV Edge (%)` = display_ev,
       # Total EV: 0 for Pass (no bet = no EV), stake × EV for Bet
       `Total EV (Units)` = dplyr::case_when(
         effective_recommendation %in% c("Pass", "No Play") ~ 0,
-        is.na(effective_stake) | is.na(blend_ev_units) ~ NA_real_,
-        TRUE ~ effective_stake * blend_ev_units
+        is.na(effective_stake) | is.na(display_ev) ~ NA_real_,
+        TRUE ~ effective_stake * display_ev
       ),
-      # Edge Quality: Based on ACTUAL EV (consistent with displayed value)
+      # Edge Quality: Based on DISPLAYED EV (consistent with displayed value)
       `Edge Quality` = dplyr::case_when(
-        is.na(blend_ev_units) ~ "N/A",
-        blend_ev_units <= 0 ~ "Pass",
-        blend_ev_units <= 0.05 ~ "✓ OK",
-        blend_ev_units <= 0.10 ~ "⚠ High",
-        blend_ev_units <= 0.15 ~ "⚠⚠ Suspicious",
+        is.na(display_ev) ~ "N/A",
+        display_ev <= 0 ~ "Pass",
+        display_ev <= 0.05 ~ "✓ OK",
+        display_ev <= 0.10 ~ "⚠ High",
+        display_ev <= 0.15 ~ "⚠⚠ Suspicious",
         TRUE ~ "🚫 Implausible"
       ),
-      # Pick-side probabilities (using safe numeric values)
-      `Blend Pick Win %` = blend_prob_pick_safe,
+      # Pick-side probabilities - SHRUNK values (matches EV calculation)
+      # This ensures: displayed_prob × decimal_odds - 1 ≈ displayed_EV
+      `Blend Pick Win % (Shrunk)` = blend_prob_pick_shrunk_safe,
       `Market Pick Win % (Fair)` = market_prob_pick_safe,
-      # Prob Edge on Pick: blend - market probability difference
+      # Prob Edge on Pick: shrunk blend - market probability difference
       `Prob Edge on Pick (pp)` = dplyr::case_when(
-        is.na(blend_prob_pick_safe) | is.na(market_prob_pick_safe) ~ NA_real_,
-        TRUE ~ blend_prob_pick_safe - market_prob_pick_safe
+        is.na(blend_prob_pick_shrunk_safe) | is.na(market_prob_pick_safe) ~ NA_real_,
+        TRUE ~ blend_prob_pick_shrunk_safe - market_prob_pick_safe
       ),
-      `Blend Home Win %` = blend_home_prob_safe,
+      `Blend Home Win % (Shrunk)` = blend_home_prob_shrunk_safe,
       `Market Home Win % (Fair)` = market_home_prob_safe,
       `ML Implied Home %` = ml_implied_home_prob_safe,
       `Blend Median Margin` = blend_median_margin,
@@ -2802,8 +2903,8 @@ export_moneyline_comparison_html <- function(comparison_tbl,
 
   # === FINAL TYPE VALIDATION ===
   # Verify all probability columns are numeric (fail early if contaminated)
-  prob_cols <- c("Blend Pick Win %", "Market Pick Win % (Fair)", "Prob Edge on Pick (pp)",
-                 "Blend Home Win %", "Market Home Win % (Fair)", "ML Implied Home %")
+  prob_cols <- c("Blend Pick Win % (Shrunk)", "Market Pick Win % (Fair)", "Prob Edge on Pick (pp)",
+                 "Blend Home Win % (Shrunk)", "Market Home Win % (Fair)", "ML Implied Home %")
   for (col in prob_cols) {
     if (col %in% names(display_tbl)) {
       if (!is.numeric(display_tbl[[col]])) {
@@ -2844,8 +2945,8 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     )
     gt_tbl <- gt_apply_if_columns(
       gt_tbl,
-      c("Blend Home Win %", "Market Home Win % (Fair)", "ML Implied Home %",
-        "Blend Pick Win %", "Market Pick Win % (Fair)"),
+      c("Blend Home Win % (Shrunk)", "Market Home Win % (Fair)", "ML Implied Home %",
+        "Blend Pick Win % (Shrunk)", "Market Pick Win % (Fair)"),
       gt::fmt_percent,
       decimals = 1
     )
@@ -2900,6 +3001,7 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     )
 
     # Helper function to apply color coding safely
+    # Uses scales::squish to clamp values to domain range, avoiding warnings
     apply_color <- function(gt_tbl, columns, palette, domain) {
       cols_exist <- if (length(columns) == 1) {
         columns %in% display_cols
@@ -2908,18 +3010,25 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       }
       if (!cols_exist) return(gt_tbl)
       tryCatch(
-        gt::data_color(gt_tbl, columns = columns,
-          fn = scales::col_numeric(palette = palette, domain = domain, na.color = "#374151")),
+        suppressWarnings(
+          gt::data_color(gt_tbl, columns = columns,
+            fn = scales::col_numeric(
+              palette = palette,
+              domain = domain,
+              na.color = "#374151",
+              oob = scales::squish  # Clamp values to domain instead of warning
+            ))
+        ),
         error = function(e) gt_tbl
       )
     }
 
     # Apply color coding for all metric columns
     # Home win probabilities (blue scale, expanded domain to handle edge cases)
-    gt_tbl <- apply_color(gt_tbl, c("Blend Home Win %", "Market Home Win % (Fair)", "ML Implied Home %"),
+    gt_tbl <- apply_color(gt_tbl, c("Blend Home Win % (Shrunk)", "Market Home Win % (Fair)", "ML Implied Home %"),
       c("#1e3a8a", "#2563eb", "#3b82f6", "#60a5fa", "#93c5fd"), c(0, 1))
     # Pick win probabilities (same blue scale)
-    gt_tbl <- apply_color(gt_tbl, c("Blend Pick Win %", "Market Pick Win % (Fair)"),
+    gt_tbl <- apply_color(gt_tbl, c("Blend Pick Win % (Shrunk)", "Market Pick Win % (Fair)"),
       c("#1e3a8a", "#2563eb", "#3b82f6", "#60a5fa", "#93c5fd"), c(0, 1))
     # Total EV (expanded domain to avoid clipping warnings)
     gt_tbl <- apply_color(gt_tbl, "Total EV (Units)",
@@ -3360,10 +3469,10 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       df
     }
 
-    # Format probability columns (updated column names)
-    for (pcol in c("EV Edge (%)", "Prob Edge on Pick (pp)", "Blend Home Win %",
+    # Format probability columns (updated column names with Shrunk suffix)
+    for (pcol in c("EV Edge (%)", "Prob Edge on Pick (pp)", "Blend Home Win % (Shrunk)",
                    "Market Home Win % (Fair)", "ML Implied Home %",
-                   "Blend Pick Win %", "Market Pick Win % (Fair)")) {
+                   "Blend Pick Win % (Shrunk)", "Market Pick Win % (Fair)")) {
       formatted_tbl <- safe_percent(formatted_tbl, pcol)
     }
 

@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  lint-and-check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up R
+        uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: '4.3.0'
+          use-public-rspm: true
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcurl4-openssl-dev libssl-dev libxml2-dev
+
+      - name: Restore renv cache
+        uses: actions/cache@v3
+        with:
+          path: ~/.local/share/renv
+          key: ${{ runner.os }}-renv-${{ hashFiles('renv.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-renv-
+
+      - name: Install dependencies
+        run: |
+          install.packages("renv")
+          renv::restore()
+        shell: Rscript {0}
+
+      - name: Check R syntax
+        run: |
+          # Parse all R files to check for syntax errors
+          r_files <- list.files(pattern = "\\.R$", full.names = TRUE)
+          errors <- character()
+          for (f in r_files) {
+            tryCatch({
+              parse(file = f)
+              message(sprintf("✓ %s", f))
+            }, error = function(e) {
+              errors <<- c(errors, sprintf("✗ %s: %s", f, conditionMessage(e)))
+            })
+          }
+          if (length(errors) > 0) {
+            cat("\nSyntax errors found:\n")
+            cat(paste(errors, collapse = "\n"), "\n")
+            quit(status = 1)
+          } else {
+            message("\nAll R files parsed successfully!")
+          }
+        shell: Rscript {0}
+
+      - name: Source main files (smoke test)
+        run: |
+          # Try sourcing the main analysis files
+          message("Testing config.R...")
+          source("config.R")
+
+          message("Testing NFLmarket.R...")
+          source("NFLmarket.R")
+
+          message("\n✓ All main files sourced successfully!")
+        shell: Rscript {0}
+
+      - name: Run basic validation
+        run: |
+          source("config.R")
+          source("NFLmarket.R")
+
+          # Test helper functions
+          message("Testing helper functions...")
+
+          # Test odds conversion
+          stopifnot(abs(american_to_decimal(-150) - 1.6667) < 0.01)
+          stopifnot(abs(american_to_decimal(+150) - 2.5) < 0.01)
+          message("✓ Odds conversion OK")
+
+          # Test probability conversion
+          stopifnot(abs(american_to_probability(-200) - 0.6667) < 0.01)
+          stopifnot(abs(american_to_probability(+200) - 0.3333) < 0.01)
+          message("✓ Probability conversion OK")
+
+          # Test EV calculation
+          ev <- expected_value_units(0.60, -150)
+          # EV = 0.60 * 1.667 - 1 = 0.0
+          stopifnot(abs(ev - 0.0) < 0.01)
+          message("✓ EV calculation OK")
+
+          message("\n✓ All basic validations passed!")
+        shell: Rscript {0}

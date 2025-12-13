@@ -1,0 +1,43 @@
+# R Environment
+.Rhistory
+.RData
+.Rproj.user
+.Ruserdata
+
+# R session files
+*.RProj
+.Rprofile.user
+*.Rproj.user
+
+# renv (keep lock file, ignore library)
+renv/library/
+renv/local/
+renv/cellar/
+renv/lock/
+renv/python/
+renv/staging/
+.Rprofile
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Generated outputs (can be regenerated)
+*.html
+run_logs/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test/validation artifacts (can be regenerated)
+*_results.rds
+*_report.rds
+
+# Keep these tracked:
+# - All .R source files
+# - README.md and documentation
+# - renv.lock (for reproducibility)
