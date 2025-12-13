@@ -1,9 +1,11 @@
 # NFL Game Prediction Model
 
+![CI](https://github.com/jviola1019/nfl/actions/workflows/ci.yml/badge.svg)
+
 A production-ready statistical model for predicting NFL game outcomes using Monte Carlo simulation and data-driven analysis.
 
-**Version**: 2.0
-**R Version Required**: 4.5.1 or higher
+**Version**: 2.1
+**R Version Required**: 4.3.0+ (tested on 4.5.1)
 **Status**: Production-Ready
 
 ---
@@ -56,17 +58,35 @@ A production-ready statistical model for predicting NFL game outcomes using Mont
 
 ## Quick Start
 
-**Ready to run predictions?** See **[GETTING_STARTED.md](GETTING_STARTED.md)** for:
-- Complete installation guide (5 minutes)
-- IDE setup (RStudio + VS Code)
-- Running your first prediction
-- Understanding output and troubleshooting
+### Installation (2 minutes)
 
-**Quick command** (if already set up):
 ```bash
-# Edit WEEK_TO_SIM in config.R, then:
-Rscript NFLsimulation.R
+# Clone the repository
+git clone https://github.com/jviola1019/nfl.git
+cd nfl
+
+# Install dependencies using renv (recommended)
+R -e "install.packages('renv'); renv::restore()"
 ```
+
+### Run Weekly Analysis
+
+```bash
+# Run for current week (uses config.R defaults)
+Rscript run_week.R
+
+# Or specify week and season
+Rscript run_week.R 15        # Week 15, current season
+Rscript run_week.R 15 2024   # Week 15, 2024 season
+```
+
+The script generates an HTML report with:
+- Game-by-game predictions
+- EV analysis and betting recommendations
+- Market comparison (blend vs Vegas)
+- Stake sizing using Kelly criterion
+
+**For detailed setup**: See **[GETTING_STARTED.md](GETTING_STARTED.md)** for IDE setup (RStudio + VS Code) and troubleshooting.
 
 ---
 
@@ -201,10 +221,17 @@ Rscript professional_model_benchmarking.R  # vs FiveThirtyEight/ESPN
 ## File Structure
 
 ### Core Files (Run These)
+- **`run_week.R`** - Main entry point for weekly analysis (recommended)
 - **`config.R`** - All model parameters and settings
-- **`NFLsimulation.R`** - Main prediction engine (run this for predictions)
+- **`NFLsimulation.R`** - Main prediction engine
 - **`NFLmarket.R`** - Market comparison and betting analysis utilities
 - **`NFLbrier_logloss.R`** - Model evaluation metrics
+
+### Environment & CI
+- **`renv.lock`** - Package versions for reproducibility
+- **`renv/`** - renv configuration (library excluded from git)
+- **`.github/workflows/ci.yml`** - GitHub Actions CI workflow
+- **`.gitignore`** - Git ignore rules
 
 ### Validation Files (Test Model Performance)
 - **`validation_pipeline.R`** - Hyperparameter tuning and cross-validation
@@ -217,7 +244,7 @@ Rscript professional_model_benchmarking.R  # vs FiveThirtyEight/ESPN
 - **`README.md`** - This file (beginner guide)
 - **`GETTING_STARTED.md`** - Further detailed beginner guide for both RStudio and VS Code
 - **`DOCUMENTATION.md`** - Detailed code architecture/Validation methodology
-- **`UPDATES.md`** - Update logs 
+- **`UPDATES.md`** - Update logs
 - **`RESULTS.md`** - Detailed validation results and statistical tests
 
 ### Utility Files
