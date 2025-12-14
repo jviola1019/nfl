@@ -2604,6 +2604,70 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     return(invisible(file))
   }
 
+  # =============================================================================
+  # PRE-EXPORT VALIDATION
+  # =============================================================================
+  # Check for required columns, valid data, and common issues that cause empty tables
+
+  required_cols <- c("game_id", "home_team", "away_team")
+  missing_required <- setdiff(required_cols, names(comparison_tbl))
+  if (length(missing_required) > 0) {
+    if (verbose) {
+      warning(sprintf(
+        "export_moneyline_comparison_html(): Missing required columns: %s. Report may be incomplete.",
+        paste(missing_required, collapse = ", ")
+      ), call. = FALSE)
+    }
+  }
+
+  # Check for odds/probability columns
+  odds_cols <- c("market_home_ml", "blend_home_prob", "market_home_prob")
+  has_odds <- any(odds_cols %in% names(comparison_tbl))
+  if (!has_odds && verbose) {
+    warning("export_moneyline_comparison_html(): No odds or probability columns found. EV calculations will be unavailable.", call. = FALSE)
+  }
+
+  # Check for EV columns and validate values
+  ev_cols <- intersect(c("blend_ev_units", "blend_ev", "ev_edge"), names(comparison_tbl))
+  if (length(ev_cols) > 0) {
+    for (col in ev_cols) {
+      col_data <- comparison_tbl[[col]]
+      if (all(is.na(col_data))) {
+        if (verbose) warning(sprintf("export_moneyline_comparison_html(): Column '%s' is entirely NA", col), call. = FALSE)
+      } else if (is.numeric(col_data)) {
+        finite_vals <- col_data[is.finite(col_data)]
+        if (length(finite_vals) > 0 && any(abs(finite_vals) > 1)) {
+          # EV values over 100% are suspicious
+          suspicious <- sum(abs(finite_vals) > 1)
+          if (suspicious > 0 && verbose) {
+            message(sprintf("export_moneyline_comparison_html(): %d rows have |EV| > 100%% in '%s' - verify data integrity", suspicious, col))
+          }
+        }
+      }
+    }
+  }
+
+  # Validate probability columns are in 0-1 range
+  prob_cols <- intersect(c("blend_home_prob", "market_home_prob", "blend_pick_prob", "shrunk_prob"), names(comparison_tbl))
+  for (col in prob_cols) {
+    col_data <- comparison_tbl[[col]]
+    if (is.numeric(col_data)) {
+      out_of_range <- sum(!is.na(col_data) & (col_data < 0 | col_data > 1), na.rm = TRUE)
+      if (out_of_range > 0 && verbose) {
+        warning(sprintf("export_moneyline_comparison_html(): %d values in '%s' outside [0,1] range", out_of_range, col), call. = FALSE)
+      }
+    }
+  }
+
+  # Summary diagnostic
+  if (verbose) {
+    message(sprintf(
+      "export_moneyline_comparison_html(): Exporting %d games (%d columns) to %s",
+      nrow(comparison_tbl), ncol(comparison_tbl), basename(file)
+    ))
+  }
+  # =============================================================================
+
   season_filter <- if (!length(season)) {
     get0("SEASON", ifnotfound = NULL, inherits = TRUE)
   } else {
@@ -2678,110 +2742,50 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     out
   }
 
+  # Professional, concise intro section - designed for quick reference
   intro_html <- paste0(
     "<section class=\"report-intro\">",
-    "<h2>📊 NFL Blend vs Market Analysis Report</h2>",
-    "<p class=\"report-subtitle\">Comprehensive comparison of blended model predictions against betting market consensus</p>",
+    "<h2>NFL Model vs Market Analysis</h2>",
+    "<p class=\"report-subtitle\">Probabilistic model comparison with professional risk management</p>",
 
-    "<div class=\"intro-section\" style=\"background: rgba(220, 38, 38, 0.15); border-left: 4px solid #ef4444;\">",
-    "<h3>⚠️ CRITICAL: PROFESSIONAL CALIBRATION APPLIED</h3>",
-    "<p><strong>NFL betting markets are among the most efficient in sports.</strong> Professional sharps rarely find edges above 3-5%. This model applies:</p>",
+    "<div class=\"intro-section warning-box\">",
+    "<h3>Risk Management Applied</h3>",
+    "<p>This report uses conservative settings appropriate for efficient markets:</p>",
     "<ul>",
-    "<li>🎯 <strong>60% Probability Shrinkage:</strong> Raw model probabilities are shrunk 60% toward market consensus to reduce overconfidence</li>",
-    "<li>📉 <strong>1/8 Kelly Staking:</strong> Only 12.5% of optimal Kelly is used to account for estimation error</li>",
-    "<li>🚫 <strong>Edge Skepticism:</strong> Edges >10% receive additional penalties (likely model error, not real opportunity)</li>",
-    "<li>📊 <strong>Max 2% Stake:</strong> No single bet exceeds 2% of bankroll regardless of calculated edge</li>",
+    "<li><strong>60% Shrinkage</strong> — Probabilities blended toward market (reduces overconfidence)</li>",
+    "<li><strong>1/8 Kelly</strong> — Fractional staking (accounts for estimation error)</li>",
+    "<li><strong>2% Max Stake</strong> — Position size cap per game</li>",
     "</ul>",
-    "<p style=\"color: #fca5a5; font-weight: 600;\">⚠️ Edges >5% are OPTIMISTIC, >10% are SUSPICIOUS, >15% are almost certainly model errors. Do NOT bet large amounts on \"implausible\" edges!</p>",
-    "</div>",
-
-    "<div class=\"intro-section\" style=\"background: rgba(22,101,52,0.2); border-left: 4px solid #22c55e;\">",
-    "<h3>✅ METHODOLOGY & TRANSPARENCY</h3>",
-    "<p><strong>Key Features:</strong></p>",
-    "<ul>",
-    "<li>✅ <strong>EV Edge (%)</strong> calculated using SHRUNK probabilities: (Shrunk Prob × Decimal Odds) - 1</li>",
-    "<li>✅ <strong>Total EV (Units)</strong> calculated as: Conservative Stake × EV Edge</li>",
-    "<li>✅ <strong>Prob Edge on Pick (pp)</strong> shows RAW probability advantage (before shrinkage) for reference</li>",
-    "<li>✅ <strong>ML Implied Home %</strong> shows raw moneyline-derived probability for transparency</li>",
-    "<li>✅ <strong>Blend Pick*</strong> asterisk indicates Pass games where blend favorite is shown (no positive EV bet)</li>",
-    "<li>✅ <strong>Edge Classification:</strong> realistic (0-5%), optimistic (5-10%), suspicious (10-15%), implausible (>15%)</li>",
-    "</ul>",
-    "<p style=\"color: #60a5fa; font-weight: 600;\">📊 Market Home Win % uses moneyline when available; spread-derived only as fallback</p>",
+    "<p class=\"edge-warning\">Edge Guide: 0-5% = realistic | 5-10% = optimistic | 10%+ = likely model error</p>",
     "</div>",
 
     "<div class=\"intro-section\">",
-    "<h3>🎯 Understanding the Blend</h3>",
-    "<p>This report compares a <strong>blended probabilistic model</strong> (combining multiple prediction sources) against the <strong>betting market consensus</strong> (derived from moneylines and spreads). Each row represents one NFL game with detailed analytics.</p>",
-    "</div>",
-
-    "<div class=\"intro-section critical-concept\">",
-    "<h3>⚡ CRITICAL: What Does \"Blend Beat Market?\" Mean?</h3>",
-    "<p class=\"emphasis\">This is <strong>NOT</strong> about which team is favored to win!</p>",
-    "<p>\"Blend Beat Market?\" compares <strong>which assessment is better</strong>, not which team wins. Examples:</p>",
-    "<ul class=\"examples-list\">",
-    "<li><strong>Scenario 1:</strong> Both favor Team A, but Market has Team A at 78% and Blend has 75%<br/>",
-    "→ <span class=\"result-no\">Market beats Blend</span> (market is more confident in the correct side)</li>",
-    "<li><strong>Scenario 2:</strong> Market favors Team A at 60%, Blend favors Team B at 55%, Team B wins<br/>",
-    "→ <span class=\"result-yes\">Blend beats Market</span> (blend picked the actual winner)</li>",
-    "<li><strong>Scenario 3:</strong> Blend has higher EV (+0.15 units) than Market (-0.05 units) on same side<br/>",
-    "→ <span class=\"result-yes\">Blend beats Market</span> (better expected value)</li>",
-    "</ul>",
-    "<p class=\"key-point\">🔑 <strong>Key Point:</strong> A favorite can lose to the market if the market assigns an even <em>higher</em> probability to that same favorite!</p>",
+    "<h3>Key Columns</h3>",
+    "<table class=\"metrics-table\">",
+    "<tr><td><strong>EV Edge (%)</strong></td><td>Expected return per unit: (Shrunk Prob × Decimal Odds) - 1</td></tr>",
+    "<tr><td><strong>Total EV</strong></td><td>Expected profit: Stake × EV Edge</td></tr>",
+    "<tr><td><strong>Blend Pick</strong></td><td>Model favorite (* = Pass game, no positive EV)</td></tr>",
+    "<tr><td><strong>Shrunk Win %</strong></td><td>Market-adjusted probability (used for EV calc)</td></tr>",
+    "<tr><td><strong>Prob Edge</strong></td><td>Raw probability advantage before shrinkage (reference only)</td></tr>",
+    "</table>",
     "</div>",
 
     "<div class=\"intro-section\">",
-    "<h3>📈 Key Metrics Explained</h3>",
-    "<ul class=\"metrics-list\">",
-    "<li><span class=\"metric-icon\">💡</span> <strong>Blend Pick:</strong> The team the blended model favors. <strong>Note:</strong> An asterisk (*) indicates the blend's favorite for Pass games where no positive EV bet exists.</li>",
-    "<li><span class=\"metric-icon\">🎲</span> <strong>Blend Recommendation:</strong> Suggested betting action based on positive expected value (EV > 0).</li>",
-    "<li><span class=\"metric-icon\">✅</span> <strong>Blend Beat Market?:</strong> Did the blend's assessment outperform the market's?",
-    "<ul class=\"basis-list\">",
-    "<li>For completed games: Compares <em>actual money won/lost</em> by each side's pick</li>",
-    "<li>For upcoming games: Compares <em>expected value, win probability, or pricing</em></li>",
-    "</ul></li>",
-    "<li><span class=\"metric-icon\">📊</span> <strong>Basis:</strong> How we determined the winner:",
-    "<ul class=\"basis-list\">",
-    "<li><strong>Final score</strong> — Most reliable: actual results determine which assessment was better</li>",
-    "<li><strong>Expected value</strong> — Blend has higher EV on its pick vs market's pick</li>",
-    "<li><strong>Win probability</strong> — Blend assigns higher win % to its pick vs market's pick</li>",
-    "<li><strong>Moneyline price</strong> — Blend offers better pricing for the same pick</li>",
-    "</ul></li>",
-    "<li><span class=\"metric-icon\">📈</span> <strong>EV Edge (%):</strong> Expected return per dollar bet, calculated as (Blend Probability × Decimal Odds) - 1. This is the TRUE betting edge. Example: 10% edge means you expect to profit $0.10 for every $1 bet. <em>Color coded: green (positive edge), red (negative edge).</em></li>",
-    "<li><span class=\"metric-icon\">💰</span> <strong>Total EV (Units):</strong> Total expected profit = Stake × EV Edge. This is your actual expected profit in units for the recommended bet size. <em>Color coded: green (profitable), red (unprofitable).</em></li>",
-    "<li><span class=\"metric-icon\">📊</span> <strong>Prob Edge on Pick (pp):</strong> Probability difference (in percentage points) between blend and market for the <em>recommended/favorite side</em>. <strong>IMPORTANT:</strong> This is NOT the same as EV Edge! Prob Edge doesn't account for odds/pricing, while EV Edge does. Use EV Edge for betting decisions.</li>",
-    "<li><span class=\"metric-icon\">🎯</span> <strong>Blend Pick Win % (Shrunk) / Market Pick Win % (Fair):</strong> Win probabilities for the <em>picked</em> (or favorite) team. <strong>IMPORTANT:</strong> Blend uses SHRUNK probabilities (60% market, 40% model blend) for realistic betting. This matches how EV is calculated. Market Pick Win % is vig-adjusted (fair probability).</li>",
-    "<li><span class=\"metric-icon\">🏠</span> <strong>Blend/Market Home Win % (Shrunk/Fair):</strong> Win probability for the <em>home team</em> specifically. Blend uses SHRUNK probabilities; market values are vig-adjusted to show fair probabilities.</li>",
-    "<li><span class=\"metric-icon\">📈</span> <strong>ML Implied Home %:</strong> Raw probability derived <em>directly</em> from moneyline odds (includes vig). Compare with Market Home Win % (Fair) to see the difference between raw and fair probabilities.</li>",
-    "<li><span class=\"metric-icon\">🏈</span> <strong>Spreads:</strong> All spreads shown from home team's perspective:",
-    "<ul class=\"basis-list\">",
-    "<li><strong>Market Home Spread</strong> — Betting line from sportsbooks (+ = underdog, − = favorite)</li>",
-    "<li><strong>Blend Median Margin</strong> — Blend's predicted point differential (negative spread equivalent)</li>",
-    "<li><em>Color coded: red (home underdog), green (home favorite)</em></li>",
-    "</ul></li>",
-    "<li><span class=\"metric-icon\">💵</span> <strong>Moneylines:</strong> American odds format (e.g., +150 = win $150 on $100 bet, -150 = bet $150 to win $100).</li>",
+    "<h3>Interpreting Results</h3>",
+    "<p><strong>\"Blend Beat Market?\"</strong> compares assessment quality, not which team was favored:</p>",
+    "<ul class=\"compact-list\">",
+    "<li><span class=\"result-yes\">Yes</span> — Model's probability estimate was more accurate than market's</li>",
+    "<li><span class=\"result-no\">No</span> — Market's assessment was better calibrated</li>",
+    "<li><strong>Pass</strong> — No positive EV bet (correct behavior for negative edge games)</li>",
     "</ul>",
     "</div>",
 
-    "<div class=\"intro-section\" style=\"background: rgba(59,130,246,0.15); border-left: 4px solid #60a5fa;\">",
-    "<h3>🛑 Understanding \"Pass\" Recommendations</h3>",
-    "<p>When the Blend recommends <strong>\"Pass\"</strong>, it means the model identified a <strong>negative expected value</strong> bet. This is GOOD - the model is protecting you!</p>",
-    "<ul class=\"metrics-list\">",
-    "<li>✅ <strong>Passing on negative EV is CORRECT behavior</strong> - You avoid losing bets</li>",
-    "<li>📊 <strong>\"Blend Beat Market?\" shows N/A</strong> for Pass games because there's no bet to compare</li>",
-    "<li>💡 <strong>Why Pass?</strong> The market price is too efficient, or the blend's edge isn't large enough after accounting for vig</li>",
-    "<li>🔍 <strong>Example:</strong> NYJ @ NE shows -3.9% EV Edge → Pass recommendation is correct, avoiding a -3.9% expected loss</li>",
-    "<li>⚠️ <strong>Note:</strong> The blend may still favor a team (e.g., 86.9% win probability), but if the market price doesn't offer value, it's a Pass</li>",
-    "</ul>",
-    "</div>",
-
-    "<div class=\"intro-section\">",
-    "<h3>🎨 Color Coding</h3>",
-    "<ul class=\"color-guide\">",
-    "<li><span class=\"color-box\" style=\"background:#059669;\"></span> <strong>Green:</strong> Blend beats market (better assessment)</li>",
-    "<li><span class=\"color-box\" style=\"background:#3D3A36;\"></span> <strong>Muted:</strong> Market beats blend (market's assessment was better)</li>",
-    "<li><span class=\"color-box\" style=\"background:#D97757;\"></span> <strong>Coral:</strong> Recommended bet action</li>",
-    "<li><span class=\"color-box\" style=\"background:#4A4640;\"></span> <strong>Gray:</strong> N/A or insufficient data</li>",
-    "</ul>",
+    "<div class=\"intro-section color-legend\">",
+    "<h3>Color Coding</h3>",
+    "<span class=\"color-chip green\"></span> Positive edge / Blend wins ",
+    "<span class=\"color-chip coral\"></span> Recommended action ",
+    "<span class=\"color-chip muted\"></span> Market wins / No edge ",
+    "<span class=\"color-chip gray\"></span> N/A",
     "</div>",
     "</section>"
   )
@@ -3254,6 +3258,20 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         ".report-intro strong {color: var(--claude-cream);}\n",
         # Intro section styling
         ".intro-section {padding: 1.25rem; margin: 1rem 0; border-radius: 16px; background: rgba(26, 24, 21, 0.6); border: 1px solid rgba(217, 119, 87, 0.18); backdrop-filter: blur(8px);}\n",
+        ".intro-section.warning-box {background: rgba(220, 38, 38, 0.1); border-left: 3px solid #ef4444;}\n",
+        ".edge-warning {color: #fca5a5; font-weight: 500; font-size: 0.9rem; margin-top: 0.75rem; padding: 0.5rem; background: rgba(0,0,0,0.2); border-radius: 8px;}\n",
+        ".metrics-table {width: 100%; border-collapse: collapse; margin: 0.75rem 0; font-size: 0.9rem;}\n",
+        ".metrics-table td {padding: 0.5rem 0.75rem; border-bottom: 1px solid rgba(217, 119, 87, 0.15);}\n",
+        ".metrics-table td:first-child {width: 140px; color: var(--claude-coral-light);}\n",
+        ".compact-list {margin: 0.5rem 0; padding-left: 1.25rem;}\n",
+        ".compact-list li {margin: 0.35rem 0; line-height: 1.5;}\n",
+        ".color-legend {display: flex; flex-wrap: wrap; gap: 1rem; align-items: center;}\n",
+        ".color-legend h3 {width: 100%; margin-bottom: 0.5rem;}\n",
+        ".color-chip {display: inline-block; width: 14px; height: 14px; border-radius: 4px; margin-right: 4px; vertical-align: middle;}\n",
+        ".color-chip.green {background: #059669;}\n",
+        ".color-chip.coral {background: #D97757;}\n",
+        ".color-chip.muted {background: #3D3A36;}\n",
+        ".color-chip.gray {background: #4A4640;}\n",
         # GT Table styling
         ".gt_table {border-radius: 20px; overflow: hidden; box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5); background: rgba(45, 42, 38, 0.92) !important; backdrop-filter: blur(12px);}\n",
         ".gt_table thead th {position: sticky; top: 85px; z-index: 100; background: rgba(26, 24, 21, 0.96) !important; backdrop-filter: blur(10px); color: var(--claude-cream) !important; font-weight: 600; letter-spacing: 0.03em; border-bottom: 2px solid var(--claude-coral) !important;}\n",
