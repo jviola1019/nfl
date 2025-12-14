@@ -4,7 +4,7 @@
 
 A production-ready statistical model for predicting NFL game outcomes using Monte Carlo simulation and data-driven analysis.
 
-**Version**: 2.1
+**Version**: 2.2
 **R Version Required**: 4.3.0+ (tested on 4.5.1)
 **Status**: Production-Ready
 
@@ -226,6 +226,7 @@ Rscript professional_model_benchmarking.R  # vs FiveThirtyEight/ESPN
 - **`NFLsimulation.R`** - Main prediction engine
 - **`NFLmarket.R`** - Market comparison and betting analysis utilities
 - **`NFLbrier_logloss.R`** - Model evaluation metrics
+- **`injury_scalp.R`** - Injury data loading with multiple fallback sources
 
 ### Environment & CI
 - **`renv.lock`** - Package versions for reproducibility
@@ -266,17 +267,30 @@ All data is obtained from the nflverse project (publicly available):
 **Update Frequency**: Injury reports updated Tuesday-Friday during season
 **Reliability**: Official NFL data aggregated by the nflverse community
 
-### Injury Data Status (2025)
+### Injury Data System
 
-The model uses nflreadr as the primary source:
-- Load method: `nflreadr::load_injuries(seasons = 2025)`
-- Fallback: nflfastR scrapers if nflreadr unavailable
-- If no data available: Model runs with zero injury impact (conservative estimate)
+The model uses a flexible injury loading system with multiple fallback options:
 
-**Sources:**
+**Configuration** (`config.R`):
+```r
+INJURY_MODE <- "auto"  # Options: auto, off, last_available, manual, scalp
+```
+
+**Modes**:
+- `auto` (default): Use nflreadr with automatic fallback to last available season
+- `off`: Disable injury adjustments entirely
+- `last_available`: Use most recent season with available data
+- `manual`: Load from local file specified by `INJURY_MANUAL_FILE`
+- `scalp`: Use current week practice/game status (experimental)
+
+**Sources**:
 - [nflreadr injury documentation](https://nflreadr.nflverse.com/reference/load_injuries.html)
 - [nflverse data repository](https://github.com/nflverse/nflverse-data)
-- [ESPN API endpoints](https://gist.github.com/nntrn/ee26cb2a0716de0947a0a4e9a157bc1c)
+
+**Fallback Behavior**:
+- If current season returns 404, automatically uses last available season
+- HTML report shows banner indicating fallback mode used
+- Zero injury impact used only when no data available from any season
 
 ---
 
@@ -301,13 +315,21 @@ This model is built on publicly available NFL data from the nflverse project. Al
 
 ## Updates & Maintenance
 
-**Current Version**: 2.1 (December 2025)
+**Current Version**: 2.2 (December 2025)
 
-**Recent fixes**:
+**Recent fixes (v2.2)**:
+- Injury data system with `injury_mode` config (auto/off/last_available/manual/scalp)
+- Stadium fallback warnings for neutral site games (no longer silently defaults to KC)
+- Pre-export validation checks for HTML report (prevents empty tables)
+- Nested CV calibration clearly marked as production; global isotonic labeled diagnostic-only
+- Redesigned HTML report with concise professional intro section
+- Enhanced troubleshooting docs for Windows 00LOCK glmnet issue
+
+**Previous fixes (v2.1)**:
 - EV/pick/odds alignment bug fix with invariant checks
 - Reproducibility setup with renv
 - New `run_week.R` entry script
 - GitHub Actions CI workflow
-- Color scale warning fixes
+- Color scale warning fixes (`scales::squish`)
 
 **See [UPDATES.md](UPDATES.md) for complete changelog and version history.**

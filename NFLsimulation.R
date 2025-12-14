@@ -3698,31 +3698,43 @@ get_hourly_weather <- function(lat, lon, date_iso, hours = c(13)) {
 
 # make sure stadium_coords is defined above this point and has columns: venue_key, lat, lon, dome
 
-# Default weather conditions for neutral sites / missing stadium data (Kansas City as neutral baseline)
-DEFAULT_STADIUM_CONDITIONS <- list(
-  lat = 39.0489,    # Kansas City (Arrowhead Stadium)
-  lon = -94.4839,
-  dome = FALSE,
-  wind_mph = 8,     # Typical outdoor conditions
-  temp_f = 55,      # Mild temperature
-  precip_prob = 0.1 # Low precipitation probability
-)
+# Default weather conditions for neutral sites / missing stadium data
+# Uses league-average conditions from config.R if available, otherwise sensible defaults
+DEFAULT_STADIUM_CONDITIONS <- if (exists("DEFAULT_WEATHER_CONDITIONS", envir = .GlobalEnv)) {
+  get("DEFAULT_WEATHER_CONDITIONS", envir = .GlobalEnv)
+} else {
+  list(
+    lat = 39.5,       # Central US (league average, NOT specific stadium)
+    lon = -98.35,     # Kansas geographic center
+    dome = FALSE,
+    wind_mph = 8,     # League-average outdoor conditions
+    temp_f = 55,      # Moderate temperature
+    precip_prob = 0.1
+  )
+}
+
+# Track games using stadium fallback for warning at end
+.stadium_fallback_games <- character(0)
+.stadium_fallback_warned <- FALSE
 
 # helper so we avoid inline braces inside mutate()
 .wx_cache_dir <- file.path(path.expand("~"), ".cache", "nfl_sim_weather")
 if (!dir.exists(.wx_cache_dir)) dir.create(.wx_cache_dir, recursive = TRUE)
 
-safe_hourly <- function(lat, lon, date_iso, kickoff_hour_local = NA_integer_) {
+safe_hourly <- function(lat, lon, date_iso, kickoff_hour_local = NA_integer_, game_id = NULL) {
   # Guard against missing or non-finite inputs which can bubble up from
   # incomplete stadium metadata or neutral-site games. `is.finite()` returns
   # `NA` for `NA_real_`, which caused an error inside the `if` statement when
   # this helper was called via `purrr::pmap()`.  Using `isTRUE(all(...))` keeps
   # the check scalar and safely handles `NA`s.
-  # FIX: Use default coordinates for neutral sites instead of returning NULL
+  # FIX: Use league-average coordinates for neutral sites, track and warn
   if (!isTRUE(all(is.finite(c(lat, lon))))) {
     lat <- DEFAULT_STADIUM_CONDITIONS$lat
     lon <- DEFAULT_STADIUM_CONDITIONS$lon
-    message(sprintf("Using default location (KC) for missing stadium data"))
+    # Track this game for later warning
+    if (!is.null(game_id) && nzchar(game_id)) {
+      .stadium_fallback_games <<- c(.stadium_fallback_games, game_id)
+    }
   }
   if (is.na(date_iso) || !nzchar(date_iso)) return(NULL)
   key  <- digest::digest(list(round(lat,4), round(lon,4), date_iso))
@@ -3762,7 +3774,8 @@ weather_inputs <- week_slate %>%
   )
 
 weather_lookup <- purrr::pmap(
-  list(weather_inputs$lat, weather_inputs$lon, weather_inputs$date_iso, weather_inputs$kickoff_local_hour),
+  list(weather_inputs$lat, weather_inputs$lon, weather_inputs$date_iso,
+       weather_inputs$kickoff_local_hour, weather_inputs$game_id),
   safe_hourly
 )
 
@@ -3774,6 +3787,17 @@ weather_rows <- weather_inputs %>%
     temp_f      = purrr::map_dbl(.wx, function(x) extract_first(x, "temp_f")),
     precip_prob = purrr::map_dbl(.wx, function(x) extract_first(x, "precip_prob"))
   )
+
+# Warn about games using stadium fallback (once per session)
+warn_stadium_fallback <- get0("WARN_STADIUM_FALLBACK", envir = .GlobalEnv, ifnotfound = TRUE)
+if (isTRUE(warn_stadium_fallback) && length(.stadium_fallback_games) > 0 && !.stadium_fallback_warned) {
+  .stadium_fallback_warned <<- TRUE
+  warning(sprintf(
+    "STADIUM FALLBACK: %d game(s) using league-average weather conditions (venue not in stadium_coords):\n  %s\n  Weather will use moderate outdoor defaults (55°F, 8mph wind, 10%% precip).",
+    length(.stadium_fallback_games),
+    paste(.stadium_fallback_games, collapse = ", ")
+  ), call. = FALSE, immediate. = TRUE)
+}
 
 
 # Build per-game drive counts restricted to games BEFORE the slate_date
@@ -5123,10 +5147,18 @@ if (!nrow(calib_sim_df)) {
   brier_global <- mean((calib_sim_df$p_home_2w_cal_global - calib_sim_df$y_home)^2, na.rm = TRUE)
   brier_nested <- mean((calib_sim_df$p_home_2w_cal_nested - calib_sim_df$y_home)^2, na.rm = TRUE)
 
-  message(sprintf("Brier Scores | Uncalibrated: %.4f | Global: %.4f | Nested CV: %.4f",
-                  brier_uncalibrated, brier_global, brier_nested))
-  message(sprintf("Nested CV improvement over global: %.1f%% reduction in Brier score",
-                  100 * (brier_global - brier_nested) / brier_global))
+  message("─────────────────────────────────────────────────────────────────")
+  message("CALIBRATION SUMMARY")
+  message("─────────────────────────────────────────────────────────────────")
+  message(sprintf("  Uncalibrated Brier: %.4f", brier_uncalibrated))
+  message(sprintf("  Global Isotonic:    %.4f (DIAGNOSTIC ONLY - has data leakage)", brier_global))
+  message(sprintf("  Nested CV Isotonic: %.4f (PRODUCTION - no leakage)", brier_nested))
+  message(sprintf("  Improvement:        %.1f%% Brier reduction (nested vs uncalibrated)",
+                  100 * (brier_uncalibrated - brier_nested) / brier_uncalibrated))
+  message("─────────────────────────────────────────────────────────────────")
+  message("NOTE: Production predictions use NESTED CV (leave-one-week-out).")
+  message("      Global isotonic shown only for diagnostic comparison.")
+  message("─────────────────────────────────────────────────────────────────")
 
   # Store calibration diagnostics for later analysis
   calibration_diagnostics <- list(

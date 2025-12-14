@@ -177,6 +177,34 @@ DIVISION_GAME_ADJUST <- -0.2
 CONFERENCE_GAME_ADJUST <- 0.0
 
 # =============================================================================
+# INJURY DATA MODE
+# =============================================================================
+# Controls how injury data is loaded and processed
+# Options: "auto", "off", "last_available", "manual", "scalp"
+
+#' @description Injury data loading mode
+#' @options
+#'   "auto" - Use nflreadr::load_injuries(); fallback to last_available if current fails
+#'   "off" - Disable injury adjustments entirely
+#'   "last_available" - Use most recent available season's injury data
+#'   "manual" - Load from local file specified by INJURY_MANUAL_FILE
+#'   "scalp" - Scrape current week practice/game status (ESPN fallback)
+#' @default "auto"
+INJURY_MODE <- getOption("nfl_sim.injury_mode", default = "auto")
+
+#' @description File path for manual injury data (only used when INJURY_MODE = "manual")
+#' @default NULL
+INJURY_MANUAL_FILE <- getOption("nfl_sim.injury_manual_file", default = NULL)
+
+#' @description Allow web scraping for injury data (scalp mode)
+#' @default FALSE (requires explicit opt-in for web scraping)
+ALLOW_INJURY_SCRAPE <- getOption("nfl_sim.allow_injury_scrape", default = FALSE)
+
+#' @description Cache directory for scraped injury data
+#' @default "~/.cache/nfl_sim_injuries"
+INJURY_CACHE_DIR <- file.path(path.expand("~"), ".cache", "nfl_sim_injuries")
+
+# =============================================================================
 # INJURY MODEL WEIGHTS (VALIDATED)
 # =============================================================================
 # Position-specific injury severity weights
@@ -206,6 +234,69 @@ INJURY_WEIGHT_FRONT7 <- 0.50
 #' @default 1.5
 #' @validation QB impact: -7.2 points (literature: -7 to -10)
 QB_INJURY_MULTIPLIER <- 1.5
+
+# =============================================================================
+# INJURY SCALPING - DETAILED POSITION WEIGHTS
+# =============================================================================
+# Used when INJURY_MODE = "scalp" for granular injury impact calculation
+# Weights represent approximate point impact when a starter at that position is out
+
+#' @description Position-specific point impact weights for injury scalping
+#' @note These weights are editable to tune injury model sensitivity
+INJURY_POSITION_WEIGHTS <- list(
+
+  # Offense - direct scoring impact
+  QB = 4.0,        # Starting QB is critical (literature: 7-10 points)
+  WR1 = 1.0,       # WR1 (primary receiver)
+  WR = 0.5,        # Other WRs
+  RB = 0.4,        # Running back
+  TE = 0.4,        # Tight end
+  OL = 0.6,        # Offensive line starter (tackles, guards, center)
+  FB = 0.2,        # Fullback
+
+
+  # Defense - points allowed impact
+
+  EDGE = 0.6,      # Edge rusher / DE
+  DL = 0.5,        # Interior defensive line
+  LB = 0.4,        # Linebacker
+  CB1 = 0.7,       # CB1 (shutdown corner)
+  CB = 0.4,        # Other cornerbacks
+
+  S = 0.4,         # Safety
+
+
+  # Special teams
+  K = 0.2,         # Kicker
+  P = 0.1          # Punter
+)
+
+#' @description Practice status to availability score mapping
+#' @note Used for injury scalping to convert practice reports to availability
+PRACTICE_AVAILABILITY <- list(
+  Full = 1.00,      # Full participant
+  Limited = 0.60,   # Limited participant
+  DNP = 0.15,       # Did not participate
+  `NA` = 0.60       # Missing midweek data defaults to limited
+)
+
+#' @description Game status to multiplier mapping
+#' @note Applied to practice availability for final availability score
+GAME_STATUS_MULTIPLIER <- list(
+  `NA` = 1.00,       # No designation = expected to play
+  None = 1.00,       # No designation
+  Probable = 0.95,   # Rarely used now
+  Questionable = 0.75,
+  Doubtful = 0.25,
+  Out = 0.00,
+  IR = 0.00          # Injured Reserve
+)
+
+#' @description Maximum injury adjustment cap (points) per side
+#' @note Prevents unrealistic adjustments from injury accumulation
+#' @default 4.5 (roughly half a touchdown)
+INJURY_CAP_OFFENSE <- 4.5
+INJURY_CAP_DEFENSE <- 4.5
 
 # =============================================================================
 # WEATHER IMPACT
@@ -307,6 +398,30 @@ MIN_GAMES_FOR_STATS <- 3
 MARKET_PROB_BOUNDS <- c(0.10, 0.90)
 
 # =============================================================================
+# STADIUM / WEATHER FALLBACK
+# =============================================================================
+
+#' @description Warn when stadium data is missing and fallback is used
+#' @default TRUE
+WARN_STADIUM_FALLBACK <- TRUE
+
+#' @description Default weather conditions for missing stadium data
+#' @note Uses league-average outdoor conditions (not a specific stadium)
+#' @details If a game venue cannot be matched to stadium_coords, these conditions apply
+DEFAULT_WEATHER_CONDITIONS <- list(
+  lat = 39.5,       # Central US (league average)
+  lon = -98.35,     # Kansas geographic center
+  dome = FALSE,
+  wind_mph = 8,     # League-average outdoor wind
+
+  temp_f = 55,      # Moderate temperature
+  precip_prob = 0.1
+)
+
+#' @description Track games using fallback conditions in this session
+.STADIUM_FALLBACK_GAMES <- character(0)
+
+# =============================================================================
 # R COMPATIBILITY
 # =============================================================================
 
@@ -377,6 +492,15 @@ list2env(
     INJURY_WEIGHT_SECONDARY = INJURY_WEIGHT_SECONDARY,
     INJURY_WEIGHT_FRONT7 = INJURY_WEIGHT_FRONT7,
     QB_INJURY_MULTIPLIER = QB_INJURY_MULTIPLIER,
+    INJURY_MODE = INJURY_MODE,
+    INJURY_MANUAL_FILE = INJURY_MANUAL_FILE,
+    ALLOW_INJURY_SCRAPE = ALLOW_INJURY_SCRAPE,
+    INJURY_CACHE_DIR = INJURY_CACHE_DIR,
+    INJURY_POSITION_WEIGHTS = INJURY_POSITION_WEIGHTS,
+    PRACTICE_AVAILABILITY = PRACTICE_AVAILABILITY,
+    GAME_STATUS_MULTIPLIER = GAME_STATUS_MULTIPLIER,
+    INJURY_CAP_OFFENSE = INJURY_CAP_OFFENSE,
+    INJURY_CAP_DEFENSE = INJURY_CAP_DEFENSE,
     WIND_IMPACT = WIND_IMPACT,
     COLD_IMPACT = COLD_IMPACT,
     PRECIP_IMPACT = PRECIP_IMPACT,
@@ -394,7 +518,9 @@ list2env(
     USE_SOBOL = USE_SOBOL,
     CV_FOLDS = CV_FOLDS,
     MIN_GAMES_FOR_STATS = MIN_GAMES_FOR_STATS,
-    MARKET_PROB_BOUNDS = MARKET_PROB_BOUNDS
+    MARKET_PROB_BOUNDS = MARKET_PROB_BOUNDS,
+    WARN_STADIUM_FALLBACK = WARN_STADIUM_FALLBACK,
+    DEFAULT_WEATHER_CONDITIONS = DEFAULT_WEATHER_CONDITIONS
   ),
   envir = .GlobalEnv
 )

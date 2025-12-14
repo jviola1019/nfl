@@ -2,7 +2,7 @@
 
 A beginner-friendly guide to running NFL game predictions using this statistical model.
 
-**Version**: 2.1
+**Version**: 2.2
 **R Version Required**: 4.3.0+ (tested on 4.5.1)
 **Last Updated**: December 2025
 
@@ -101,6 +101,11 @@ library(nflreadr)
 injuries <- load_injuries(seasons = 2025)
 ```
 
+You can also configure injury mode in `config.R`:
+- `INJURY_MODE = "auto"` (default) - Uses nflreadr with fallback
+- `INJURY_MODE = "off"` - Disables injury adjustments
+- `INJURY_MODE = "last_available"` - Uses most recent available season
+
 ### "Predictions seem incorrect"
 1. Verify `WEEK_TO_SIM` and `SEASON` in `config.R`
 2. Wait 1-2 days after games for nflverse data updates
@@ -110,6 +115,48 @@ injuries <- load_injuries(seasons = 2025)
 # Use renv for reproducible package management
 renv::restore()
 ```
+
+### Windows: "00LOCK" error with glmnet
+**Symptom**: `installation of package 'glmnet' had non-zero exit status` or `cannot remove prior installation of package 'glmnet'`
+
+**Cause**: Windows file locking prevents package updates while R session is active.
+
+**Solution**:
+```r
+# 1. Close all R sessions (including RStudio)
+# 2. Delete the lock folder manually:
+#    Navigate to: [R_LIBS_USER]/00LOCK-glmnet and delete it
+# 3. Restart R and reinstall:
+install.packages("glmnet")
+```
+
+**Alternative (run as Administrator)**:
+```r
+# Force removal
+unlink(.libPaths()[1], recursive = TRUE, force = TRUE)
+# Then reinstall all packages
+renv::restore()
+```
+
+### "Stadium fallback warning"
+This warning appears when venue data is missing for a game:
+```
+STADIUM FALLBACK: 1 game(s) using league-average weather conditions
+```
+
+**This is normal for**:
+- International games (London, Mexico City)
+- Neutral site games
+- New stadiums not yet in database
+
+The model uses moderate outdoor defaults (55°F, 8mph wind). To suppress:
+```r
+# In config.R
+WARN_STADIUM_FALLBACK <- FALSE
+```
+
+### Color scale warnings
+If you see warnings about values outside domain, they are cosmetic and handled automatically. The model uses `scales::squish` to clamp values.
 
 ---
 
