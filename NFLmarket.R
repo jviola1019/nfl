@@ -2017,7 +2017,83 @@ build_moneyline_comparison_table <- function(market_comparison_result,
       fallback_args$y <- fallback_sched
       rlang::exec(dplyr::inner_join, !!!fallback_args)
     }
-  ) %>%
+  )
+
+  # ===========================================================================
+  # DIAGNOSTIC: Empty join result detection with actionable messaging
+  # ===========================================================================
+  if (!nrow(combined)) {
+    # Gather diagnostic information for troubleshooting
+    diag_info <- list(
+      scores_n = nrow(scores_ready),
+      schedule_n = nrow(schedule_context),
+      join_cols = join_cols,
+      scores_keys = if (nrow(scores_ready) > 0) {
+        utils::head(scores_ready[join_cols], 5)
+      } else {
+        tibble::tibble()
+      },
+      schedule_keys = if (nrow(schedule_context) > 0) {
+        utils::head(schedule_context[join_cols], 5)
+      } else {
+        tibble::tibble()
+      }
+    )
+
+    # Check for type mismatches in join keys
+    type_mismatches <- character()
+    for (col in join_cols) {
+      if (col %in% names(scores_ready) && col %in% names(schedule_context)) {
+        t1 <- typeof(scores_ready[[col]])
+        t2 <- typeof(schedule_context[[col]])
+        if (t1 != t2) {
+          type_mismatches <- c(type_mismatches, sprintf("  - %s: scores=%s, schedule=%s", col, t1, t2))
+        }
+      }
+    }
+
+    # Check for overlapping values
+    overlap_info <- character()
+    for (col in join_cols) {
+      if (col %in% names(scores_ready) && col %in% names(schedule_context)) {
+        v1 <- unique(scores_ready[[col]])
+        v2 <- unique(schedule_context[[col]])
+        overlap <- length(intersect(as.character(v1), as.character(v2)))
+        overlap_info <- c(overlap_info, sprintf("  - %s: %d values in scores, %d in schedule, %d overlap",
+                                                 col, length(v1), length(v2), overlap))
+      }
+    }
+
+    diag_msg <- sprintf(
+      paste0(
+        "build_moneyline_comparison_table(): JOIN PRODUCED ZERO ROWS\n",
+        "  Scores rows: %d\n",
+        "  Schedule rows: %d\n",
+        "  Join columns: %s\n",
+        "%s%s",
+        "  Possible causes:\n",
+        "    1. No overlapping game_id/season/week between scores and schedule\n",
+        "    2. Column type mismatch (e.g., integer vs character for week)\n",
+        "    3. Different naming conventions for join keys\n",
+        "  Resolution: Check that both tables have matching values in: %s"
+      ),
+      diag_info$scores_n,
+      diag_info$schedule_n,
+      paste(join_cols, collapse = ", "),
+      if (length(type_mismatches)) paste0("  Type mismatches:\n", paste(type_mismatches, collapse = "\n"), "\n") else "",
+      if (length(overlap_info)) paste0("  Key overlaps:\n", paste(overlap_info, collapse = "\n"), "\n") else "",
+      paste(join_cols, collapse = ", ")
+    )
+
+    if (verbose) message(diag_msg)
+
+    # Return empty tibble with diagnostic attribute
+    empty_result <- tibble::tibble()
+    attr(empty_result, "join_diagnostic") <- diag_info
+    return(empty_result)
+  }
+
+  combined <- combined %>%
     ensure_schedule_defaults() %>%
     dplyr::mutate(
       market_home_ml = market_home_ml_sched,
@@ -2600,8 +2676,16 @@ export_moneyline_comparison_html <- function(comparison_tbl,
   }
 
   if (!nrow(comparison_tbl)) {
-    if (verbose) message("export_moneyline_comparison_html(): comparison table empty; skipping export.")
-    return(invisible(file))
+    stop(paste0(
+      "export_moneyline_comparison_html(): COMPARISON TABLE IS EMPTY - cannot generate report.\n",
+      "  The input comparison_tbl has 0 rows.\n",
+      "  This usually means:\n",
+      "    1. build_moneyline_comparison_table() returned empty (join failed)\n",
+      "    2. The market comparison had no evaluated games\n",
+      "    3. All games were filtered out during processing\n",
+      "  Resolution: Check the upstream pipeline - ensure compare_to_market() and\n",
+      "  build_moneyline_comparison_table() produce non-empty results."
+    ), call. = FALSE)
   }
 
   # =============================================================================
@@ -3792,10 +3876,40 @@ moneyline_report <- function(market_comparison_result,
   )
 
   if (!nrow(table)) {
-    if (verbose) {
-      message("moneyline_report(): comparison table is empty; skipping export.")
+    # Extract diagnostic information if available
+    diag <- attr(table, "join_diagnostic")
+    diag_msg <- if (!is.null(diag)) {
+      sprintf(
+        paste0(
+          "\n  Diagnostic info:\n",
+          "    - Scores input had %d rows\n",
+          "    - Schedule input had %d rows\n",
+          "    - Join columns: %s"
+        ),
+        diag$scores_n %||% 0L,
+        diag$schedule_n %||% 0L,
+        paste(diag$join_cols %||% "unknown", collapse = ", ")
+      )
+    } else {
+      ""
     }
-    return(invisible(NULL))
+
+    stop(sprintf(
+      paste0(
+        "moneyline_report(): COMPARISON TABLE IS EMPTY - cannot generate report.\n",
+        "%s\n",
+        "Common causes:\n",
+        "  1. market_comparison_result$comp has no rows (no games evaluated)\n",
+        "  2. schedule has no overlapping games (check season/week filter)\n",
+        "  3. Join key mismatch between market_comparison_result and schedule\n",
+        "  4. All rows filtered out due to missing data\n",
+        "Resolution steps:\n",
+        "  - Verify compare_to_market() returned non-empty results\n",
+        "  - Check that schedule contains games for the requested season/week\n",
+        "  - Ensure both inputs use consistent game_id, season, week columns"
+      ),
+      diag_msg
+    ), call. = FALSE)
   }
 
   if (is.null(title) || !nzchar(title)) {
