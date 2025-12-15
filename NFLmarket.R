@@ -3371,8 +3371,21 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         # Result styling
         ".result-yes {color: #6EE7B7; font-weight: 600;}\n",
         ".result-no {color: #FCA5A5; font-weight: 600;}\n",
+        # Search hint and filter buttons
+        ".search-hint {display: block; text-align: center; font-size: 0.75rem; color: rgba(201, 197, 190, 0.5); margin-top: 0.5rem;}\n",
+        ".filter-container {display: flex; justify-content: center; gap: 0.5rem; margin-top: 0.75rem; flex-wrap: wrap;}\n",
+        ".filter-btn {padding: 0.4rem 0.9rem; border-radius: 999px; border: 1px solid rgba(217, 119, 87, 0.3); background: rgba(45, 42, 38, 0.7); color: #C9C5BE; cursor: pointer; font-size: 0.8rem; transition: all 0.2s ease;}\n",
+        ".filter-btn:hover {border-color: var(--claude-coral); color: var(--claude-cream);}\n",
+        ".filter-btn.active {background: rgba(217, 119, 87, 0.25); border-color: var(--claude-coral); color: var(--claude-cream);}\n",
+        # Reduced motion fallback - respect user preference
+        "@media (prefers-reduced-motion: reduce) { ",
+        "  #colorbends-canvas {display: none !important;} ",
+        "  .canvas-overlay {background: linear-gradient(135deg, #1A1815 0%, #2D2A26 50%, #1A1815 100%) !important;} ",
+        "  .gt_table tbody tr:hover {transform: none !important;} ",
+        "  * {animation: none !important; transition-duration: 0.01ms !important;} ",
+        "}\n",
         # Responsive adjustments
-        "@media (max-width: 768px) { body {padding-top: 75px;} .gt_table {font-size: 0.88rem;} .gt_table thead th {font-size: 0.7rem; top: 75px;} .report-intro {padding: 1.5rem; margin: 0 0.5rem 2rem;} #table-search {font-size: 0.9rem; padding: 0.85rem 1.25rem;} }\n"
+        "@media (max-width: 768px) { body {padding-top: 75px;} .gt_table {font-size: 0.88rem;} .gt_table thead th {font-size: 0.7rem; top: 75px;} .report-intro {padding: 1.5rem; margin: 0 0.5rem 2rem;} #table-search {font-size: 0.9rem; padding: 0.85rem 1.25rem;} .filter-btn {font-size: 0.7rem; padding: 0.3rem 0.7rem;} }\n"
       )
 
       # ColorBends Three.js animated gradient background script
@@ -3443,8 +3456,30 @@ export_moneyline_comparison_html <- function(comparison_tbl,
             id = "table-search",
             type = "search",
             class = "table-search",
-            placeholder = "🔍 Search teams, picks, or betting data...",
+            placeholder = "Search teams, picks, or betting data...",
             `aria-label` = "Search moneyline table"
+          ),
+          # Quick filter buttons
+          htmltools::tags$div(
+            class = "filter-container",
+            htmltools::tags$button(
+              class = "filter-btn",
+              `data-filter` = "ev",
+              onclick = "toggleFilter('ev')",
+              "+EV Only"
+            ),
+            htmltools::tags$button(
+              class = "filter-btn",
+              `data-filter` = "suspicious",
+              onclick = "toggleFilter('suspicious')",
+              "Suspicious Edges"
+            ),
+            htmltools::tags$button(
+              class = "filter-btn",
+              `data-filter` = "pass",
+              onclick = "toggleFilter('pass')",
+              "Pass Games"
+            )
           )
         )
       )
@@ -3460,9 +3495,77 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         )
       )
 
+      # Enhanced script with keyboard shortcuts, quick filters, and accessibility
       script_block <- htmltools::tags$script(htmltools::HTML(
         sprintf(
-          "(function(){var input=document.getElementById('table-search');var table=document.getElementById('%s');if(!input||!table){return;}var rows=table.getElementsByTagName('tbody')[0].rows;input.addEventListener('input',function(){var query=this.value.toLowerCase();Array.prototype.forEach.call(rows,function(row){var text=row.textContent.toLowerCase();row.style.display=text.indexOf(query)>-1?'':'none';});});})();",
+          paste0(
+            "(function(){",
+            # Core setup
+            "var input=document.getElementById('table-search');",
+            "var table=document.getElementById('%s');",
+            "if(!input||!table){return;}",
+            "var rows=table.getElementsByTagName('tbody')[0].rows;",
+            "var activeFilter=null;",
+            # Search function
+            "function filterRows(query,filterFn){",
+            "  Array.prototype.forEach.call(rows,function(row){",
+            "    var text=row.textContent.toLowerCase();",
+            "    var matchQuery=!query||text.indexOf(query)>-1;",
+            "    var matchFilter=!filterFn||filterFn(row);",
+            "    row.style.display=(matchQuery&&matchFilter)?'':'none';",
+            "  });",
+            "}",
+            # Search input handler
+            "input.addEventListener('input',function(){",
+            "  filterRows(this.value.toLowerCase(),activeFilter?filters[activeFilter]:null);",
+            "});",
+            # Keyboard shortcuts: / to focus, Esc to clear
+            "document.addEventListener('keydown',function(e){",
+            "  if(e.key==='/'&&document.activeElement!==input){",
+            "    e.preventDefault();input.focus();input.select();",
+            "  }",
+            "  if(e.key==='Escape'){",
+            "    input.value='';input.blur();",
+            "    activeFilter=null;updateFilterBtns();filterRows('',null);",
+            "  }",
+            "});",
+            # Quick filter definitions
+            "var filters={",
+            "  'ev':function(row){",
+            "    var cells=row.getElementsByTagName('td');",
+            "    for(var i=0;i<cells.length;i++){",
+            "      var text=cells[i].textContent;",
+            "      if(text.indexOf('Bet ')===0||text.indexOf('Aggressive')>-1)return true;",
+            "    }return false;",
+            "  },",
+            "  'suspicious':function(row){",
+            "    var text=row.textContent.toLowerCase();",
+            "    return text.indexOf('suspicious')>-1||text.indexOf('implausible')>-1||text.indexOf('optimistic')>-1;",
+            "  },",
+            "  'pass':function(row){",
+            "    var text=row.textContent;",
+            "    return text.indexOf('Pass')>-1||text.indexOf('No Play')>-1;",
+            "  }",
+            "};",
+            # Filter button handler
+            "function updateFilterBtns(){",
+            "  var btns=document.querySelectorAll('.filter-btn');",
+            "  btns.forEach(function(btn){",
+            "    btn.classList.toggle('active',btn.dataset.filter===activeFilter);",
+            "  });",
+            "}",
+            "window.toggleFilter=function(name){",
+            "  activeFilter=(activeFilter===name)?null:name;",
+            "  updateFilterBtns();",
+            "  filterRows(input.value.toLowerCase(),activeFilter?filters[activeFilter]:null);",
+            "};",
+            # Search hint
+            "var hint=document.createElement('span');",
+            "hint.className='search-hint';",
+            "hint.textContent='Press / to search, Esc to clear';",
+            "input.parentNode.appendChild(hint);",
+            "})();"
+          ),
           table_id
         )
       ))
