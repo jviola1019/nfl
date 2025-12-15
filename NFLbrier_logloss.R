@@ -1,3 +1,17 @@
+# =============================================================================
+# NFLbrier_logloss.R - Model Evaluation Metrics
+# =============================================================================
+# Calculates Brier score, log-loss, and comparative statistics vs market
+# Dependencies: dplyr, tibble, purrr, rlang, stats
+# =============================================================================
+
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(tibble)
+  library(purrr)
+  library(rlang)
+})
+
 if (!exists("JOIN_KEY_ALIASES", inherits = FALSE)) {
   JOIN_KEY_ALIASES <- list(
     game_id = c("game_id", "gameid", "gameId", "gid"),
@@ -186,9 +200,11 @@ compare_to_market <- function(res,
   }
   devig_2way <- function(p_home_raw, p_away_raw){
     den <- p_home_raw + p_away_raw
+    # Guard against division by zero when both probabilities are 0, NA, or sum to 0
+    valid <- is.finite(den) & den > 0
     tibble::tibble(
-      p_home_mkt_2w = .clamp01(p_home_raw/den),
-      p_away_mkt_2w = .clamp01(p_away_raw/den)
+      p_home_mkt_2w = ifelse(valid, .clamp01(p_home_raw/den), NA_real_),
+      p_away_mkt_2w = ifelse(valid, .clamp01(p_away_raw/den), NA_real_)
     )
   }
   brier2 <- function(p,y) mean((p - y)^2, na.rm = TRUE)
@@ -453,7 +469,11 @@ compare_to_market <- function(res,
           p_home_raw = american_to_probability(home_ml),
           p_away_raw = american_to_probability(away_ml)
         ) %>%
-        dplyr::bind_cols(devig_2way(.$p_home_raw, .$p_away_raw)) %>%
+        {
+          # Modern syntax: use {} to avoid deprecated .$ notation
+          tmp <- devig_2way(.$p_home_raw, .$p_away_raw)
+          dplyr::bind_cols(., tmp)
+        } %>%
         dplyr::select(game_id, season, week, p_home_mkt_2w)
       msg <- "Market comparison: using moneylines (de-vigged)."
     } else {
