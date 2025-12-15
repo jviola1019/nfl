@@ -4,7 +4,7 @@
 
 A production-ready statistical model for predicting NFL game outcomes using Monte Carlo simulation and data-driven analysis.
 
-**Version**: 2.2
+**Version**: 2.3
 **R Version Required**: 4.3.0+ (tested on 4.5.1)
 **Status**: Production-Ready
 
@@ -97,11 +97,12 @@ The script generates an HTML report with:
 - **Accuracy**: 67.1% (2 out of 3 games correct)
 - **RMSE**: 10.82 points (within target)
 
-**Rankings**:
-1. Vegas Market: 0.208 Brier
-2. **This Model: 0.211 Brier** (100% data-driven)
-3. FiveThirtyEight: 0.215 Brier
-4. ESPN FPI: 0.218 Brier
+**Comparison** (same dataset):
+- **Vegas Market**: 0.208 Brier (benchmark)
+- **This Model**: 0.211 Brier (+0.003 from market)
+- Confidence interval includes 0 (not statistically distinguishable from market)
+
+*Note: External model comparisons (FiveThirtyEight, ESPN) are approximate since they use different datasets and time periods. See `tests/test_core_math.R` for unit tests validating EV/Kelly/de-vig calculations.*
 
 **See [RESULTS.md](RESULTS.md) for complete validation results and statistical tests.**
 
@@ -315,9 +316,19 @@ This model is built on publicly available NFL data from the nflverse project. Al
 
 ## Updates & Maintenance
 
-**Current Version**: 2.2 (December 2025)
+**Current Version**: 2.3 (December 2025)
 
-**Recent fixes (v2.2)**:
+**Recent fixes (v2.3)**:
+- **NFLbrier_logloss.R**: Fixed missing library imports (dplyr, tibble, purrr, rlang)
+- **NFLbrier_logloss.R**: Fixed division-by-zero bug in devig_2way()
+- **NFLmarket.R**: Added actionable error messages for empty comparison table
+- **injury_scalp.R**: Fixed ESPN date field overwriting and added CSS selector fallbacks
+- **HTML Report**: Added keyboard shortcuts (/ to search, Esc to clear)
+- **HTML Report**: Added quick filter buttons (+EV Only, Suspicious Edges, Pass Games)
+- **HTML Report**: Added reduced-motion accessibility fallback
+- **Unit Tests**: Added `tests/test_core_math.R` for EV/Kelly/de-vig validation
+
+**Previous fixes (v2.2)**:
 - Injury data system with `injury_mode` config (auto/off/last_available/manual/scalp)
 - Stadium fallback warnings for neutral site games (no longer silently defaults to KC)
 - Pre-export validation checks for HTML report (prevents empty tables)
