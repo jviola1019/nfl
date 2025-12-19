@@ -403,34 +403,9 @@ ensure_schedule_defaults <- function(df) {
   ensure_columns_with_defaults(df, SCHEDULE_DEFAULTS)
 }
 
-american_to_probability <- function(odds) {
-  odds <- coerce_numeric_safely(odds)
-  dplyr::case_when(
-    is.na(odds) ~ NA_real_,
-    !is.finite(odds) ~ NA_real_,
-    odds == 0 ~ NA_real_,
-    odds < 0 ~ (-odds) / ((-odds) + 100),
-    TRUE ~ 100 / (odds + 100)
-  )
-}
-
-american_to_decimal <- function(odds) {
-  odds <- coerce_numeric_safely(odds)
-  dec <- rep(NA_real_, length(odds))
-  valid <- is.finite(odds) & odds != 0
-  neg_mask <- valid & odds < 0
-  pos_mask <- valid & odds > 0
-  dec[neg_mask] <- 1 + 100 / abs(odds[neg_mask])
-  dec[pos_mask] <- 1 + odds[pos_mask] / 100
-  dec[!valid] <- NA_real_
-  dec
-}
-
-clamp_probability <- function(p, eps = 1e-06) {
-  p <- coerce_numeric_safely(p)
-  p <- dplyr::if_else(is.na(p), NA_real_, p)
-  pmin(pmax(p, eps), 1 - eps)
-}
+# NOTE: american_to_probability, american_to_decimal, clamp_probability,
+# expected_value_units, shrink_probability_toward_market, classify_edge_magnitude
+# are now defined in NFLbrier_logloss.R (sourced above) as canonical versions.
 
 resolve_home_probability <- function(home_prob,
                                      home_ml = NA_real_,
@@ -607,110 +582,6 @@ apply_moneyline_vig <- function(odds, vig = 0.10) {
     odds == 0 ~ NA_real_,
     odds < 0 ~ -as.numeric(round(abs(odds) * (1 + vig))),
     TRUE ~ as.numeric(round(odds / (1 + vig)))
-  )
-}
-
-expected_value_units <- function(prob, odds) {
-  prob <- clamp_probability(prob)
-  dec <- american_to_decimal(odds)
-  b <- dec - 1
-  out <- prob * b - (1 - prob)
-  # Check for invalid values including near-zero b to avoid numerical instability
-  invalid <- is.na(prob) | is.na(dec) | !is.finite(dec) | b <= 0 | abs(b) < 1e-6
-  out[invalid] <- NA_real_
-  out
-}
-
-# ==============================================================================
-# PROFESSIONAL CALIBRATION: Probability shrinkage and conservative staking
-# ==============================================================================
-# NFL betting markets are extremely efficient. Models that show large edges
-# (>5%) are almost certainly overfit or miscalibrated. These functions implement
-# professional-grade adjustments to account for model uncertainty.
-
-#' Shrink model probability toward market consensus
-#'
-#' Professional models recognize that market probabilities incorporate
-#' information the model may not have. This function implements Bayesian
-#' shrinkage toward market prices to reduce overconfidence.
-#'
-#' @param model_prob Model's estimated probability
-#' @param market_prob Market-implied probability
-#' @param shrinkage Shrinkage factor (0-1). Higher = more trust in market.
-#'   Default 0.6 means 60% weight on market, 40% on model.
-#' @return Shrunk probability that blends model and market views
-shrink_probability_toward_market <- function(model_prob, market_prob, shrinkage = 0.6) {
-  model_prob <- clamp_probability(model_prob)
-  market_prob <- clamp_probability(market_prob)
-  shrinkage <- pmax(0, pmin(1, shrinkage))
-
-  # Weighted average: higher shrinkage = more weight on market
-  shrunk <- (1 - shrinkage) * model_prob + shrinkage * market_prob
-
-  clamp_probability(shrunk)
-}
-
-#' Calculate conservative Kelly stake with edge skepticism
-#'
-#' Full Kelly is too aggressive and assumes perfect probability estimates.
-#' This function implements:
-#' 1. Fractional Kelly (default 1/8) to reduce variance
-#' 2. Edge skepticism: larger edges are more likely model errors
-#' 3. Maximum stake caps to prevent catastrophic losses
-#'
-#' @param prob Estimated win probability (should be shrunk toward market)
-#' @param odds American odds for the bet
-#' @param kelly_fraction Fraction of Kelly to use (default 0.125 = 1/8 Kelly)
-#' @param max_edge Maximum believable edge (default 0.10 = 10%)
-#' @param max_stake Maximum stake as fraction of bankroll (default 0.02 = 2%)
-#' @return Conservative stake size
-conservative_kelly_stake <- function(prob, odds,
-                                     kelly_fraction = 0.125,
-                                     max_edge = 0.10,
-                                     max_stake = 0.02) {
-  prob <- clamp_probability(prob)
-  dec <- american_to_decimal(odds)
-  b <- dec - 1
-
-  # Standard Kelly formula
-  kelly <- (prob * b - (1 - prob)) / b
-
-  # Apply edge skepticism: if kelly > max_edge, the model is likely wrong
-  # Progressively reduce stake for "too good to be true" edges
-  edge_penalty <- dplyr::case_when(
-    is.na(kelly) ~ NA_real_,
-    kelly <= max_edge ~ 1.0,
-    kelly <= max_edge * 2 ~ 0.5,  # 50% penalty for 2x max believable edge
-    kelly <= max_edge * 3 ~ 0.25, # 75% penalty for 3x max believable edge
-    TRUE ~ 0.1                     # 90% penalty for extreme edges
-  )
-
-  # Apply fractional Kelly and edge penalty
-  stake <- kelly * kelly_fraction * edge_penalty
-
-  # Cap at maximum stake and floor at 0
-  stake <- pmax(0, pmin(stake, max_stake))
-
-  # Handle invalid values
-  invalid <- is.na(dec) | !is.finite(dec) | b <= 0 | abs(b) < 1e-6 | is.na(stake)
-  stake[invalid] <- NA_real_
-
-  stake
-}
-
-#' Classify edge magnitude for display warnings
-#'
-#' @param edge EV edge as decimal (e.g., 0.15 = 15%)
-#' @return Character classification: "realistic", "suspicious", "implausible"
-classify_edge_magnitude <- function(edge) {
-
-  dplyr::case_when(
-    is.na(edge) ~ NA_character_,
-    edge <= 0 ~ "negative",
-    edge <= 0.05 ~ "realistic",      # 0-5%: plausible professional edge
-    edge <= 0.10 ~ "optimistic",     # 5-10%: possible but rare
-    edge <= 0.15 ~ "suspicious",     # 10-15%: likely model error
-    TRUE ~ "implausible"             # >15%: almost certainly wrong
   )
 }
 

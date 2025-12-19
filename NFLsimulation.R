@@ -4755,6 +4755,19 @@ recent_form_at_sim <- function(cut_season, cut_week, teams,
 # Correlated NB via Gaussian copula; respects your mu/sd targets
 simulate_game_nb <- function(mu_home, sd_home, mu_away, sd_away,
                              n_trials = N_TRIALS, rho = RHO_SCORE, cap = PTS_CAP_HI, seed = SEED) {
+  # Input validation: mu parameters must be positive for valid NB/Poisson distributions
+
+  if (!is.finite(mu_home) || mu_home <= 0) {
+    warning(sprintf("simulate_game_nb: invalid mu_home=%.4f, using fallback 21.5", mu_home))
+    mu_home <- 21.5  # League average fallback
+  }
+  if (!is.finite(mu_away) || mu_away <= 0) {
+    warning(sprintf("simulate_game_nb: invalid mu_away=%.4f, using fallback 21.5", mu_away))
+    mu_away <- 21.5  # League average fallback
+  }
+  if (!is.finite(sd_home) || sd_home <= 0) sd_home <- 10.0
+  if (!is.finite(sd_away) || sd_away <= 0) sd_away <- 10.0
+
   # 1) Sobol QMC + antithetic
   n_half <- ceiling(n_trials/2)
   U <- randtoolbox::sobol(n = n_half, dim = 2, scrambling = 0, seed = seed, normal = FALSE)
@@ -5778,8 +5791,9 @@ final <- final |>
 # Must be loaded BEFORE uncertainty calculations below
 # ═══════════════════════════════════════════════════════════════════════════════════
 
-# Helper function for probability clamping
-.clp <- function(x, lo = 1e-3, hi = 1 - 1e-3) pmin(pmax(x, lo), hi)
+# Use canonical clamp_probability from NFLbrier_logloss.R (sourced via NFLmarket.R)
+# Alias for backward compatibility with existing code
+.clp <- function(x, eps = PROB_EPSILON) clamp_probability(x, eps)
 
 # ═══════════════════════════════════════════════════════════════════════════════════
 # MARKET PROBABILITY HELPER FUNCTIONS
@@ -6289,10 +6303,10 @@ score_weeks <- function(start_season, end_season, weeks = NULL, trials = 40000L)
 # earlier market/Brier code.
 
 # ---- helpers (local, safe) ----
-.clp <- function(x, eps=1e-12) pmin(pmax(x, eps), 1-eps)
+# .clp uses canonical clamp_probability from NFLbrier_logloss.R
 .lgt <- function(p) log(p/(1-p))
 .inv <- function(z) 1/(1+exp(-z))
-# Note: american_to_probability() is defined in NFLmarket.R (sourced above)
+# Note: american_to_probability, clamp_probability defined in NFLbrier_logloss.R
 
 align_blend_with_margin <- function(p_blend,
                                     margin_mean,
@@ -6858,9 +6872,7 @@ comp0 <- preds_hist %>%
 # ---- fit OOS blend by week (ridge + meta-features + recency weights) ----
 suppressWarnings(suppressMessages(require(glmnet)))
 
-.clp <- function(x, eps=1e-12) pmin(pmax(x, eps), 1-eps)
-.lgt <- function(p) log(p/(1-p))
-.inv <- function(z) 1/(1+exp(-z))
+# .clp, .lgt, .inv already defined above - reuse them
 
 .pick_open <- function(df, cands) { nm <- intersect(cands, names(df)); if (length(nm)) nm[1] else NA_character_ }
 

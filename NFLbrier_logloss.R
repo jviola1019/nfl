@@ -12,6 +12,133 @@ suppressPackageStartupMessages({
   library(rlang)
 })
 
+# =============================================================================
+# CANONICAL UTILITY FUNCTIONS - Single source of truth for the entire codebase
+# =============================================================================
+# These functions are used by NFLmarket.R, NFLsimulation.R, and tests.
+# Do NOT redefine these in other files - source this file instead.
+
+# Standard epsilon for probability clamping (prevents log(0) and division issues)
+PROB_EPSILON <- 1e-9
+
+#' Clamp probability to valid range [eps, 1-eps]
+#' @param p Probability value(s) to clamp
+#' @param eps Epsilon for numerical stability (default: PROB_EPSILON = 1e-9)
+#' @return Clamped probability in [eps, 1-eps]
+clamp_probability <- function(p, eps = PROB_EPSILON) {
+  p <- suppressWarnings(as.numeric(p))
+  pmin(pmax(p, eps), 1 - eps)
+}
+
+#' Convert American odds to implied probability
+#' @param odds American odds (e.g., -110, +150)
+#' @return Implied probability (not de-vigged)
+american_to_probability <- function(odds) {
+  odds <- suppressWarnings(as.numeric(odds))
+  dplyr::case_when(
+    is.na(odds) ~ NA_real_,
+    !is.finite(odds) ~ NA_real_,
+    odds == 0 ~ NA_real_,
+    odds < 0 ~ (-odds) / ((-odds) + 100),
+    TRUE ~ 100 / (odds + 100)
+  )
+}
+
+#' Convert American odds to decimal odds
+#' @param odds American odds (e.g., -110, +150)
+#' @return Decimal odds (e.g., 1.91, 2.50)
+american_to_decimal <- function(odds) {
+  odds <- suppressWarnings(as.numeric(odds))
+  dec <- rep(NA_real_, length(odds))
+  valid <- is.finite(odds) & odds != 0
+  neg_mask <- valid & odds < 0
+  pos_mask <- valid & odds > 0
+  dec[neg_mask] <- 1 + 100 / abs(odds[neg_mask])
+  dec[pos_mask] <- 1 + odds[pos_mask] / 100
+  dec
+}
+
+#' Calculate expected value in units
+#' @param prob Win probability (will be clamped)
+#' @param odds American odds
+#' @return EV in units (positive = +EV bet)
+expected_value_units <- function(prob, odds) {
+  prob <- clamp_probability(prob)
+  dec <- american_to_decimal(odds)
+  b <- dec - 1
+  out <- prob * b - (1 - prob)
+  # Invalid when odds produce b <= 0 or near-zero
+ invalid <- is.na(prob) | is.na(dec) | !is.finite(dec) | b <= 0 | abs(b) < 1e-6
+  out[invalid] <- NA_real_
+  out
+}
+
+#' Shrink model probability toward market consensus
+#' @param model_prob Model's estimated probability
+#' @param market_prob Market-implied probability
+#' @param shrinkage Shrinkage factor (0-1). Default 0.6 = 60% market weight
+#' @return Blended probability
+shrink_probability_toward_market <- function(model_prob, market_prob, shrinkage = 0.6) {
+  model_prob <- clamp_probability(model_prob)
+  market_prob <- clamp_probability(market_prob)
+  shrinkage <- pmax(0, pmin(1, shrinkage))
+  shrunk <- (1 - shrinkage) * model_prob + shrinkage * market_prob
+  clamp_probability(shrunk)
+}
+
+#' Classify edge magnitude for warnings
+#' @param edge EV edge as decimal (e.g., 0.15 = 15%)
+#' @return Classification: "negative", "realistic", "optimistic", "suspicious", "implausible"
+classify_edge_magnitude <- function(edge) {
+  dplyr::case_when(
+    is.na(edge) ~ NA_character_,
+    edge <= 0 ~ "negative",
+    edge <= 0.05 ~ "realistic",
+    edge <= 0.10 ~ "optimistic",
+    edge <= 0.15 ~ "suspicious",
+    TRUE ~ "implausible"
+  )
+}
+
+#' Calculate conservative Kelly stake with edge skepticism
+#' @param prob Estimated win probability (should be shrunk toward market)
+#' @param odds American odds for the bet
+#' @param kelly_fraction Fraction of Kelly to use (default 0.125 = 1/8 Kelly)
+#' @param max_edge Maximum believable edge (default 0.10 = 10%)
+#' @param max_stake Maximum stake as fraction of bankroll (default 0.02 = 2%)
+#' @return Conservative stake size
+conservative_kelly_stake <- function(prob, odds,
+                                     kelly_fraction = 0.125,
+                                     max_edge = 0.10,
+                                     max_stake = 0.02) {
+  prob <- clamp_probability(prob)
+  dec <- american_to_decimal(odds)
+  b <- dec - 1
+
+  # Guard against division by zero BEFORE computing Kelly
+  valid_b <- !is.na(b) & is.finite(b) & b > 1e-6
+  kelly <- rep(NA_real_, length(prob))
+  if (any(valid_b)) {
+    kelly[valid_b] <- (prob[valid_b] * b[valid_b] - (1 - prob[valid_b])) / b[valid_b]
+  }
+
+  # Edge skepticism: larger edges are more likely model errors
+  edge_penalty <- dplyr::case_when(
+    is.na(kelly) ~ NA_real_,
+    kelly <= max_edge ~ 1.0,
+    kelly <= max_edge * 2 ~ 0.5,
+    kelly <= max_edge * 3 ~ 0.25,
+    TRUE ~ 0.1
+  )
+
+  stake <- kelly * kelly_fraction * edge_penalty
+  stake <- pmax(0, pmin(stake, max_stake))
+  stake[is.na(stake) | !is.finite(stake)] <- NA_real_
+  stake
+}
+
+# =============================================================================
+
 if (!exists("JOIN_KEY_ALIASES", inherits = FALSE)) {
   JOIN_KEY_ALIASES <- list(
     game_id = c("game_id", "gameid", "gameId", "gid"),
