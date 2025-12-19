@@ -8,12 +8,14 @@
 #
 # =============================================================================
 
-# Ensure required packages are available
-if (!requireNamespace("lubridate", quietly = TRUE)) {
-  message("Installing required package: lubridate")
-  install.packages("lubridate", repos = "https://cloud.r-project.org/")
-}
-suppressPackageStartupMessages(library(lubridate))
+# Required packages (install via renv or install.packages if missing)
+# Dependencies: lubridate, dplyr, tibble, rlang
+suppressPackageStartupMessages({
+  if (!requireNamespace("lubridate", quietly = TRUE)) {
+    stop("Package 'lubridate' is required. Install with: install.packages('lubridate')")
+  }
+  library(lubridate)
+})
 
 # Minimum R version check
 if (getRversion() < "4.0.0") {
@@ -34,7 +36,7 @@ SEASON <- year(Sys.Date())  # or set manually: SEASON <- 2024
 #' @important **CHANGE THIS VALUE** to run predictions for different weeks
 #' @default 11
 #' @examples 1, 2, 3, ..., 18
-WEEK_TO_SIM <- 15  # <-- **CHANGE THIS TO RUN A DIFFERENT WEEK**
+WEEK_TO_SIM <- 16  # <-- **CHANGE THIS TO RUN A DIFFERENT WEEK**
 
 # =============================================================================
 # SIMULATION PARAMETERS
