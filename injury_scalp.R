@@ -374,27 +374,75 @@ scrape_espn_team_injuries <- function(team, season) {
     return(tibble::tibble())
   }
 
-  # Parse injury table (ESPN structure may change)
-  injuries <- tryCatch({
-    rows <- rvest::html_elements(page, "table.Table tbody tr")
-
-    purrr::map_dfr(rows, function(row) {
-      cells <- rvest::html_elements(row, "td")
-      if (length(cells) < 3) return(NULL)
-
-      tibble::tibble(
-        team = team,
-        player = rvest::html_text2(cells[[1]]),
-        position = rvest::html_text2(cells[[2]]),
-        injury_desc = if (length(cells) >= 3) rvest::html_text2(cells[[3]]) else NA_character_,
-        game_status = if (length(cells) >= 4) rvest::html_text2(cells[[4]]) else NA_character_,
-        source = "espn",
-        date = Sys.Date()
-      )
-    })
+  # Try to extract last-updated date from page (look for common ESPN date patterns)
+  # If not found, use scrape timestamp (not Sys.Date which loses time info)
+  scrape_timestamp <- Sys.time()
+  page_date <- tryCatch({
+    # ESPN often includes "Updated: Month DD" or "Last updated" text
+    date_text <- rvest::html_text(
+      rvest::html_elements(page, ".n10, .timestamp, .date, [class*='update'], [class*='timestamp']")
+    )
+    date_text <- date_text[nzchar(trimws(date_text))]
+    if (length(date_text) > 0) {
+      # Try to parse the first date-like text found
+      parsed <- suppressWarnings(as.Date(date_text[[1]], format = "%B %d, %Y"))
+      if (!is.na(parsed)) parsed else as.Date(scrape_timestamp)
+    } else {
+      as.Date(scrape_timestamp)
+    }
   }, error = function(e) {
-    tibble::tibble()
+    as.Date(scrape_timestamp)
   })
+
+  # Parse injury table with multiple CSS selector fallbacks (ESPN changes layout)
+  # Try selectors in order of specificity
+  css_selectors <- c(
+    "table.Table tbody tr",           # Standard ESPN table
+    ".Table__TBODY tr",               # ESPN React component
+    "table tbody tr",                 # Generic fallback
+    ".injuries-table tr",             # Alt layout
+    "[data-testid='injury-row']"      # React data-testid pattern
+  )
+
+  injuries <- tibble::tibble()
+
+  for (selector in css_selectors) {
+    rows <- tryCatch({
+      rvest::html_elements(page, selector)
+    }, error = function(e) {
+      list()
+    })
+
+    if (length(rows) > 0) {
+      injuries <- tryCatch({
+        purrr::map_dfr(rows, function(row) {
+          cells <- rvest::html_elements(row, "td, .Table__TD")
+          if (length(cells) < 2) return(NULL)
+
+          tibble::tibble(
+            team = team,
+            player = trimws(rvest::html_text2(cells[[1]])),
+            position = trimws(rvest::html_text2(cells[[2]])),
+            injury_desc = if (length(cells) >= 3) trimws(rvest::html_text2(cells[[3]])) else NA_character_,
+            game_status = if (length(cells) >= 4) trimws(rvest::html_text2(cells[[4]])) else NA_character_,
+            source = "espn",
+            scrape_date = page_date,
+            scrape_time = scrape_timestamp
+          )
+        })
+      }, error = function(e) {
+        tibble::tibble()
+      })
+
+      if (nrow(injuries) > 0) {
+        break  # Found data with this selector
+      }
+    }
+  }
+
+  if (nrow(injuries) == 0) {
+    message(sprintf("  ESPN: No injury data parsed for %s (tried %d CSS selectors)", team, length(css_selectors)))
+  }
 
   injuries
 }
@@ -463,27 +511,56 @@ parse_espn_html_file <- function(file_path, team) {
     return(tibble::tibble())
   }
 
-  # Use same parsing logic as live scraping
-  tryCatch({
-    rows <- rvest::html_elements(page, "table.Table tbody tr, .injuries-table tr")
+  # Get file modification time as fallback date
+  file_mtime <- file.info(file_path)$mtime
+  file_date <- as.Date(file_mtime)
 
-    purrr::map_dfr(rows, function(row) {
-      cells <- rvest::html_elements(row, "td")
-      if (length(cells) < 2) return(NULL)
+  # Use same CSS selector fallbacks as live scraping for consistency
+  css_selectors <- c(
+    "table.Table tbody tr",
+    ".Table__TBODY tr",
+    "table tbody tr",
+    ".injuries-table tr",
+    "[data-testid='injury-row']"
+  )
 
-      tibble::tibble(
-        team = team,
-        player = rvest::html_text2(cells[[1]]),
-        position = if (length(cells) >= 2) rvest::html_text2(cells[[2]]) else NA_character_,
-        injury_desc = if (length(cells) >= 3) rvest::html_text2(cells[[3]]) else NA_character_,
-        game_status = if (length(cells) >= 4) rvest::html_text2(cells[[4]]) else NA_character_,
-        source = "local_html",
-        date = as.Date(file.info(file_path)$mtime)
-      )
+  injuries <- tibble::tibble()
+
+  for (selector in css_selectors) {
+    rows <- tryCatch({
+      rvest::html_elements(page, selector)
+    }, error = function(e) {
+      list()
     })
-  }, error = function(e) {
-    tibble::tibble()
-  })
+
+    if (length(rows) > 0) {
+      injuries <- tryCatch({
+        purrr::map_dfr(rows, function(row) {
+          cells <- rvest::html_elements(row, "td, .Table__TD")
+          if (length(cells) < 2) return(NULL)
+
+          tibble::tibble(
+            team = team,
+            player = trimws(rvest::html_text2(cells[[1]])),
+            position = trimws(rvest::html_text2(cells[[2]])),
+            injury_desc = if (length(cells) >= 3) trimws(rvest::html_text2(cells[[3]])) else NA_character_,
+            game_status = if (length(cells) >= 4) trimws(rvest::html_text2(cells[[4]])) else NA_character_,
+            source = "local_html",
+            scrape_date = file_date,
+            scrape_time = file_mtime
+          )
+        })
+      }, error = function(e) {
+        tibble::tibble()
+      })
+
+      if (nrow(injuries) > 0) {
+        break
+      }
+    }
+  }
+
+  injuries
 }
 
 
@@ -530,6 +607,20 @@ normalize_injury_report <- function(df, source = "unknown") {
   thu_col <- intersect(names(df), c("practice_thu", "thu", "thursday"))[1]
   fri_col <- intersect(names(df), c("practice_fri", "fri", "friday"))[1]
 
+  # Date columns - preserve actual dates from source rather than overwriting with Sys.Date()
+  date_col <- intersect(names(df), c("scrape_date", "date", "report_date", "date_modified"))[1]
+
+  # Extract date values - use source date if available, otherwise current date as fallback
+  if (!is.na(date_col)) {
+    date_values <- tryCatch({
+      as.Date(df[[date_col]])
+    }, error = function(e) {
+      rep(Sys.Date(), nrow(df))
+    })
+  } else {
+    date_values <- rep(Sys.Date(), nrow(df))
+  }
+
   result <- tibble::tibble(
     team = if (!is.na(team_col)) as.character(df[[team_col]]) else NA_character_,
     player = if (!is.na(player_col)) as.character(df[[player_col]]) else NA_character_,
@@ -539,7 +630,7 @@ normalize_injury_report <- function(df, source = "unknown") {
     practice_fri = if (!is.na(fri_col)) as.character(df[[fri_col]]) else NA_character_,
     game_status = if (!is.na(status_col)) as.character(df[[status_col]]) else NA_character_,
     injury_desc = if (!is.na(injury_col)) as.character(df[[injury_col]]) else NA_character_,
-    date = Sys.Date(),
+    date = date_values,
     source = source
   )
 

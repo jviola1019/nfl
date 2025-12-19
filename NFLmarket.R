@@ -403,34 +403,9 @@ ensure_schedule_defaults <- function(df) {
   ensure_columns_with_defaults(df, SCHEDULE_DEFAULTS)
 }
 
-american_to_probability <- function(odds) {
-  odds <- coerce_numeric_safely(odds)
-  dplyr::case_when(
-    is.na(odds) ~ NA_real_,
-    !is.finite(odds) ~ NA_real_,
-    odds == 0 ~ NA_real_,
-    odds < 0 ~ (-odds) / ((-odds) + 100),
-    TRUE ~ 100 / (odds + 100)
-  )
-}
-
-american_to_decimal <- function(odds) {
-  odds <- coerce_numeric_safely(odds)
-  dec <- rep(NA_real_, length(odds))
-  valid <- is.finite(odds) & odds != 0
-  neg_mask <- valid & odds < 0
-  pos_mask <- valid & odds > 0
-  dec[neg_mask] <- 1 + 100 / abs(odds[neg_mask])
-  dec[pos_mask] <- 1 + odds[pos_mask] / 100
-  dec[!valid] <- NA_real_
-  dec
-}
-
-clamp_probability <- function(p, eps = 1e-06) {
-  p <- coerce_numeric_safely(p)
-  p <- dplyr::if_else(is.na(p), NA_real_, p)
-  pmin(pmax(p, eps), 1 - eps)
-}
+# NOTE: american_to_probability, american_to_decimal, clamp_probability,
+# expected_value_units, shrink_probability_toward_market, classify_edge_magnitude
+# are now defined in NFLbrier_logloss.R (sourced above) as canonical versions.
 
 resolve_home_probability <- function(home_prob,
                                      home_ml = NA_real_,
@@ -607,110 +582,6 @@ apply_moneyline_vig <- function(odds, vig = 0.10) {
     odds == 0 ~ NA_real_,
     odds < 0 ~ -as.numeric(round(abs(odds) * (1 + vig))),
     TRUE ~ as.numeric(round(odds / (1 + vig)))
-  )
-}
-
-expected_value_units <- function(prob, odds) {
-  prob <- clamp_probability(prob)
-  dec <- american_to_decimal(odds)
-  b <- dec - 1
-  out <- prob * b - (1 - prob)
-  # Check for invalid values including near-zero b to avoid numerical instability
-  invalid <- is.na(prob) | is.na(dec) | !is.finite(dec) | b <= 0 | abs(b) < 1e-6
-  out[invalid] <- NA_real_
-  out
-}
-
-# ==============================================================================
-# PROFESSIONAL CALIBRATION: Probability shrinkage and conservative staking
-# ==============================================================================
-# NFL betting markets are extremely efficient. Models that show large edges
-# (>5%) are almost certainly overfit or miscalibrated. These functions implement
-# professional-grade adjustments to account for model uncertainty.
-
-#' Shrink model probability toward market consensus
-#'
-#' Professional models recognize that market probabilities incorporate
-#' information the model may not have. This function implements Bayesian
-#' shrinkage toward market prices to reduce overconfidence.
-#'
-#' @param model_prob Model's estimated probability
-#' @param market_prob Market-implied probability
-#' @param shrinkage Shrinkage factor (0-1). Higher = more trust in market.
-#'   Default 0.6 means 60% weight on market, 40% on model.
-#' @return Shrunk probability that blends model and market views
-shrink_probability_toward_market <- function(model_prob, market_prob, shrinkage = 0.6) {
-  model_prob <- clamp_probability(model_prob)
-  market_prob <- clamp_probability(market_prob)
-  shrinkage <- pmax(0, pmin(1, shrinkage))
-
-  # Weighted average: higher shrinkage = more weight on market
-  shrunk <- (1 - shrinkage) * model_prob + shrinkage * market_prob
-
-  clamp_probability(shrunk)
-}
-
-#' Calculate conservative Kelly stake with edge skepticism
-#'
-#' Full Kelly is too aggressive and assumes perfect probability estimates.
-#' This function implements:
-#' 1. Fractional Kelly (default 1/8) to reduce variance
-#' 2. Edge skepticism: larger edges are more likely model errors
-#' 3. Maximum stake caps to prevent catastrophic losses
-#'
-#' @param prob Estimated win probability (should be shrunk toward market)
-#' @param odds American odds for the bet
-#' @param kelly_fraction Fraction of Kelly to use (default 0.125 = 1/8 Kelly)
-#' @param max_edge Maximum believable edge (default 0.10 = 10%)
-#' @param max_stake Maximum stake as fraction of bankroll (default 0.02 = 2%)
-#' @return Conservative stake size
-conservative_kelly_stake <- function(prob, odds,
-                                     kelly_fraction = 0.125,
-                                     max_edge = 0.10,
-                                     max_stake = 0.02) {
-  prob <- clamp_probability(prob)
-  dec <- american_to_decimal(odds)
-  b <- dec - 1
-
-  # Standard Kelly formula
-  kelly <- (prob * b - (1 - prob)) / b
-
-  # Apply edge skepticism: if kelly > max_edge, the model is likely wrong
-  # Progressively reduce stake for "too good to be true" edges
-  edge_penalty <- dplyr::case_when(
-    is.na(kelly) ~ NA_real_,
-    kelly <= max_edge ~ 1.0,
-    kelly <= max_edge * 2 ~ 0.5,  # 50% penalty for 2x max believable edge
-    kelly <= max_edge * 3 ~ 0.25, # 75% penalty for 3x max believable edge
-    TRUE ~ 0.1                     # 90% penalty for extreme edges
-  )
-
-  # Apply fractional Kelly and edge penalty
-  stake <- kelly * kelly_fraction * edge_penalty
-
-  # Cap at maximum stake and floor at 0
-  stake <- pmax(0, pmin(stake, max_stake))
-
-  # Handle invalid values
-  invalid <- is.na(dec) | !is.finite(dec) | b <= 0 | abs(b) < 1e-6 | is.na(stake)
-  stake[invalid] <- NA_real_
-
-  stake
-}
-
-#' Classify edge magnitude for display warnings
-#'
-#' @param edge EV edge as decimal (e.g., 0.15 = 15%)
-#' @return Character classification: "realistic", "suspicious", "implausible"
-classify_edge_magnitude <- function(edge) {
-
-  dplyr::case_when(
-    is.na(edge) ~ NA_character_,
-    edge <= 0 ~ "negative",
-    edge <= 0.05 ~ "realistic",      # 0-5%: plausible professional edge
-    edge <= 0.10 ~ "optimistic",     # 5-10%: possible but rare
-    edge <= 0.15 ~ "suspicious",     # 10-15%: likely model error
-    TRUE ~ "implausible"             # >15%: almost certainly wrong
   )
 }
 
@@ -2017,7 +1888,83 @@ build_moneyline_comparison_table <- function(market_comparison_result,
       fallback_args$y <- fallback_sched
       rlang::exec(dplyr::inner_join, !!!fallback_args)
     }
-  ) %>%
+  )
+
+  # ===========================================================================
+  # DIAGNOSTIC: Empty join result detection with actionable messaging
+  # ===========================================================================
+  if (!nrow(combined)) {
+    # Gather diagnostic information for troubleshooting
+    diag_info <- list(
+      scores_n = nrow(scores_ready),
+      schedule_n = nrow(schedule_context),
+      join_cols = join_cols,
+      scores_keys = if (nrow(scores_ready) > 0) {
+        utils::head(scores_ready[join_cols], 5)
+      } else {
+        tibble::tibble()
+      },
+      schedule_keys = if (nrow(schedule_context) > 0) {
+        utils::head(schedule_context[join_cols], 5)
+      } else {
+        tibble::tibble()
+      }
+    )
+
+    # Check for type mismatches in join keys
+    type_mismatches <- character()
+    for (col in join_cols) {
+      if (col %in% names(scores_ready) && col %in% names(schedule_context)) {
+        t1 <- typeof(scores_ready[[col]])
+        t2 <- typeof(schedule_context[[col]])
+        if (t1 != t2) {
+          type_mismatches <- c(type_mismatches, sprintf("  - %s: scores=%s, schedule=%s", col, t1, t2))
+        }
+      }
+    }
+
+    # Check for overlapping values
+    overlap_info <- character()
+    for (col in join_cols) {
+      if (col %in% names(scores_ready) && col %in% names(schedule_context)) {
+        v1 <- unique(scores_ready[[col]])
+        v2 <- unique(schedule_context[[col]])
+        overlap <- length(intersect(as.character(v1), as.character(v2)))
+        overlap_info <- c(overlap_info, sprintf("  - %s: %d values in scores, %d in schedule, %d overlap",
+                                                 col, length(v1), length(v2), overlap))
+      }
+    }
+
+    diag_msg <- sprintf(
+      paste0(
+        "build_moneyline_comparison_table(): JOIN PRODUCED ZERO ROWS\n",
+        "  Scores rows: %d\n",
+        "  Schedule rows: %d\n",
+        "  Join columns: %s\n",
+        "%s%s",
+        "  Possible causes:\n",
+        "    1. No overlapping game_id/season/week between scores and schedule\n",
+        "    2. Column type mismatch (e.g., integer vs character for week)\n",
+        "    3. Different naming conventions for join keys\n",
+        "  Resolution: Check that both tables have matching values in: %s"
+      ),
+      diag_info$scores_n,
+      diag_info$schedule_n,
+      paste(join_cols, collapse = ", "),
+      if (length(type_mismatches)) paste0("  Type mismatches:\n", paste(type_mismatches, collapse = "\n"), "\n") else "",
+      if (length(overlap_info)) paste0("  Key overlaps:\n", paste(overlap_info, collapse = "\n"), "\n") else "",
+      paste(join_cols, collapse = ", ")
+    )
+
+    if (verbose) message(diag_msg)
+
+    # Return empty tibble with diagnostic attribute
+    empty_result <- tibble::tibble()
+    attr(empty_result, "join_diagnostic") <- diag_info
+    return(empty_result)
+  }
+
+  combined <- combined %>%
     ensure_schedule_defaults() %>%
     dplyr::mutate(
       market_home_ml = market_home_ml_sched,
@@ -2600,8 +2547,16 @@ export_moneyline_comparison_html <- function(comparison_tbl,
   }
 
   if (!nrow(comparison_tbl)) {
-    if (verbose) message("export_moneyline_comparison_html(): comparison table empty; skipping export.")
-    return(invisible(file))
+    stop(paste0(
+      "export_moneyline_comparison_html(): COMPARISON TABLE IS EMPTY - cannot generate report.\n",
+      "  The input comparison_tbl has 0 rows.\n",
+      "  This usually means:\n",
+      "    1. build_moneyline_comparison_table() returned empty (join failed)\n",
+      "    2. The market comparison had no evaluated games\n",
+      "    3. All games were filtered out during processing\n",
+      "  Resolution: Check the upstream pipeline - ensure compare_to_market() and\n",
+      "  build_moneyline_comparison_table() produce non-empty results."
+    ), call. = FALSE)
   }
 
   # =============================================================================
@@ -3287,8 +3242,21 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         # Result styling
         ".result-yes {color: #6EE7B7; font-weight: 600;}\n",
         ".result-no {color: #FCA5A5; font-weight: 600;}\n",
+        # Search hint and filter buttons
+        ".search-hint {display: block; text-align: center; font-size: 0.75rem; color: rgba(201, 197, 190, 0.5); margin-top: 0.5rem;}\n",
+        ".filter-container {display: flex; justify-content: center; gap: 0.5rem; margin-top: 0.75rem; flex-wrap: wrap;}\n",
+        ".filter-btn {padding: 0.4rem 0.9rem; border-radius: 999px; border: 1px solid rgba(217, 119, 87, 0.3); background: rgba(45, 42, 38, 0.7); color: #C9C5BE; cursor: pointer; font-size: 0.8rem; transition: all 0.2s ease;}\n",
+        ".filter-btn:hover {border-color: var(--claude-coral); color: var(--claude-cream);}\n",
+        ".filter-btn.active {background: rgba(217, 119, 87, 0.25); border-color: var(--claude-coral); color: var(--claude-cream);}\n",
+        # Reduced motion fallback - respect user preference
+        "@media (prefers-reduced-motion: reduce) { ",
+        "  #colorbends-canvas {display: none !important;} ",
+        "  .canvas-overlay {background: linear-gradient(135deg, #1A1815 0%, #2D2A26 50%, #1A1815 100%) !important;} ",
+        "  .gt_table tbody tr:hover {transform: none !important;} ",
+        "  * {animation: none !important; transition-duration: 0.01ms !important;} ",
+        "}\n",
         # Responsive adjustments
-        "@media (max-width: 768px) { body {padding-top: 75px;} .gt_table {font-size: 0.88rem;} .gt_table thead th {font-size: 0.7rem; top: 75px;} .report-intro {padding: 1.5rem; margin: 0 0.5rem 2rem;} #table-search {font-size: 0.9rem; padding: 0.85rem 1.25rem;} }\n"
+        "@media (max-width: 768px) { body {padding-top: 75px;} .gt_table {font-size: 0.88rem;} .gt_table thead th {font-size: 0.7rem; top: 75px;} .report-intro {padding: 1.5rem; margin: 0 0.5rem 2rem;} #table-search {font-size: 0.9rem; padding: 0.85rem 1.25rem;} .filter-btn {font-size: 0.7rem; padding: 0.3rem 0.7rem;} }\n"
       )
 
       # ColorBends Three.js animated gradient background script
@@ -3359,8 +3327,30 @@ export_moneyline_comparison_html <- function(comparison_tbl,
             id = "table-search",
             type = "search",
             class = "table-search",
-            placeholder = "🔍 Search teams, picks, or betting data...",
+            placeholder = "Search teams, picks, or betting data...",
             `aria-label` = "Search moneyline table"
+          ),
+          # Quick filter buttons
+          htmltools::tags$div(
+            class = "filter-container",
+            htmltools::tags$button(
+              class = "filter-btn",
+              `data-filter` = "ev",
+              onclick = "toggleFilter('ev')",
+              "+EV Only"
+            ),
+            htmltools::tags$button(
+              class = "filter-btn",
+              `data-filter` = "suspicious",
+              onclick = "toggleFilter('suspicious')",
+              "Suspicious Edges"
+            ),
+            htmltools::tags$button(
+              class = "filter-btn",
+              `data-filter` = "pass",
+              onclick = "toggleFilter('pass')",
+              "Pass Games"
+            )
           )
         )
       )
@@ -3376,9 +3366,77 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         )
       )
 
+      # Enhanced script with keyboard shortcuts, quick filters, and accessibility
       script_block <- htmltools::tags$script(htmltools::HTML(
         sprintf(
-          "(function(){var input=document.getElementById('table-search');var table=document.getElementById('%s');if(!input||!table){return;}var rows=table.getElementsByTagName('tbody')[0].rows;input.addEventListener('input',function(){var query=this.value.toLowerCase();Array.prototype.forEach.call(rows,function(row){var text=row.textContent.toLowerCase();row.style.display=text.indexOf(query)>-1?'':'none';});});})();",
+          paste0(
+            "(function(){",
+            # Core setup
+            "var input=document.getElementById('table-search');",
+            "var table=document.getElementById('%s');",
+            "if(!input||!table){return;}",
+            "var rows=table.getElementsByTagName('tbody')[0].rows;",
+            "var activeFilter=null;",
+            # Search function
+            "function filterRows(query,filterFn){",
+            "  Array.prototype.forEach.call(rows,function(row){",
+            "    var text=row.textContent.toLowerCase();",
+            "    var matchQuery=!query||text.indexOf(query)>-1;",
+            "    var matchFilter=!filterFn||filterFn(row);",
+            "    row.style.display=(matchQuery&&matchFilter)?'':'none';",
+            "  });",
+            "}",
+            # Search input handler
+            "input.addEventListener('input',function(){",
+            "  filterRows(this.value.toLowerCase(),activeFilter?filters[activeFilter]:null);",
+            "});",
+            # Keyboard shortcuts: / to focus, Esc to clear
+            "document.addEventListener('keydown',function(e){",
+            "  if(e.key==='/'&&document.activeElement!==input){",
+            "    e.preventDefault();input.focus();input.select();",
+            "  }",
+            "  if(e.key==='Escape'){",
+            "    input.value='';input.blur();",
+            "    activeFilter=null;updateFilterBtns();filterRows('',null);",
+            "  }",
+            "});",
+            # Quick filter definitions
+            "var filters={",
+            "  'ev':function(row){",
+            "    var cells=row.getElementsByTagName('td');",
+            "    for(var i=0;i<cells.length;i++){",
+            "      var text=cells[i].textContent;",
+            "      if(text.indexOf('Bet ')===0||text.indexOf('Aggressive')>-1)return true;",
+            "    }return false;",
+            "  },",
+            "  'suspicious':function(row){",
+            "    var text=row.textContent.toLowerCase();",
+            "    return text.indexOf('suspicious')>-1||text.indexOf('implausible')>-1||text.indexOf('optimistic')>-1;",
+            "  },",
+            "  'pass':function(row){",
+            "    var text=row.textContent;",
+            "    return text.indexOf('Pass')>-1||text.indexOf('No Play')>-1;",
+            "  }",
+            "};",
+            # Filter button handler
+            "function updateFilterBtns(){",
+            "  var btns=document.querySelectorAll('.filter-btn');",
+            "  btns.forEach(function(btn){",
+            "    btn.classList.toggle('active',btn.dataset.filter===activeFilter);",
+            "  });",
+            "}",
+            "window.toggleFilter=function(name){",
+            "  activeFilter=(activeFilter===name)?null:name;",
+            "  updateFilterBtns();",
+            "  filterRows(input.value.toLowerCase(),activeFilter?filters[activeFilter]:null);",
+            "};",
+            # Search hint
+            "var hint=document.createElement('span');",
+            "hint.className='search-hint';",
+            "hint.textContent='Press / to search, Esc to clear';",
+            "input.parentNode.appendChild(hint);",
+            "})();"
+          ),
           table_id
         )
       ))
@@ -3792,10 +3850,40 @@ moneyline_report <- function(market_comparison_result,
   )
 
   if (!nrow(table)) {
-    if (verbose) {
-      message("moneyline_report(): comparison table is empty; skipping export.")
+    # Extract diagnostic information if available
+    diag <- attr(table, "join_diagnostic")
+    diag_msg <- if (!is.null(diag)) {
+      sprintf(
+        paste0(
+          "\n  Diagnostic info:\n",
+          "    - Scores input had %d rows\n",
+          "    - Schedule input had %d rows\n",
+          "    - Join columns: %s"
+        ),
+        diag$scores_n %||% 0L,
+        diag$schedule_n %||% 0L,
+        paste(diag$join_cols %||% "unknown", collapse = ", ")
+      )
+    } else {
+      ""
     }
-    return(invisible(NULL))
+
+    stop(sprintf(
+      paste0(
+        "moneyline_report(): COMPARISON TABLE IS EMPTY - cannot generate report.\n",
+        "%s\n",
+        "Common causes:\n",
+        "  1. market_comparison_result$comp has no rows (no games evaluated)\n",
+        "  2. schedule has no overlapping games (check season/week filter)\n",
+        "  3. Join key mismatch between market_comparison_result and schedule\n",
+        "  4. All rows filtered out due to missing data\n",
+        "Resolution steps:\n",
+        "  - Verify compare_to_market() returned non-empty results\n",
+        "  - Check that schedule contains games for the requested season/week\n",
+        "  - Ensure both inputs use consistent game_id, season, week columns"
+      ),
+      diag_msg
+    ), call. = FALSE)
   }
 
   if (is.null(title) || !nzchar(title)) {

@@ -4755,6 +4755,19 @@ recent_form_at_sim <- function(cut_season, cut_week, teams,
 # Correlated NB via Gaussian copula; respects your mu/sd targets
 simulate_game_nb <- function(mu_home, sd_home, mu_away, sd_away,
                              n_trials = N_TRIALS, rho = RHO_SCORE, cap = PTS_CAP_HI, seed = SEED) {
+  # Input validation: mu parameters must be positive for valid NB/Poisson distributions
+
+  if (!is.finite(mu_home) || mu_home <= 0) {
+    warning(sprintf("simulate_game_nb: invalid mu_home=%.4f, using fallback 21.5", mu_home))
+    mu_home <- 21.5  # League average fallback
+  }
+  if (!is.finite(mu_away) || mu_away <= 0) {
+    warning(sprintf("simulate_game_nb: invalid mu_away=%.4f, using fallback 21.5", mu_away))
+    mu_away <- 21.5  # League average fallback
+  }
+  if (!is.finite(sd_home) || sd_home <= 0) sd_home <- 10.0
+  if (!is.finite(sd_away) || sd_away <= 0) sd_away <- 10.0
+
   # 1) Sobol QMC + antithetic
   n_half <- ceiling(n_trials/2)
   U <- randtoolbox::sobol(n = n_half, dim = 2, scrambling = 0, seed = seed, normal = FALSE)
@@ -5778,8 +5791,9 @@ final <- final |>
 # Must be loaded BEFORE uncertainty calculations below
 # ═══════════════════════════════════════════════════════════════════════════════════
 
-# Helper function for probability clamping
-.clp <- function(x, lo = 1e-3, hi = 1 - 1e-3) pmin(pmax(x, lo), hi)
+# Use canonical clamp_probability from NFLbrier_logloss.R (sourced via NFLmarket.R)
+# Alias for backward compatibility with existing code
+.clp <- function(x, eps = PROB_EPSILON) clamp_probability(x, eps)
 
 # ═══════════════════════════════════════════════════════════════════════════════════
 # MARKET PROBABILITY HELPER FUNCTIONS
@@ -6289,10 +6303,10 @@ score_weeks <- function(start_season, end_season, weeks = NULL, trials = 40000L)
 # earlier market/Brier code.
 
 # ---- helpers (local, safe) ----
-.clp <- function(x, eps=1e-12) pmin(pmax(x, eps), 1-eps)
+# .clp uses canonical clamp_probability from NFLbrier_logloss.R
 .lgt <- function(p) log(p/(1-p))
 .inv <- function(z) 1/(1+exp(-z))
-# Note: american_to_probability() is defined in NFLmarket.R (sourced above)
+# Note: american_to_probability, clamp_probability defined in NFLbrier_logloss.R
 
 align_blend_with_margin <- function(p_blend,
                                     margin_mean,
@@ -6429,93 +6443,6 @@ spread_map <- fit_spread_to_prob(sched %>% dplyr::filter(game_type %in% c("REG",
 # DUPLICATE REMOVED - map_spread_prob now defined at line 5634
 
 # DUPLICATE REMOVED - market_probs_from_sched now defined at line 5645
-# Keeping function definition commented for reference:
-market_probs_from_sched_DUPLICATE <- function(sched_df) {
-  .clp <- function(x, eps = 1e-12) pmin(pmax(x, eps), 1 - eps)
-  .pick <- function(df, cands) {
-    nm <- intersect(cands, names(df))
-    if (length(nm)) nm[1] else NA_character_
-  }
-  american_to_probability <- function(odds) {
-    ifelse(
-      is.na(odds) | odds == 0, NA_real_,
-      ifelse(odds < 0, (-odds)/((-odds) + 100), 100/(odds + 100))
-    )
-  }
-
-  base <- sched_df %>%
-    dplyr::filter(!is.na(game_id)) %>%
-    dplyr::transmute(game_id, season, week) %>%
-    dplyr::distinct()
-
-  if (!nrow(base)) {
-    return(tibble::tibble(game_id = character(), season = integer(), week = integer(), p_home_mkt_2w = numeric()))
-  }
-
-  ml_home <- .pick(sched_df, c(
-    "home_ml_close", "ml_home_close", "moneyline_home_close", "home_moneyline_close",
-    "home_ml", "ml_home", "moneyline_home", "home_moneyline"
-  ))
-  ml_away <- .pick(sched_df, c(
-    "away_ml_close", "ml_away_close", "moneyline_away_close", "away_moneyline_close",
-    "away_ml", "ml_away", "moneyline_away", "away_moneyline"
-  ))
-  sp_col <- .pick(sched_df, c(
-    "close_spread", "spread_close", "home_spread_close",
-    "spread_line", "spread", "home_spread", "spread_favorite"
-  ))
-
-  ml_tbl <- tibble::tibble(
-    game_id = character(), season = integer(), week = integer(), p_home_mkt_2w_ml = numeric()
-  )
-  if (!is.na(ml_home) && !is.na(ml_away)) {
-    ml_tbl <- sched_df %>%
-      dplyr::transmute(
-        game_id, season, week,
-        p_home_raw = american_to_probability(suppressWarnings(as.numeric(.data[[ml_home]]))),
-        p_away_raw = american_to_probability(suppressWarnings(as.numeric(.data[[ml_away]])))
-      ) %>%
-      dplyr::mutate(
-        den = p_home_raw + p_away_raw,
-        p_home_mkt_2w_ml = .clp(ifelse(is.finite(den) & den > 0, p_home_raw/den, NA_real_))
-      ) %>%
-      dplyr::filter(is.finite(p_home_mkt_2w_ml)) %>%
-      dplyr::select(game_id, season, week, p_home_mkt_2w_ml) %>%
-      dplyr::distinct()
-  }
-
-  spread_tbl <- tibble::tibble(
-    game_id = character(), season = integer(), week = integer(), p_home_mkt_2w_spread = numeric()
-  )
-  if (!is.na(sp_col)) {
-    spread_tbl <- sched_df %>%
-      dplyr::transmute(
-        game_id, season, week,
-        home_spread = suppressWarnings(as.numeric(.data[[sp_col]]))
-      ) %>%
-      dplyr::filter(is.finite(home_spread)) %>%
-      dplyr::mutate(p_home_mkt_2w_spread = .clp(map_spread_prob(home_spread))) %>%
-      dplyr::filter(is.finite(p_home_mkt_2w_spread)) %>%
-      dplyr::select(game_id, season, week, p_home_mkt_2w_spread) %>%
-      dplyr::distinct()
-  }
-
-  out <- base %>%
-    dplyr::left_join(ml_tbl, by = c("game_id", "season", "week")) %>%
-    dplyr::left_join(spread_tbl, by = c("game_id", "season", "week")) %>%
-    dplyr::mutate(
-      p_home_mkt_2w = dplyr::coalesce(p_home_mkt_2w_ml, p_home_mkt_2w_spread)
-    ) %>%
-    dplyr::select(game_id, season, week, p_home_mkt_2w)
-
-  if (!any(is.finite(out$p_home_mkt_2w))) {
-    message(
-      "market_probs_from_sched(): no usable closing moneyline or spread columns found; returning NA probabilities."
-    )
-  }
-
-  out
-}
 
 # ---- assemble historical training set (OOS by season) ----
 # Use the last 8 completed seasons (change 8 to a different window if you like)
@@ -6945,9 +6872,7 @@ comp0 <- preds_hist %>%
 # ---- fit OOS blend by week (ridge + meta-features + recency weights) ----
 suppressWarnings(suppressMessages(require(glmnet)))
 
-.clp <- function(x, eps=1e-12) pmin(pmax(x, eps), 1-eps)
-.lgt <- function(p) log(p/(1-p))
-.inv <- function(z) 1/(1+exp(-z))
+# .clp, .lgt, .inv already defined above - reuse them
 
 .pick_open <- function(df, cands) { nm <- intersect(cands, names(df)); if (length(nm)) nm[1] else NA_character_ }
 
