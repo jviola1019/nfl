@@ -8,12 +8,14 @@
 #
 # =============================================================================
 
-# Ensure required packages are available
-if (!requireNamespace("lubridate", quietly = TRUE)) {
-  message("Installing required package: lubridate")
-  install.packages("lubridate", repos = "https://cloud.r-project.org/")
-}
-suppressPackageStartupMessages(library(lubridate))
+# Required packages (install via renv or install.packages if missing)
+# Dependencies: lubridate, dplyr, tibble, rlang
+suppressPackageStartupMessages({
+  if (!requireNamespace("lubridate", quietly = TRUE)) {
+    stop("Package 'lubridate' is required. Install with: install.packages('lubridate')")
+  }
+  library(lubridate)
+})
 
 # Minimum R version check
 if (getRversion() < "4.0.0") {
