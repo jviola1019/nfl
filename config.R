@@ -36,7 +36,7 @@ SEASON <- year(Sys.Date())  # or set manually: SEASON <- 2024
 #' @important **CHANGE THIS VALUE** to run predictions for different weeks
 #' @default 11
 #' @examples 1, 2, 3, ..., 18
-WEEK_TO_SIM <- 16  # <-- **CHANGE THIS TO RUN A DIFFERENT WEEK**
+WEEK_TO_SIM <- 18  # <-- **CHANGE THIS TO RUN A DIFFERENT WEEK**
 
 # =============================================================================
 # SIMULATION PARAMETERS
