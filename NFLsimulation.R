@@ -2774,6 +2774,42 @@ if (!"dome" %in% names(week_slate)) {
 week_slate <- week_slate %>% mutate(dome = coalesce(dome, FALSE))
 
 # ============================== TIME ZONES / SIMPLE TRAVEL TAX =============================
+
+#' Safe timezone conversion helper - handles NA and invalid timezones
+#' @param dt POSIXct datetime vector
+#' @param tz Character vector of timezone names (can include NA)
+#' @param default_tz Default timezone if tz is NA or invalid (default: "America/New_York")
+#' @return POSIXct vector with timezone converted, or original/NA on failure
+safe_with_tz <- function(dt, tz, default_tz = "America/New_York") {
+  if (length(dt) == 0) return(dt)
+
+  # Handle scalar case
+  if (length(dt) == 1 && length(tz) == 1) {
+    if (is.na(dt)) return(dt)
+    tz_use <- if (is.na(tz) || !nzchar(tz)) default_tz else tz
+    return(tryCatch(
+      lubridate::with_tz(dt, tz_use),
+      error = function(e) {
+        tryCatch(lubridate::with_tz(dt, default_tz), error = function(e2) dt)
+      }
+    ))
+  }
+
+  # Vectorized case - must process element-by-element since with_tz() takes single tz
+  result <- dt  # Initialize with original values
+  for (i in seq_along(dt)) {
+    if (is.na(dt[i])) next
+    tz_use <- if (is.na(tz[i]) || !nzchar(tz[i])) default_tz else tz[i]
+    result[i] <- tryCatch(
+      lubridate::with_tz(dt[i], tz_use),
+      error = function(e) {
+        tryCatch(lubridate::with_tz(dt[i], default_tz), error = function(e2) dt[i])
+      }
+    )
+  }
+  result
+}
+
 team_tz <- tribble(
   ~team, ~tz,
   "ARI","America/Phoenix",
@@ -2823,10 +2859,11 @@ week_slate <- week_slate %>%
         NA_integer_
       )
     ),
-    kickoff_local = dplyr::case_when(
-      !is.na(kickoff_utc) & !is.na(kickoff_tz) ~ lubridate::with_tz(kickoff_utc, kickoff_tz),
-      !is.na(kickoff_et) & !is.na(kickoff_tz) ~ lubridate::with_tz(kickoff_et, kickoff_tz),
-      TRUE ~ kickoff_et
+    # Use safe_with_tz to handle NA/invalid timezones gracefully
+    kickoff_local = safe_with_tz(
+      dplyr::coalesce(kickoff_utc, kickoff_et),
+      kickoff_tz,
+      default_tz = "America/New_York"
     ),
     kickoff_local_hour = ifelse(!is.na(kickoff_local), as.integer(lubridate::hour(kickoff_local)), NA_integer_),
     kickoff_display_local = dplyr::case_when(

@@ -2,9 +2,9 @@
 
 A beginner-friendly guide to running NFL game predictions using this statistical model.
 
-**Version**: 2.2
+**Version**: 2.4
 **R Version Required**: 4.3.0+ (tested on 4.5.1)
-**Last Updated**: December 2025
+**Last Updated**: January 2026
 
 ---
 
@@ -26,7 +26,7 @@ R -e "install.packages('renv'); renv::restore()"
 
 Or install packages manually:
 ```r
-install.packages(c("tidyverse", "nflreadr", "gt", "glmnet", "zoo"))
+install.packages(c("tidyverse", "nflreadr", "gt", "glmnet", "zoo", "lubridate", "randtoolbox"))
 ```
 
 ### 3. Run Weekly Predictions
@@ -60,19 +60,34 @@ Output file: `NFLvsmarket_week15_2024.html` (or similar)
 
 ---
 
-## IDE Setup (Optional)
+## IDE Setup
 
 ### RStudio (Recommended for Beginners)
 
 1. Download from [posit.co/download/rstudio-desktop](https://posit.co/download/rstudio-desktop/)
 2. Open project: `File > Open Project` → select the `nfl` folder
-3. Run in Console: `source("run_week.R")`
+3. Install renv: In Console, run `install.packages("renv")`
+4. Restore packages: Run `renv::restore()` in Console
+5. Run predictions: `source("run_week.R")`
+
+**Tips for RStudio**:
+- Use `Ctrl+Enter` (Windows/Linux) or `Cmd+Enter` (Mac) to run selected code
+- The Files pane shows project structure
+- Use `Ctrl+Shift+F10` to restart R session if packages fail to load
 
 ### VS Code
 
-1. Install [R Extension](https://marketplace.visualstudio.com/items?itemName=REditorSupport.r)
-2. Open folder and use integrated terminal
-3. Run: `Rscript run_week.R 15`
+1. Install [R Extension for Visual Studio Code](https://marketplace.visualstudio.com/items?itemName=REditorSupport.r)
+2. Install [R LSP Client](https://marketplace.visualstudio.com/items?itemName=REditorSupport.r-lsp) for IntelliSense
+3. Open the `nfl` folder: `File > Open Folder`
+4. Open integrated terminal: `Ctrl+`` (backtick)
+5. Install dependencies: `R -e "install.packages('renv'); renv::restore()"`
+6. Run predictions: `Rscript run_week.R 15`
+
+**Tips for VS Code**:
+- Use `Ctrl+Shift+S` to send current line to R terminal
+- Install "R Debugger" extension for debugging support
+- The R extension provides syntax highlighting and code completion
 
 ---
 
@@ -81,9 +96,9 @@ Output file: `NFLvsmarket_week15_2024.html` (or similar)
 **Validation Results** (2022-2024, 2,282 games):
 - **Brier Score**: 0.211 (Vegas: 0.208) - Professional-grade accuracy
 - **Accuracy**: 67.1% - Correctly predicts 2 out of 3 games
-- **Beats** FiveThirtyEight (0.215) and ESPN FPI (0.218)
+- **Competitive with** FiveThirtyEight (0.215) and ESPN FPI (0.218)
 
-**See [RESULTS.md](RESULTS.md) for complete validation results.**
+See [DOCUMENTATION.md](DOCUMENTATION.md) for complete validation methodology.
 
 ---
 
@@ -192,8 +207,7 @@ source("run_week.R")  # Shows EV calculation trace
 **Documentation**:
 - `README.md` - Project overview
 - `GETTING_STARTED.md` - This guide
-- `DOCUMENTATION.md` - Technical reference
-- `RESULTS.md` - Validation results
+- `DOCUMENTATION.md` - Technical reference and validation results
 
 ---
 
