@@ -2,9 +2,9 @@
 
 Comprehensive technical reference for the NFL game prediction system.
 
-**Version**: 2.0
-**R Version**: 4.5.1+
-**Last Updated**: December 2025
+**Version**: 2.4
+**R Version**: 4.3.0+ (tested on 4.5.1)
+**Last Updated**: January 2026
 
 ---
 
@@ -1167,17 +1167,14 @@ Mean Absolute Error: 2.1% (excellent calibration)
 | comprehensive_r451_test_suite.R | 463 | R 4.5.1 tests | Active |
 | r451_compatibility_fixes.R | 482 | Compatibility | Reference |
 | **Documentation** | | | |
-| GETTING_STARTED.md | 15 KB | Beginner guide | Active |
+| README.md | 8 KB | Project overview | Active |
+| GETTING_STARTED.md | 8 KB | Beginner guide | Active |
 | DOCUMENTATION.md | This file | Technical reference | Active |
-| UPDATES.md | Next | Changelog | Active |
-| RESULTS.md | 17 KB | Validation results | Active |
-| TECHNICAL_DOCUMENTATION.md | 16 KB | Legacy (consolidated) | Deprecated |
-| VALIDATION_README.md | 11 KB | Validation guide | Active |
+| CLAUDE.md | 2 KB | Claude Code context | Active |
 
-**Total**: 20 R files, 7 documentation files
+**Total**: 20+ R files, 4 documentation files
 
 ---
 
 **For beginner guide, see**: `GETTING_STARTED.md`
-**For recent changes, see**: `UPDATES.md`
-**For validation details, see**: `RESULTS.md`
+**For project overview, see**: `README.md`

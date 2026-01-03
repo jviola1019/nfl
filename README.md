@@ -4,55 +4,16 @@
 
 A production-ready statistical model for predicting NFL game outcomes using Monte Carlo simulation and data-driven analysis.
 
-**Version**: 2.3
+**Version**: 2.4
 **R Version Required**: 4.3.0+ (tested on 4.5.1)
 **Status**: Production-Ready
 
 ---
 
-## 📚 Documentation
+## Documentation
 
-**Choose your guide based on your needs**:
-
-### Core Documentation
-
-1. **🚀 [GETTING_STARTED.md](GETTING_STARTED.md)** - Start here!
-   - 5-minute extra detailed quick start
-   - IDE setup (RStudio + VS Code)
-   - Common workflows and troubleshooting
-   - Perfect for beginners
-
-2. **📖 [DOCUMENTATION.md](DOCUMENTATION.md)** - Complete technical reference
-   - Full architecture and data pipeline
-   - All functions documented
-   - Statistical methodology and formulas
-   - For developers and statisticians
-
-3. **📝 [UPDATES.md](UPDATES.md)** - Recent changes and fixes
-   - Version history and changelog
-   - Bug fixes and improvements
-   - Migration guides
-   - Known issues
-
-### Validation & Results
-
-4. **📊 [RESULTS.md](RESULTS.md)** - Model performance metrics
-   - Validation results (Brier, log-loss, accuracy)
-   - Comparison to professional models
-   - Statistical significance tests
-   - Performance across different time periods
-
-5. **🎯 [IMPROVEMENTS_SUMMARY.md](IMPROVEMENTS_SUMMARY.md)** - Recent optimizations
-   - Session-by-session improvement tracking
-   - Overfitting reduction strategies
-   - R 4.5.1 compatibility fixes
-   - Parameter validation results
-
-6. **🚀 [PRODUCTION_READY_SUMMARY.md](PRODUCTION_READY_SUMMARY.md)** - Production deployment guide
-   - Complete production readiness checklist
-   - New validation tools documentation
-   - Performance monitoring procedures
-   - Best practices for weekly workflow
+- **[GETTING_STARTED.md](GETTING_STARTED.md)** - Quick start guide, IDE setup, troubleshooting
+- **[DOCUMENTATION.md](DOCUMENTATION.md)** - Complete technical reference, methodology, validation results
 
 ---
 
@@ -102,9 +63,9 @@ The script generates an HTML report with:
 - **This Model**: 0.211 Brier (+0.003 from market)
 - Confidence interval includes 0 (not statistically distinguishable from market)
 
-*Note: External model comparisons (FiveThirtyEight, ESPN) are approximate since they use different datasets and time periods. See `tests/test_core_math.R` for unit tests validating EV/Kelly/de-vig calculations.*
+*Note: External model comparisons (FiveThirtyEight, ESPN) are approximate since they use different datasets and time periods. See `tests/testthat/` for unit tests validating EV/Kelly/de-vig calculations.*
 
-**See [RESULTS.md](RESULTS.md) for complete validation results and statistical tests.**
+**See [DOCUMENTATION.md](DOCUMENTATION.md) for complete validation results and statistical methodology.**
 
 ---
 
@@ -186,7 +147,7 @@ WEEK_TO_SIM <- 12          # Week to predict (1-18)
 N_TRIALS <- 100000         # Simulation count
 ```
 
-All model parameters (injuries, weather, rest, etc.) are statistically validated (p < 0.05). **See [DOCUMENTATION.md](DOCUMENTATION.md) for complete parameter details.**
+All model parameters (injuries, weather, rest, etc.) are statistically validated (p < 0.05). See [DOCUMENTATION.md](DOCUMENTATION.md) for complete parameter details.
 
 ---
 
@@ -204,7 +165,7 @@ Rscript injury_model_validation.R          # Injury impacts
 Rscript professional_model_benchmarking.R  # vs FiveThirtyEight/ESPN
 ```
 
-**See [RESULTS.md](RESULTS.md) and [VALIDATION_README.md](VALIDATION_README.md) for complete validation methodology.**
+See [DOCUMENTATION.md](DOCUMENTATION.md) for complete validation methodology.
 
 ---
 
@@ -243,11 +204,10 @@ Rscript professional_model_benchmarking.R  # vs FiveThirtyEight/ESPN
 - **`calibration_refinement.R`** - Probability calibration analysis
 
 ### Documentation
-- **`README.md`** - This file (beginner guide)
-- **`GETTING_STARTED.md`** - Further detailed beginner guide for both RStudio and VS Code
-- **`DOCUMENTATION.md`** - Detailed code architecture/Validation methodology
-- **`UPDATES.md`** - Update logs
-- **`RESULTS.md`** - Detailed validation results and statistical tests
+- **`README.md`** - This file (project overview)
+- **`GETTING_STARTED.md`** - Beginner guide for RStudio and VS Code
+- **`DOCUMENTATION.md`** - Complete technical reference and validation methodology
+- **`CLAUDE.md`** - Context file for Claude Code sessions
 
 ### Utility Files
 - **`r451_compatibility_fixes.R`** - R 4.5.1 compatibility patches
@@ -316,31 +276,19 @@ This model is built on publicly available NFL data from the nflverse project. Al
 
 ## Updates & Maintenance
 
-**Current Version**: 2.3 (December 2025)
+**Current Version**: 2.4 (January 2026)
 
-**Recent fixes (v2.3)**:
-- **NFLbrier_logloss.R**: Fixed missing library imports (dplyr, tibble, purrr, rlang)
-- **NFLbrier_logloss.R**: Fixed division-by-zero bug in devig_2way()
-- **NFLmarket.R**: Added actionable error messages for empty comparison table
-- **injury_scalp.R**: Fixed ESPN date field overwriting and added CSS selector fallbacks
-- **HTML Report**: Added keyboard shortcuts (/ to search, Esc to clear)
-- **HTML Report**: Added quick filter buttons (+EV Only, Suspicious Edges, Pass Games)
-- **HTML Report**: Added reduced-motion accessibility fallback
-- **Unit Tests**: Added `tests/test_core_math.R` for EV/Kelly/de-vig validation
+**Recent fixes (v2.4)**:
+- Fixed kickoff_local timezone bug with `safe_with_tz()` helper
+- Consolidated R utility functions into `R/utils.R` (canonical source of truth)
+- Added type-safe joins via `standardize_join_keys()` with proper type coercion
+- Created `R/logging.R` for structured logging
+- Created `R/data_validation.R` for centralized data validation
+- Added comprehensive test suite in `tests/testthat/`
+- Streamlined documentation to 3 files (README, GETTING_STARTED, DOCUMENTATION)
 
-**Previous fixes (v2.2)**:
-- Injury data system with `injury_mode` config (auto/off/last_available/manual/scalp)
-- Stadium fallback warnings for neutral site games (no longer silently defaults to KC)
-- Pre-export validation checks for HTML report (prevents empty tables)
-- Nested CV calibration clearly marked as production; global isotonic labeled diagnostic-only
-- Redesigned HTML report with concise professional intro section
-- Enhanced troubleshooting docs for Windows 00LOCK glmnet issue
-
-**Previous fixes (v2.1)**:
-- EV/pick/odds alignment bug fix with invariant checks
-- Reproducibility setup with renv
-- New `run_week.R` entry script
-- GitHub Actions CI workflow
-- Color scale warning fixes (`scales::squish`)
-
-**See [UPDATES.md](UPDATES.md) for complete changelog and version history.**
+**Previous fixes (v2.3)**:
+- Fixed division-by-zero in devig_2way() and Kelly calculations
+- Added actionable error messages for empty comparison tables
+- Added HTML report keyboard shortcuts and quick filters
+- Added unit tests for EV/Kelly/de-vig validation
