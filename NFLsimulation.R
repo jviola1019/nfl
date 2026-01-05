@@ -3,6 +3,30 @@
 # Requires: tidyverse, lubridate, nflreadr
 # ====================================================================================================
 
+# Source utility modules if available
+local({
+  base_path <- if (file.exists("R/utils.R")) "R" else file.path(getwd(), "R")
+  utils_path <- file.path(base_path, "utils.R")
+  validation_path <- file.path(base_path, "data_validation.R")
+  logging_path <- file.path(base_path, "logging.R")
+
+  if (file.exists(utils_path)) {
+    tryCatch(source(utils_path), error = function(e) {
+      message(sprintf("Note: Could not source R/utils.R: %s", conditionMessage(e)))
+    })
+  }
+  if (file.exists(validation_path)) {
+    tryCatch(source(validation_path), error = function(e) {
+      message(sprintf("Note: Could not source R/data_validation.R: %s", conditionMessage(e)))
+    })
+  }
+  if (file.exists(logging_path)) {
+    tryCatch(source(logging_path), error = function(e) {
+      message(sprintf("Note: Could not source R/logging.R: %s", conditionMessage(e)))
+    })
+  }
+})
+
 load_market_helpers <- local({
   sourced <- FALSE
   function(strict = TRUE) {
@@ -750,12 +774,15 @@ if (!exists("build_moneyline_comparison_table", inherits = FALSE)) {
       if (verbose) message("build_moneyline_comparison_table(): no comparison scores available; returning empty tibble.")
       return(tibble::tibble())
     }
-  
+
+    # CRITICAL: Standardize scores join keys (type coercion for game_id, season, week)
+    scores <- standardize_join_keys(scores)
+
     if (is.null(enriched_schedule) || !nrow(enriched_schedule)) {
       if (verbose) message("build_moneyline_comparison_table(): schedule input is empty; returning scores without context.")
       return(scores)
     }
-  
+
     schedule_std <- standardize_join_keys(enriched_schedule)
     join_cols <- intersect(join_keys, intersect(names(schedule_std), names(scores)))
   

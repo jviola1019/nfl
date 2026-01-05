@@ -1711,6 +1711,9 @@ build_moneyline_comparison_table <- function(market_comparison_result,
     return(tibble::tibble())
   }
 
+  # CRITICAL: Standardize scores join keys (type coercion for game_id, season, week)
+  scores <- standardize_join_keys(scores)
+
   if (is.null(enriched_schedule) || !nrow(enriched_schedule)) {
     if (verbose) message("build_moneyline_comparison_table(): schedule input is empty; returning scores without context.")
     return(scores)

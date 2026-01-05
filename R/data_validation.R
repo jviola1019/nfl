@@ -308,3 +308,264 @@ print_validation_report <- function(report) {
   cat("\n")
   invisible(report)
 }
+
+# =============================================================================
+# DATA QUALITY GATE - Global Quality Tracking
+# =============================================================================
+
+#' Global data quality state
+#' @description Tracks data quality across all components for transparency
+DATA_QUALITY <- new.env(parent = emptyenv())
+DATA_QUALITY$injury_status <- "unknown"
+DATA_QUALITY$injury_seasons_missing <- character(0)
+DATA_QUALITY$weather_status <- "unknown"
+DATA_QUALITY$weather_games_fallback <- character(0)
+DATA_QUALITY$market_status <- "unknown"
+DATA_QUALITY$market_games_missing <- character(0)
+DATA_QUALITY$schedule_status <- "unknown"
+DATA_QUALITY$calibration_method <- "unknown"
+DATA_QUALITY$calibration_leakage_free <- FALSE
+DATA_QUALITY$timestamp <- Sys.time()
+
+#' Reset data quality tracking
+reset_data_quality <- function() {
+  DATA_QUALITY$injury_status <- "unknown"
+  DATA_QUALITY$injury_seasons_missing <- character(0)
+  DATA_QUALITY$weather_status <- "unknown"
+  DATA_QUALITY$weather_games_fallback <- character(0)
+  DATA_QUALITY$market_status <- "unknown"
+  DATA_QUALITY$market_games_missing <- character(0)
+  DATA_QUALITY$schedule_status <- "unknown"
+  DATA_QUALITY$calibration_method <- "unknown"
+  DATA_QUALITY$calibration_leakage_free <- FALSE
+  DATA_QUALITY$timestamp <- Sys.time()
+  invisible(NULL)
+}
+
+#' Update injury quality status
+#' @param status One of: "full", "partial", "unavailable"
+#' @param missing_seasons Vector of seasons with missing data
+update_injury_quality <- function(status, missing_seasons = character(0)) {
+  valid_statuses <- c("full", "partial", "unavailable")
+  if (!status %in% valid_statuses) {
+    warning(sprintf("Invalid injury status '%s'; using 'unknown'", status))
+    status <- "unknown"
+  }
+  DATA_QUALITY$injury_status <- status
+  DATA_QUALITY$injury_seasons_missing <- as.character(missing_seasons)
+  DATA_QUALITY$timestamp <- Sys.time()
+  invisible(NULL)
+}
+
+#' Update weather quality status
+#' @param status One of: "full", "partial_fallback", "all_fallback"
+#' @param fallback_games Vector of game_ids using fallback weather
+update_weather_quality <- function(status, fallback_games = character(0)) {
+  valid_statuses <- c("full", "partial_fallback", "all_fallback")
+  if (!status %in% valid_statuses) {
+    warning(sprintf("Invalid weather status '%s'; using 'unknown'", status))
+    status <- "unknown"
+  }
+  DATA_QUALITY$weather_status <- status
+  DATA_QUALITY$weather_games_fallback <- as.character(fallback_games)
+  DATA_QUALITY$timestamp <- Sys.time()
+  invisible(NULL)
+}
+
+#' Update market data quality status
+#' @param status One of: "full", "partial", "unavailable"
+#' @param missing_games Vector of game_ids without market data
+update_market_quality <- function(status, missing_games = character(0)) {
+  valid_statuses <- c("full", "partial", "unavailable")
+  if (!status %in% valid_statuses) {
+    warning(sprintf("Invalid market status '%s'; using 'unknown'", status))
+    status <- "unknown"
+  }
+  DATA_QUALITY$market_status <- status
+  DATA_QUALITY$market_games_missing <- as.character(missing_games)
+  DATA_QUALITY$timestamp <- Sys.time()
+  invisible(NULL)
+}
+
+#' Update calibration status
+#' @param method Calibration method used
+#' @param leakage_free TRUE if calibration is leakage-free
+update_calibration_quality <- function(method, leakage_free = FALSE) {
+  DATA_QUALITY$calibration_method <- as.character(method)
+  DATA_QUALITY$calibration_leakage_free <- isTRUE(leakage_free)
+  DATA_QUALITY$timestamp <- Sys.time()
+  invisible(NULL)
+}
+
+#' Get current data quality summary
+#' @return List with all quality indicators
+get_data_quality <- function() {
+  list(
+    timestamp = DATA_QUALITY$timestamp,
+    injury = list(
+      status = DATA_QUALITY$injury_status,
+      missing_seasons = DATA_QUALITY$injury_seasons_missing
+    ),
+    weather = list(
+      status = DATA_QUALITY$weather_status,
+      fallback_games = DATA_QUALITY$weather_games_fallback
+    ),
+    market = list(
+      status = DATA_QUALITY$market_status,
+      missing_games = DATA_QUALITY$market_games_missing
+    ),
+    calibration = list(
+      method = DATA_QUALITY$calibration_method,
+      leakage_free = DATA_QUALITY$calibration_leakage_free
+    ),
+    overall = compute_overall_quality()
+  )
+}
+
+#' Compute overall quality grade
+#' @return String: "HIGH", "MEDIUM", "LOW", "CRITICAL"
+compute_overall_quality <- function() {
+  issues <- 0
+  critical <- FALSE
+
+  # Check injury status
+  if (DATA_QUALITY$injury_status == "unavailable") {
+    issues <- issues + 2
+  } else if (DATA_QUALITY$injury_status == "partial") {
+    issues <- issues + 1
+  }
+
+  # Check weather status
+  if (DATA_QUALITY$weather_status == "all_fallback") {
+    issues <- issues + 1
+  }
+
+  # Check market status
+  if (DATA_QUALITY$market_status == "unavailable") {
+    issues <- issues + 2
+    critical <- TRUE
+  } else if (DATA_QUALITY$market_status == "partial") {
+    issues <- issues + 1
+  }
+
+  # Check calibration
+  if (!DATA_QUALITY$calibration_leakage_free) {
+    issues <- issues + 1
+  }
+
+  if (critical) return("CRITICAL")
+  if (issues >= 4) return("LOW")
+  if (issues >= 2) return("MEDIUM")
+  return("HIGH")
+}
+
+#' Print data quality summary to console
+print_data_quality_summary <- function() {
+  quality <- get_data_quality()
+
+  cat("\n")
+  cat("╔════════════════════════════════════════════════════════════════════╗\n")
+  cat("║                    DATA QUALITY SUMMARY                            ║\n")
+  cat("╚════════════════════════════════════════════════════════════════════╝\n")
+  cat(sprintf("  Overall Quality: %s\n", quality$overall))
+  cat(sprintf("  Timestamp: %s\n\n", format(quality$timestamp, "%Y-%m-%d %H:%M:%S")))
+
+  # Injury status
+  injury_icon <- switch(quality$injury$status,
+    "full" = "✓",
+    "partial" = "⚠",
+    "unavailable" = "✗",
+    "?"
+  )
+  cat(sprintf("  [%s] Injuries: %s\n", injury_icon, toupper(quality$injury$status)))
+  if (length(quality$injury$missing_seasons) > 0) {
+    cat(sprintf("      Missing seasons: %s\n", paste(quality$injury$missing_seasons, collapse = ", ")))
+  }
+
+  # Weather status
+  weather_icon <- switch(quality$weather$status,
+    "full" = "✓",
+    "partial_fallback" = "⚠",
+    "all_fallback" = "✗",
+    "?"
+  )
+  cat(sprintf("  [%s] Weather: %s\n", weather_icon, toupper(quality$weather$status)))
+  if (length(quality$weather$fallback_games) > 0) {
+    n_fallback <- length(quality$weather$fallback_games)
+    cat(sprintf("      %d game(s) using default weather\n", n_fallback))
+  }
+
+  # Market status
+  market_icon <- switch(quality$market$status,
+    "full" = "✓",
+    "partial" = "⚠",
+    "unavailable" = "✗",
+    "?"
+  )
+  cat(sprintf("  [%s] Market Data: %s\n", market_icon, toupper(quality$market$status)))
+  if (length(quality$market$missing_games) > 0) {
+    n_missing <- length(quality$market$missing_games)
+    cat(sprintf("      %d game(s) without market odds\n", n_missing))
+  }
+
+  # Calibration status
+  calib_icon <- if (quality$calibration$leakage_free) "✓" else "⚠"
+  cat(sprintf("  [%s] Calibration: %s (%s)\n",
+    calib_icon,
+    quality$calibration$method,
+    if (quality$calibration$leakage_free) "leakage-free" else "DIAGNOSTIC ONLY"
+  ))
+
+  cat("\n")
+
+  # Warnings for critical issues
+  if (quality$overall %in% c("LOW", "CRITICAL")) {
+    cat("  ⚠ WARNING: Data quality issues may affect prediction reliability.\n")
+    cat("    Review the above issues before using predictions for decisions.\n\n")
+  }
+
+  invisible(quality)
+}
+
+#' Generate HTML data quality badge
+#' @return HTML string for embedding in reports
+generate_quality_badge_html <- function() {
+  quality <- get_data_quality()
+
+  badge_color <- switch(quality$overall,
+    "HIGH" = "#28a745",
+    "MEDIUM" = "#ffc107",
+    "LOW" = "#fd7e14",
+    "CRITICAL" = "#dc3545",
+    "#6c757d"
+  )
+
+  issues <- character(0)
+  if (quality$injury$status != "full") {
+    issues <- c(issues, sprintf("Injury data: %s", quality$injury$status))
+  }
+  if (quality$weather$status != "full") {
+    issues <- c(issues, sprintf("Weather: %s", quality$weather$status))
+  }
+  if (quality$market$status != "full") {
+    issues <- c(issues, sprintf("Market data: %s", quality$market$status))
+  }
+  if (!quality$calibration$leakage_free) {
+    issues <- c(issues, "Calibration: not leakage-free")
+  }
+
+  issues_html <- if (length(issues) > 0) {
+    sprintf("<ul style='margin:5px 0;padding-left:20px;'><li>%s</li></ul>",
+            paste(issues, collapse = "</li><li>"))
+  } else {
+    "<p style='margin:5px 0;'>All data sources complete.</p>"
+  }
+
+  sprintf(
+    "<div style='border:2px solid %s;border-radius:8px;padding:10px;margin:10px 0;background:%s20;'>
+      <strong style='color:%s;'>Data Quality: %s</strong>
+      %s
+    </div>",
+    badge_color, badge_color, badge_color, quality$overall, issues_html
+  )
+}
