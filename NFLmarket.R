@@ -1711,6 +1711,9 @@ build_moneyline_comparison_table <- function(market_comparison_result,
     return(tibble::tibble())
   }
 
+  # CRITICAL: Standardize scores join keys (type coercion for game_id, season, week)
+  scores <- standardize_join_keys(scores)
+
   if (is.null(enriched_schedule) || !nrow(enriched_schedule)) {
     if (verbose) message("build_moneyline_comparison_table(): schedule input is empty; returning scores without context.")
     return(scores)
@@ -2744,6 +2747,18 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     "</div>",
     "</section>"
   )
+
+  # Add data quality badge if available
+  quality_badge_html <- ""
+  if (exists("generate_quality_badge_html", mode = "function")) {
+    quality_badge_html <- tryCatch(
+      generate_quality_badge_html(),
+      error = function(e) ""
+    )
+  }
+  if (nzchar(quality_badge_html)) {
+    intro_html <- paste0(intro_html, quality_badge_html)
+  }
 
   # FIX: Override recommendation to Pass if stake < 0.01 to avoid "Bet X" with 0.000 stake
   # BUT: Keep showing the actual EV value so users understand WHY it's a Pass
