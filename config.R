@@ -30,7 +30,7 @@ if (getRversion() < "4.0.0") {
 #' @description Current NFL season to simulate
 #' @default Current year (auto-detected from system date)
 #' @examples 2024, 2025
-SEASON <- year(Sys.Date())  # or set manually: SEASON <- 2024
+SEASON <- 2025  # or set manually: SEASON <- 2024
 
 #' @description Week number to simulate (1-18 for regular season)
 #' @important **CHANGE THIS VALUE** to run predictions for different weeks
