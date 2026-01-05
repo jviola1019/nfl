@@ -2748,6 +2748,18 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     "</section>"
   )
 
+  # Add data quality badge if available
+  quality_badge_html <- ""
+  if (exists("generate_quality_badge_html", mode = "function")) {
+    quality_badge_html <- tryCatch(
+      generate_quality_badge_html(),
+      error = function(e) ""
+    )
+  }
+  if (nzchar(quality_badge_html)) {
+    intro_html <- paste0(intro_html, quality_badge_html)
+  }
+
   # FIX: Override recommendation to Pass if stake < 0.01 to avoid "Bet X" with 0.000 stake
   # BUT: Keep showing the actual EV value so users understand WHY it's a Pass
   MIN_STAKE_THRESHOLD <- 0.01

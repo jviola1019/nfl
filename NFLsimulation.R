@@ -3057,6 +3057,17 @@ safe_load_injuries <- function(seasons, prefer_fast = TRUE, ...) {
     )
   }
 
+  # Update data quality tracking
+  if (exists("update_injury_quality", mode = "function")) {
+    if (nrow(injuries) == 0) {
+      update_injury_quality("missing", seasons_missing = as.character(seasons))
+    } else if (length(missing)) {
+      update_injury_quality("partial", seasons_missing = as.character(missing))
+    } else {
+      update_injury_quality("complete")
+    }
+  }
+
   if (nrow(injuries) == 0) {
     message("⚠ No injury data loaded. Model will run with zero injury impact for all teams.")
     message("  To get injury data, ensure nflreadr is updated: install.packages('nflreadr')")
@@ -3861,6 +3872,19 @@ if (isTRUE(warn_stadium_fallback) && length(.stadium_fallback_games) > 0 && !.st
     length(.stadium_fallback_games),
     paste(.stadium_fallback_games, collapse = ", ")
   ), call. = FALSE, immediate. = TRUE)
+}
+
+# Update data quality tracking for weather
+if (exists("update_weather_quality", mode = "function")) {
+  total_games <- nrow(weather_inputs)
+  fallback_count <- length(.stadium_fallback_games)
+  if (fallback_count == 0) {
+    update_weather_quality("api", games_fallback = character(0))
+  } else if (fallback_count < total_games) {
+    update_weather_quality("partial", games_fallback = .stadium_fallback_games)
+  } else {
+    update_weather_quality("default", games_fallback = .stadium_fallback_games)
+  }
 }
 
 
@@ -5108,6 +5132,11 @@ if (!nrow(calib_sim_df)) {
   map_iso <- function(p) p
   map_iso_nested <- function(p, fold_id = NULL) p  # Fallback for no calibration data
   message("Simulator-based isotonic: no calibration data found; using identity.")
+
+  # Update data quality tracking for missing calibration
+  if (exists("update_calibration_quality", mode = "function")) {
+    update_calibration_quality(method = "none", leakage_free = TRUE)
+  }
 } else {
   # light binning to avoid heavy duplicates, then isotonic on simulator probs
   K <- 120                 # fewer bins = more samples per bin
@@ -5253,6 +5282,14 @@ if (!nrow(calib_sim_df)) {
   # Note: For LIVE PREDICTIONS (current week slate), we use global mapping
   # since current week is truly future data (not in any fold).
   # Nested CV is for backtesting only to measure true OOS performance.
+
+  # Update data quality tracking for calibration
+  if (exists("update_calibration_quality", mode = "function")) {
+    update_calibration_quality(
+      method = "isotonic_nested_cv",
+      leakage_free = TRUE
+    )
+  }
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════════
@@ -7698,3 +7735,14 @@ if (!is.null(moneyline_report_inputs) && exists("moneyline_report", inherits = T
 } else if (!exists("moneyline_report", inherits = TRUE)) {
   message("moneyline_report() is unavailable; HTML export skipped.")
 }
+
+# =============================================================================
+# DATA QUALITY SUMMARY
+# Print data quality summary at end of simulation
+# =============================================================================
+if (exists("print_data_quality_summary", mode = "function")) {
+  message("\n")
+  print_data_quality_summary()
+}
+
+message("\n✓ Simulation complete for Week ", WEEK_TO_SIM, ", Season ", SEASON, "\n")
