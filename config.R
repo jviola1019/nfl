@@ -424,6 +424,90 @@ DEFAULT_WEATHER_CONDITIONS <- list(
 .STADIUM_FALLBACK_GAMES <- character(0)
 
 # =============================================================================
+# PLAYOFF CONFIGURATION
+# =============================================================================
+
+#' @description Current phase of season
+#' @options "regular_season", "playoffs"
+#' @default "regular_season"
+PHASE <- "regular_season"
+
+#' @description Current playoff round (if in playoffs)
+#' @options NA, "wild_card", "divisional", "conference", "super_bowl"
+#' @default NA_character_
+PLAYOFF_ROUND <- NA_character_
+
+#' @description Market shrinkage for playoff games (trust market more)
+#' @default 0.70 (vs 0.60 regular season)
+PLAYOFF_SHRINKAGE <- 0.70
+
+#' @description Market shrinkage for Super Bowl (maximum market trust)
+#' @default 0.75
+SUPER_BOWL_SHRINKAGE <- 0.75
+
+#' @description Home field advantage multiplier for playoffs
+#' @default 1.20 (20% boost over regular season HFA)
+PLAYOFF_HFA_MULTIPLIER <- 1.20
+
+#' @description Bye week rest bonus multiplier for playoffs
+#' @default 1.50 (extra rest matters more in playoffs)
+PLAYOFF_BYE_BONUS <- 1.50
+
+#' @description Injury variance multiplier for playoffs (injuries more impactful)
+#' @default 1.15 (15% increase in injury impact)
+PLAYOFF_INJURY_VARIANCE <- 1.15
+
+# =============================================================================
+# DATE RESOLVER CONFIGURATION
+# =============================================================================
+
+#' @description Enable automatic week resolution from current date
+#' @default FALSE (use explicit WEEK_TO_SIM setting)
+AUTO_RESOLVE_WEEK <- FALSE
+
+#' @description Target datetime for week resolution (NULL = Sys.time())
+#' @default NULL
+TARGET_DATETIME <- NULL
+
+#' @description Timezone for date comparisons
+#' @default "America/New_York" (NFL standard Eastern Time)
+TIMEZONE <- "America/New_York"
+
+#' @description Days before earliest kickoff to include in week window
+#' @default 4
+WEEK_BUFFER_PRE <- 4
+
+#' @description Days after latest kickoff to include in week window
+#' @default 2
+WEEK_BUFFER_POST <- 2
+
+# =============================================================================
+# BETTING / MARKET PARAMETERS
+# =============================================================================
+
+#' @description Probability shrinkage toward market consensus (regular season)
+#' @default 0.60 (60% market weight, 40% model weight)
+#' @range 0.0 to 1.0
+SHRINKAGE <- 0.60
+
+#' @description Kelly criterion fraction for stake sizing
+#' @default 0.125 (1/8 Kelly for conservative bankroll management)
+#' @range 0.0 to 1.0
+KELLY_FRACTION <- 0.125
+
+#' @description Maximum believable edge before skepticism
+#' @default 0.10 (10%)
+MAX_EDGE <- 0.10
+
+#' @description Maximum stake as fraction of bankroll
+#' @default 0.02 (2%)
+MAX_STAKE <- 0.02
+
+#' @description Isotonic calibration boundary padding
+#' @default 0.01
+ISOTONIC_EPSILON <- 0.01
+
+# =============================================================================
 # R COMPATIBILITY
 # =============================================================================
 
@@ -522,7 +606,27 @@ list2env(
     MIN_GAMES_FOR_STATS = MIN_GAMES_FOR_STATS,
     MARKET_PROB_BOUNDS = MARKET_PROB_BOUNDS,
     WARN_STADIUM_FALLBACK = WARN_STADIUM_FALLBACK,
-    DEFAULT_WEATHER_CONDITIONS = DEFAULT_WEATHER_CONDITIONS
+    DEFAULT_WEATHER_CONDITIONS = DEFAULT_WEATHER_CONDITIONS,
+    # Playoff configuration
+    PHASE = PHASE,
+    PLAYOFF_ROUND = PLAYOFF_ROUND,
+    PLAYOFF_SHRINKAGE = PLAYOFF_SHRINKAGE,
+    SUPER_BOWL_SHRINKAGE = SUPER_BOWL_SHRINKAGE,
+    PLAYOFF_HFA_MULTIPLIER = PLAYOFF_HFA_MULTIPLIER,
+    PLAYOFF_BYE_BONUS = PLAYOFF_BYE_BONUS,
+    PLAYOFF_INJURY_VARIANCE = PLAYOFF_INJURY_VARIANCE,
+    # Date resolver configuration
+    AUTO_RESOLVE_WEEK = AUTO_RESOLVE_WEEK,
+    TARGET_DATETIME = TARGET_DATETIME,
+    TIMEZONE = TIMEZONE,
+    WEEK_BUFFER_PRE = WEEK_BUFFER_PRE,
+    WEEK_BUFFER_POST = WEEK_BUFFER_POST,
+    # Betting/market parameters
+    SHRINKAGE = SHRINKAGE,
+    KELLY_FRACTION = KELLY_FRACTION,
+    MAX_EDGE = MAX_EDGE,
+    MAX_STAKE = MAX_STAKE,
+    ISOTONIC_EPSILON = ISOTONIC_EPSILON
   ),
   envir = .GlobalEnv
 )
