@@ -5,6 +5,24 @@
 # as the authoritative source of truth.
 # =============================================================================
 
+# Required packages check
+if (!requireNamespace("dplyr", quietly = TRUE)) {
+  stop("Package 'dplyr' is required for date_resolver module. Install with: install.packages('dplyr')")
+}
+if (!requireNamespace("lubridate", quietly = TRUE)) {
+  stop("Package 'lubridate' is required for date_resolver module. Install with: install.packages('lubridate')")
+}
+
+# Source logging utilities if not already loaded
+if (!exists("log_info", mode = "function")) {
+  logging_path <- file.path(dirname(sys.frame(1)$ofile %||% "."), "logging.R")
+  if (file.exists(logging_path)) {
+    source(logging_path)
+  } else if (file.exists("R/logging.R")) {
+    source("R/logging.R")
+  }
+}
+
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
@@ -17,15 +35,17 @@ DATE_RESOLVER_CONFIG <- list(
   week_buffer_post = 2,   # Days after latest kickoff to include in week
 
   # Timezone for date comparisons
- timezone = "America/New_York",  # Eastern Time (NFL standard)
+  timezone = "America/New_York",  # Eastern Time (NFL standard)
 
   # Season structure
   regular_season_weeks = 18,
+
   playoff_weeks = c(19, 20, 21, 22),
 
   # Cache settings
   cache_schedules = TRUE,
-  cache_duration_hours = 24
+  cache_duration_hours = 24,
+  cache_max_entries = 10   # Maximum number of cached schedule sets (prevents memory growth)
 )
 
 # Schedule cache environment
@@ -71,8 +91,27 @@ load_nfl_schedules <- function(seasons, force_refresh = FALSE) {
     return(NULL)
   }
 
-  # Cache result
+  # Cache result with LRU eviction
   if (DATE_RESOLVER_CONFIG$cache_schedules) {
+    # Enforce cache size limit by evicting oldest entries
+    cache_keys <- ls(.schedule_cache)
+    max_entries <- DATE_RESOLVER_CONFIG$cache_max_entries %||% 10
+
+    if (length(cache_keys) >= max_entries) {
+      # Find and remove oldest entries
+      cache_times <- sapply(cache_keys, function(k) {
+        cached <- .schedule_cache[[k]]
+        ct <- attr(cached, "cache_time")
+        if (is.null(ct)) Sys.time() - 999999 else ct
+      })
+      sorted_keys <- cache_keys[order(cache_times)]
+      # Remove oldest entries to make room
+      n_to_remove <- length(cache_keys) - max_entries + 1
+      for (k in sorted_keys[1:n_to_remove]) {
+        rm(list = k, envir = .schedule_cache)
+      }
+    }
+
     attr(schedule, "cache_time") <- Sys.time()
     .schedule_cache[[cache_key]] <- schedule
   }
@@ -416,22 +455,39 @@ apply_resolved_context <- function(target_date = Sys.time(), verbose = TRUE) {
   assign("PLAYOFF_ROUND", context$round, envir = .GlobalEnv)
 
   if (verbose) {
-    cat("\n")
-    cat("=================================================================\n")
-    cat("  NFL CONTEXT RESOLVED\n")
-    cat("=================================================================\n")
-    cat(sprintf("  Target Date: %s\n", format(context$target_date, "%Y-%m-%d %H:%M %Z")))
-    cat(sprintf("  Season:      %d\n", context$season))
-    cat(sprintf("  Week:        %d\n", context$week))
-    cat(sprintf("  Phase:       %s\n", context$phase))
-    if (!is.na(context$round)) {
-      cat(sprintf("  Round:       %s\n", context$round))
+    # Use structured logging if available, otherwise fall back to cat
+    if (exists("log_section", mode = "function") && exists("log_info", mode = "function")) {
+      log_section("NFL CONTEXT RESOLVED")
+      log_info("Target Date: %s", format(context$target_date, "%Y-%m-%d %H:%M %Z"))
+      log_info("Season:      %d", context$season)
+      log_info("Week:        %d", context$week)
+      log_info("Phase:       %s", context$phase)
+      if (!is.na(context$round)) {
+        log_info("Round:       %s", context$round)
+      }
+      log_info("Games:       %d", context$n_games)
+      log_info("Window:      %s to %s",
+               format(context$window_start, "%Y-%m-%d"),
+               format(context$window_end, "%Y-%m-%d"))
+    } else {
+      # Fallback to cat if logging not loaded
+      cat("\n")
+      cat("=================================================================\n")
+      cat("  NFL CONTEXT RESOLVED\n")
+      cat("=================================================================\n")
+      cat(sprintf("  Target Date: %s\n", format(context$target_date, "%Y-%m-%d %H:%M %Z")))
+      cat(sprintf("  Season:      %d\n", context$season))
+      cat(sprintf("  Week:        %d\n", context$week))
+      cat(sprintf("  Phase:       %s\n", context$phase))
+      if (!is.na(context$round)) {
+        cat(sprintf("  Round:       %s\n", context$round))
+      }
+      cat(sprintf("  Games:       %d\n", context$n_games))
+      cat(sprintf("  Window:      %s to %s\n",
+                  format(context$window_start, "%Y-%m-%d"),
+                  format(context$window_end, "%Y-%m-%d")))
+      cat("=================================================================\n\n")
     }
-    cat(sprintf("  Games:       %d\n", context$n_games))
-    cat(sprintf("  Window:      %s to %s\n",
-                format(context$window_start, "%Y-%m-%d"),
-                format(context$window_end, "%Y-%m-%d")))
-    cat("=================================================================\n\n")
   }
 
   invisible(context)

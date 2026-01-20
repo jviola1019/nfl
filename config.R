@@ -32,11 +32,12 @@ if (getRversion() < "4.0.0") {
 #' @examples 2024, 2025
 SEASON <- 2025  # or set manually: SEASON <- 2024
 
-#' @description Week number to simulate (1-18 for regular season)
+#' @description Week number to simulate
 #' @important **CHANGE THIS VALUE** to run predictions for different weeks
-#' @default 11
-#' @examples 1, 2, 3, ..., 18
-WEEK_TO_SIM <- 18  # <-- **CHANGE THIS TO RUN A DIFFERENT WEEK**
+#' @note Regular season: 1-18, Playoffs: 19=Wild Card, 20=Divisional, 21=Conference, 22=Super Bowl
+#' @default 18
+#' @examples 1, 2, 3, ..., 18 (regular season), 19, 20, 21, 22 (playoffs)
+WEEK_TO_SIM <- 21  # <-- **CHANGE THIS TO RUN A DIFFERENT WEEK [19 = WILD CARD, 20 = DIVISIONAL, 21 = CONFERENCE, 22 = SUPER BOWL]**
 
 # =============================================================================
 # SIMULATION PARAMETERS
@@ -427,15 +428,43 @@ DEFAULT_WEATHER_CONDITIONS <- list(
 # PLAYOFF CONFIGURATION
 # =============================================================================
 
+#' Playoff round week mapping (canonical source)
+#' @note Week 19 = Wild Card, 20 = Divisional, 21 = Conference, 22 = Super Bowl
+.PLAYOFF_WEEK_MAP <- list(
+  `19` = "wild_card",
+  `20` = "divisional",
+  `21` = "conference",
+  `22` = "super_bowl"
+)
+
+#' @description Auto-detect phase and round from WEEK_TO_SIM
+#' This automatically sets PHASE and PLAYOFF_ROUND when WEEK_TO_SIM >= 19
+.auto_detect_playoff_context <- function(week) {
+  if (week >= 19 && week <= 22) {
+    list(
+      phase = "playoffs",
+      round = .PLAYOFF_WEEK_MAP[[as.character(week)]]
+    )
+  } else {
+    list(
+      phase = "regular_season",
+      round = NA_character_
+    )
+  }
+}
+
+# Auto-detect based on WEEK_TO_SIM
+.playoff_context <- .auto_detect_playoff_context(WEEK_TO_SIM)
+
 #' @description Current phase of season
 #' @options "regular_season", "playoffs"
-#' @default "regular_season"
-PHASE <- "regular_season"
+#' @note Automatically detected from WEEK_TO_SIM (weeks 19-22 = playoffs)
+PHASE <- .playoff_context$phase
 
 #' @description Current playoff round (if in playoffs)
 #' @options NA, "wild_card", "divisional", "conference", "super_bowl"
-#' @default NA_character_
-PLAYOFF_ROUND <- NA_character_
+#' @note Automatically detected from WEEK_TO_SIM
+PLAYOFF_ROUND <- .playoff_context$round
 
 #' @description Market shrinkage for playoff games (trust market more)
 #' @default 0.70 (vs 0.60 regular season)
@@ -529,6 +558,20 @@ if (interactive() || getOption("nfl_sim.show_config", default = FALSE)) {
   cat("\n")
   cat(sprintf("  Season:           %d\n", SEASON))
   cat(sprintf("  Week:             %d  ◄── CHANGE THIS TO RUN A DIFFERENT WEEK\n", WEEK_TO_SIM))
+  cat(sprintf("  Phase:            %s\n", PHASE))
+  if (PHASE == "playoffs" && !is.na(PLAYOFF_ROUND)) {
+    # Convert playoff round to display name
+    .round_display <- switch(PLAYOFF_ROUND,
+      "wild_card" = "Wild Card",
+      "divisional" = "Divisional",
+      "conference" = "Conference Championship",
+      "super_bowl" = "Super Bowl",
+      PLAYOFF_ROUND
+    )
+    cat(sprintf("  Playoff Round:    %s\n", .round_display))
+    cat(sprintf("  Shrinkage:        %.0f%% (playoff adjustment)\n",
+        if (PLAYOFF_ROUND == "super_bowl") SUPER_BOWL_SHRINKAGE * 100 else PLAYOFF_SHRINKAGE * 100))
+  }
   cat(sprintf("  Trials:           %s\n", format(N_TRIALS, big.mark = ",")))
   cat(sprintf("  Seed:             %d\n", SEED))
   cat(sprintf("  Calibration:      %s\n", CALIBRATION_METHOD))
@@ -544,7 +587,12 @@ if (interactive() || getOption("nfl_sim.show_config", default = FALSE)) {
   cat("    • Brier Score:    0.211 (market: 0.208)\n")
   cat("    • Rank:           #2 vs professional models\n")
   cat("\n")
-  cat("  To change the week: Edit WEEK_TO_SIM in config.R\n")
+  cat("  Week Selection:\n")
+  cat("    • Weeks 1-18:     Regular season\n")
+  cat("    • Week 19:        Wild Card\n")
+  cat("    • Week 20:        Divisional\n")
+  cat("    • Week 21:        Conference Championship\n")
+  cat("    • Week 22:        Super Bowl\n")
   cat("\n")
 }
 

@@ -4,6 +4,21 @@
 # Playoff round detection, playoff-specific features, and report generation.
 # =============================================================================
 
+# Required packages check
+if (!requireNamespace("dplyr", quietly = TRUE)) {
+  stop("Package 'dplyr' is required for playoffs module. Install with: install.packages('dplyr')")
+}
+
+# Source logging utilities if not already loaded
+if (!exists("log_info", mode = "function")) {
+  logging_path <- file.path(dirname(sys.frame(1)$ofile %||% "."), "logging.R")
+  if (file.exists(logging_path)) {
+    source(logging_path)
+  } else if (file.exists("R/logging.R")) {
+    source("R/logging.R")
+  }
+}
+
 # =============================================================================
 # PLAYOFF ROUND DEFINITIONS
 # =============================================================================
@@ -40,6 +55,29 @@ PLAYOFF_ROUNDS <- list(
     description = "Super Bowl"
   )
 )
+
+#' Get week number for a playoff round
+#' @param round_name Playoff round name (wild_card, divisional, conference, super_bowl)
+#' @return Week number or NA if invalid round
+get_playoff_week <- function(round_name) {
+  if (is.na(round_name) || !round_name %in% names(PLAYOFF_ROUNDS)) {
+    return(NA_integer_)
+  }
+  as.integer(PLAYOFF_ROUNDS[[round_name]]$week)
+}
+
+#' Get round name from week number
+#' @param week Week number (19-22 for playoffs)
+#' @return Playoff round name or NA if not a playoff week
+get_round_from_week <- function(week) {
+  week <- as.integer(week)
+  for (round_name in names(PLAYOFF_ROUNDS)) {
+    if (identical(PLAYOFF_ROUNDS[[round_name]]$week, week)) {
+      return(round_name)
+    }
+  }
+  NA_character_
+}
 
 #' @title Playoff Feature Adjustments
 #' @description Playoff-specific model adjustments (validated parameters)
@@ -117,16 +155,9 @@ derive_playoff_round <- function(schedule_row) {
     if (!is.na(round)) return(round)
   }
 
-  # Fallback to week-based detection
+  # Fallback to week-based detection using canonical PLAYOFF_ROUNDS
   if (!is.na(week)) {
-    round <- dplyr::case_when(
-      week == 19 ~ "wild_card",
-      week == 20 ~ "divisional",
-      week == 21 ~ "conference",
-      week == 22 ~ "super_bowl",
-      TRUE ~ NA_character_
-    )
-    return(round)
+    return(get_round_from_week(week))
   }
 
   NA_character_
@@ -136,14 +167,8 @@ derive_playoff_round <- function(schedule_row) {
 #' @param week Week number (19-22 for playoffs)
 #' @return Playoff round name or NA if not playoff week
 derive_playoff_round_from_week <- function(week) {
-  week <- as.integer(week)
-  dplyr::case_when(
-    week == 19 ~ "wild_card",
-    week == 20 ~ "divisional",
-    week == 21 ~ "conference",
-    week == 22 ~ "super_bowl",
-    TRUE ~ NA_character_
-  )
+  # Use canonical PLAYOFF_ROUNDS definition to avoid hardcoded values
+  get_round_from_week(week)
 }
 
 #' Check if week is a playoff week
@@ -151,7 +176,10 @@ derive_playoff_round_from_week <- function(week) {
 #' @return TRUE if playoff week, FALSE otherwise
 is_playoff_week <- function(week) {
   week <- as.integer(week)
-  !is.na(week) && week >= 19 && week <= 22
+  if (is.na(week)) return(FALSE)
+  # Use canonical PLAYOFF_ROUNDS definition
+  playoff_weeks <- sapply(PLAYOFF_ROUNDS, function(r) r$week)
+  week %in% playoff_weeks
 }
 
 #' Get phase (regular_season or playoffs) from week
@@ -161,7 +189,7 @@ get_phase_from_week <- function(week) {
   week <- as.integer(week)
   if (is.na(week)) return("unknown")
   if (week >= 1 && week <= 18) return("regular_season")
-  if (week >= 19 && week <= 22) return("playoffs")
+  if (is_playoff_week(week)) return("playoffs")
   "unknown"
 }
 
