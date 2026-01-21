@@ -18,26 +18,33 @@ renv/python/
 renv/staging/
 .Rprofile
 
-# IDE
-.vscode/
+# IDE (track settings for consistency)
 .idea/
 *.swp
 *.swo
 *~
+# Keep .vscode/ tracked for consistent R settings
 
 # Generated outputs (can be regenerated)
 *.html
 run_logs/
+reports/
 
 # OS files
 .DS_Store
 Thumbs.db
+nul
 
 # Test/validation artifacts (can be regenerated)
 *_results.rds
 *_report.rds
 
+# Cached data
+.cache/
+
 # Keep these tracked:
 # - All .R source files
 # - README.md and documentation
 # - renv.lock (for reproducibility)
+# - .vscode/ (for R extension settings)
+# - .lintr (for linting configuration)

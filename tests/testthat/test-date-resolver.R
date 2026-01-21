@@ -1,9 +1,8 @@
 # =============================================================================
 # Tests for R/date_resolver.R - Date Resolver Module
 # =============================================================================
-
-# Load the date resolver module
-source(file.path(dirname(dirname(dirname(testthat::test_path()))), "R", "date_resolver.R"))
+# Note: R/date_resolver.R is loaded by tests/testthat/setup.R
+# =============================================================================
 
 # =============================================================================
 # CONFIGURATION TESTS

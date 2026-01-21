@@ -1,9 +1,8 @@
 # =============================================================================
 # Tests for R/playoffs.R - Playoff Module
 # =============================================================================
-
-# Load the playoffs module
-source(file.path(dirname(dirname(dirname(testthat::test_path()))), "R", "playoffs.R"))
+# Note: R/playoffs.R is loaded by tests/testthat/setup.R
+# =============================================================================
 
 # =============================================================================
 # PLAYOFF ROUND DEFINITIONS TESTS

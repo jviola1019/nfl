@@ -1,3 +1,25 @@
 {
-    "chatgpt.openOnStartup": true
+    "r.rpath.windows": "C:/Program Files/R/R-4.5.1/bin/R.exe",
+    "r.lsp.enabled": true,
+    "r.lsp.diagnostics": true,
+    "r.bracketedPaste": true,
+    "r.sessionWatcher": true,
+    "r.plot.useHttpgd": false,
+    "editor.formatOnSave": false,
+    "files.associations": {
+        "*.R": "r",
+        "*.r": "r",
+        "*.Rmd": "rmd"
+    },
+    "files.exclude": {
+        "**/.RData": true,
+        "**/run_logs": true,
+        "**/*.rds": true,
+        "**/renv/library": true
+    },
+    "[r]": {
+        "editor.tabSize": 2,
+        "editor.insertSpaces": true,
+        "editor.wordWrap": "off"
+    }
 }

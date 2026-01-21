@@ -129,29 +129,46 @@ clear_schedule_cache <- function() {
 # DATE/TIME UTILITIES
 # =============================================================================
 
-#' Parse datetime with timezone handling
-#' @param datetime_str Datetime string or POSIXct
+#' Parse datetime with timezone handling (vectorized)
+#' @param datetime_str Datetime string(s) or POSIXct
 #' @param tz Target timezone
 #' @return POSIXct in target timezone
 parse_datetime <- function(datetime_str, tz = DATE_RESOLVER_CONFIG$timezone) {
+  # Handle POSIXct input
   if (inherits(datetime_str, "POSIXct")) {
     return(lubridate::with_tz(datetime_str, tz))
   }
 
-  if (is.na(datetime_str) || is.null(datetime_str)) {
-    return(NA)
+  # Handle NULL
+  if (is.null(datetime_str)) {
+    return(lubridate::NA_POSIXct_)
+  }
+
+  # Handle vectors (for use with dplyr::case_when)
+  if (length(datetime_str) > 1) {
+    return(vapply(datetime_str, function(x) {
+      as.numeric(parse_datetime(x, tz))
+    }, numeric(1)) %>%
+      as.POSIXct(origin = "1970-01-01", tz = tz))
+  }
+
+  # Handle scalar NA
+  if (is.na(datetime_str)) {
+    return(lubridate::NA_POSIXct_)
   }
 
   # Try multiple formats
   parsed <- tryCatch({
-    lubridate::ymd_hms(datetime_str, tz = tz)
-  }, error = function(e) {
-    tryCatch({
-      lubridate::ymd(datetime_str, tz = tz)
-    }, error = function(e2) {
-      NA
-    })
-  })
+    lubridate::ymd_hms(datetime_str, tz = tz, quiet = TRUE)
+  }, warning = function(w) lubridate::NA_POSIXct_,
+  error = function(e) lubridate::NA_POSIXct_)
+
+  if (is.na(parsed)) {
+    parsed <- tryCatch({
+      lubridate::ymd(datetime_str, tz = tz, quiet = TRUE)
+    }, warning = function(w) lubridate::NA_POSIXct_,
+    error = function(e) lubridate::NA_POSIXct_)
+  }
 
   parsed
 }
@@ -164,20 +181,44 @@ parse_kickoff_times <- function(schedule) {
     return(schedule)
   }
 
-  schedule <- schedule %>%
-    dplyr::mutate(
-      kickoff_local = dplyr::case_when(
-        # If already have POSIXct
-        inherits(.data$gameday, "POSIXct") ~ .data$gameday,
-        # Combine date and time
-        !is.na(.data$gameday) & !is.na(.data$gametime) ~
-          parse_datetime(paste(.data$gameday, .data$gametime)),
-        # Date only
-        !is.na(.data$gameday) ~
-          parse_datetime(.data$gameday),
-        TRUE ~ lubridate::NA_POSIXct_
-      )
-    )
+  tz <- DATE_RESOLVER_CONFIG$timezone
+
+  # Process kickoff times row by row for type safety
+  schedule$kickoff_local <- vapply(
+    seq_len(nrow(schedule)),
+    function(i) {
+      row <- schedule[i, ]
+
+      # Already have POSIXct in gameday
+      if (inherits(row$gameday, "POSIXct")) {
+        return(as.numeric(lubridate::with_tz(row$gameday, tz)))
+      }
+
+      # Have date and time
+      if (!is.na(row$gameday) && !is.na(row$gametime)) {
+        dt_str <- paste(row$gameday, row$gametime)
+        parsed <- parse_datetime(dt_str, tz)
+        return(as.numeric(parsed))
+      }
+
+      # Have date only
+      if (!is.na(row$gameday)) {
+        parsed <- parse_datetime(as.character(row$gameday), tz)
+        return(as.numeric(parsed))
+      }
+
+      # Nothing available
+      return(NA_real_)
+    },
+    numeric(1)
+  )
+
+  # Convert back to POSIXct
+  schedule$kickoff_local <- as.POSIXct(
+    schedule$kickoff_local,
+    origin = "1970-01-01",
+    tz = tz
+  )
 
   schedule
 }

@@ -1,206 +1,349 @@
-# NFL Prediction Model - Audit Report
+# NFL Prediction Model - Repository Audit Report
 
-This document provides a comprehensive summary of all 20 issues identified and fixed in the NFL prediction model codebase.
+**Generated**: 2026-01-21
+**Auditor**: Clean-Room Refactor Agent
+**Repository Version**: 2.4.1
 
-## 20-Issue Verification Table
+---
 
-| # | Issue | File(s) | How to Verify | Test Function |
-|---|-------|---------|---------------|---------------|
-| 1 | Canonical utils.R module | R/utils.R | Check all 13+ core functions defined | `test-utils.R::test_that("american_to_probability...")` |
-| 2 | Probability clamping with epsilon | R/utils.R | `clamp_probability(0) >= 1e-9` | `test-utils.R::test_that("clamp_probability...")` |
-| 3 | Odds conversion functions | R/utils.R | `-110` odds → `0.524` probability | `test-utils.R::test_that("american_to_probability...")` |
-| 4 | Expected value calculation | R/utils.R | Fair bet (50% @ +100) = 0 EV | `test-utils.R::test_that("expected_value_units...")` |
-| 5 | Kelly stake calculation | R/utils.R | Stake capped at `max_stake` (0.02) | `test-utils.R::test_that("conservative_kelly_stake...")` |
-| 6 | Market shrinkage function | R/utils.R | 60% shrinkage: `0.4*model + 0.6*market` | `test-utils.R::test_that("shrink_probability_toward_market...")` |
-| 7 | Validation metrics (Brier, log-loss) | R/utils.R | Perfect predictions → Brier = 0 | `test-utils.R::test_that("brier_score...")` |
-| 8 | Edge classification | R/utils.R | 15%+ edge → "suspicious/implausible" | `test-utils.R::test_that("classify_edge_magnitude...")` |
-| 9 | Type-safe join keys | R/utils.R | season/week coerced to integer | `test-utils.R::test_that("standardize_join_keys...")` |
-| 10 | Duplicate key handling | R/utils.R | `collapse_by_keys_relaxed()` merges | `test-utils.R::test_that("collapse_by_keys_relaxed...")` |
-| 11 | Unique key enforcement | R/utils.R | `ensure_unique_join_keys()` dedupes | `test-utils.R::test_that("ensure_unique_join_keys...")` |
-| 12 | Data validation module | R/data_validation.R | 8+ validation functions defined | `test-data-validation.R::test_that("reset_data_quality...")` |
-| 13 | Data quality tracking | R/data_validation.R | `update_*_quality()` functions work | `test-data-validation.R::test_that("update_injury_quality...")` |
-| 14 | Overall quality computation | R/data_validation.R | All good → "high", degraded → "low" | `test-data-validation.R::test_that("compute_overall_quality...")` |
-| 15 | HTML badge generation | R/data_validation.R | Valid HTML with `<section>` tag | `test-data-validation.R::test_that("generate_quality_badge_html...")` |
-| 16 | Weather fallback defaults | R/data_validation.R | `weather_source = "default"` marked | `test-data-validation.R::test_that("get_default_weather_conditions...")` |
-| 17 | Injury availability check | R/data_validation.R | Returns list with `available`, `season` | `test-data-validation.R::test_that("check_injury_availability...")` |
-| 18 | Configuration parameters | config.R | SHRINKAGE, KELLY_FRACTION, etc. exist | `scripts/verify_requirements.R` |
-| 19 | Test suite coverage | tests/testthat/*.R | Both test files exist and pass | `testthat::test_dir("tests/testthat")` |
-| 20 | Documentation files | CLAUDE.md, AUDIT.md, README.md | All three files exist | `scripts/verify_requirements.R` |
+## Executive Summary
 
-## Detailed Issue Documentation
+This audit identifies 47 files in the repository, classifies each by purpose and necessity, and provides specific remediation actions. The primary issues are:
 
-### Issue 1: Canonical Utils Module
+1. **Test path resolution failure** - Tests cannot find source files
+2. **Redundant validation scripts** - 10+ overlapping validation files
+3. **Root directory clutter** - Many scripts belong in subdirectories
+4. **Missing test infrastructure** - No `setup.R` for testthat
+5. **Stale artifacts** - `.RData` and `nul` file in root
 
-**Requirement**: Single source of truth for utility functions in `R/utils.R`.
+---
 
-**Implementation**: All shared utility functions defined in `R/utils.R`:
-- Odds conversion: `american_to_probability()`, `american_to_decimal()`, `probability_to_american()`
-- Probability handling: `clamp_probability()`, `shrink_probability_toward_market()`
-- Betting math: `expected_value_units()`, `conservative_kelly_stake()`
-- Validation metrics: `brier_score()`, `log_loss()`, `accuracy()`
-- Join utilities: `standardize_join_keys()`, `safe_typed_join()`, `validate_join_overlap()`
-- Data frame utilities: `first_non_missing_typed()`, `collapse_by_keys_relaxed()`, `ensure_unique_join_keys()`
+## File Classification Table
 
-### Issue 2: Probability Clamping
+| File Path | Type | Runnable | Referenced By | Status | Rationale |
+|-----------|------|----------|---------------|--------|-----------|
+| **Core Pipeline** |
+| `run_week.R` | entry | YES | User | KEEP | Main entry point |
+| `config.R` | config | YES | run_week, NFLsimulation | KEEP | Central configuration |
+| `NFLsimulation.R` | engine | YES | run_week | KEEP | Core simulation (7829 lines) |
+| `NFLmarket.R` | engine | YES | NFLsimulation | KEEP | Market analysis (3932 lines) |
+| `NFLbrier_logloss.R` | engine | YES | NFLsimulation | KEEP | Evaluation metrics (1156 lines) |
+| `injury_scalp.R` | engine | YES | NFLsimulation | KEEP | Injury data loading (899 lines) |
+| **R/ Module Directory** |
+| `R/utils.R` | library | NO | Tests, NFLmarket, NFLsim | KEEP | Canonical utilities |
+| `R/data_validation.R` | library | NO | NFLsimulation | KEEP | Data validation |
+| `R/logging.R` | library | NO | Multiple | KEEP | Structured logging |
+| `R/playoffs.R` | library | NO | NFLsimulation, tests | KEEP | Playoff logic |
+| `R/date_resolver.R` | library | NO | NFLsimulation, tests | KEEP | Date resolution |
+| **Validation Scripts (CONSOLIDATE)** |
+| `validation_pipeline.R` | validation | YES | None | KEEP | Primary validation (741 lines) |
+| `model_validation.R` | validation | YES | None | MERGE->validation/ | Statistical testing (935 lines) |
+| `injury_model_validation.R` | validation | YES | None | MOVE->validation/ | Injury validation (668 lines) |
+| `professional_model_benchmarking.R` | validation | YES | None | MOVE->validation/ | Benchmarking (749 lines) |
+| `calibration_refinement.R` | validation | YES | None | MOVE->validation/ | Calibration (573 lines) |
+| `rolling_validation_system.R` | validation | YES | None | MERGE->validation/ | Duplicate? (599 lines) |
+| `rolling_window_validation.R` | validation | YES | None | MERGE->validation/ | Duplicate? (406 lines) |
+| `simplified_baseline_comparison.R` | validation | YES | None | MOVE->validation/ | Baseline (424 lines) |
+| `ensemble_calibration_implementation.R` | validation | YES | None | MOVE->validation/ | Ensemble (608 lines) |
+| `validation_reports.R` | validation | YES | None | MOVE->validation/ | Reports (388 lines) |
+| `run_validation_example.R` | validation | YES | None | MERGE->validation/ | Example (259 lines) |
+| `validation/playoffs_validation.R` | validation | YES | None | KEEP | Already in correct location |
+| **Test Suite (FIX)** |
+| `tests/testthat/test-utils.R` | test | NO | testthat | FIX | Path resolution broken |
+| `tests/testthat/test-data-validation.R` | test | NO | testthat | FIX | Path resolution broken |
+| `tests/testthat/test-date-resolver.R` | test | NO | testthat | FIX | Path resolution broken |
+| `tests/testthat/test-playoffs.R` | test | NO | testthat | FIX | Path resolution broken |
+| `tests/testthat/test-game-type-mapping.R` | test | YES | testthat | KEEP | Works (no source()) |
+| `tests/test_core_math.R` | test | YES | None | DELETE | Duplicates test-utils.R |
+| **Infrastructure Scripts** |
+| `scripts/verify_requirements.R` | verify | YES | CI | KEEP | Audit verification |
+| **Compatibility / Checklist Scripts** |
+| `r451_compatibility_fixes.R` | compat | YES | None | DEPRECATE | One-time R 4.5.1 fixes |
+| `comprehensive_r451_test_suite.R` | test | YES | None | DEPRECATE | One-time compat tests |
+| `comprehensive_code_validation.R` | test | YES | None | MERGE->scripts/ | General validation |
+| `final_verification_checklist.R` | verify | YES | None | MERGE->scripts/ | Deployment checks |
+| `production_deployment_checklist.R` | verify | YES | None | MERGE->scripts/ | Deployment checks |
+| `lasso_feature_selection.R` | analysis | YES | None | MOVE->validation/ | Feature selection |
+| **Documentation** |
+| `README.md` | docs | NO | - | KEEP | Project overview |
+| `GETTING_STARTED.md` | docs | NO | - | KEEP | Setup guide |
+| `DOCUMENTATION.md` | docs | NO | - | KEEP | Technical reference |
+| `CLAUDE.md` | docs | NO | - | KEEP | Agent context |
+| `AUDIT.md` | docs | NO | - | KEEP | This file |
+| `DESCRIPTION` | meta | NO | - | KEEP | Package metadata |
+| **.gitignore** | config | NO | - | KEEP | Git config |
+| **CI/CD** |
+| `.github/workflows/ci.yml` | ci | YES | GitHub | KEEP | CI workflow |
+| **VS Code** |
+| `.vscode/settings.json` | config | NO | - | FIX | Missing R settings |
+| `.vscode/launch.json` | config | NO | - | KEEP | Debug config |
+| **renv** |
+| `renv/activate.R` | renv | NO | - | KEEP | renv activation |
+| `renv/settings.R` | renv | NO | - | KEEP | renv settings |
+| **Artifacts (DELETE)** |
+| `.RData` | artifact | NO | - | DELETE | Stale R session data |
+| `nul` | artifact | NO | - | DELETE | Empty/error file |
+| `*_results.rds` | artifact | NO | - | IGNORE | Gitignored |
+| `run_logs/*.rds` | artifact | NO | - | IGNORE | Gitignored |
+| `NFLvsmarket_report.html` | artifact | NO | - | DELETE | Should be gitignored |
 
-**Requirement**: Prevent `log(0)` and division by zero with epsilon boundaries.
+---
 
-**Implementation**:
+## Critical Issues
+
+### Issue 1: Test Path Resolution Failure (CRITICAL)
+
+**Symptom**: All tests in `tests/testthat/` fail with "cannot open file './R/utils.R'"
+
+**Root Cause**: The test files use:
 ```r
-PROB_EPSILON <- 1e-9
-
-clamp_probability <- function(p, eps = PROB_EPSILON) {
-  p <- suppressWarnings(as.numeric(p))
-  pmin(pmax(p, eps), 1 - eps)
-}
+source(file.path(dirname(dirname(dirname(testthat::test_path()))), "R", "utils.R"))
 ```
 
-### Issue 3: Broken Join in build_moneyline_comparison_table (CRITICAL)
+This path construction fails because `testthat::test_path()` is not available during the outer `source()` call.
 
-**Symptom**: Empty comparison table despite valid data inputs.
-
-**Root Cause**: Type mismatch in join keys - `game_id` sometimes numeric, `season`/`week` sometimes character.
-
-**Fix**: Apply `standardize_join_keys()` to all tables before joining:
+**Fix**: Create `tests/testthat/setup.R` with proper path handling:
 ```r
-# CRITICAL: Standardize scores join keys (type coercion)
-scores <- standardize_join_keys(scores)
+# tests/testthat/setup.R
+project_root <- rprojroot::find_root(rprojroot::has_file("DESCRIPTION"))
+source(file.path(project_root, "R", "utils.R"))
+source(file.path(project_root, "R", "data_validation.R"))
+source(file.path(project_root, "R", "logging.R"))
+source(file.path(project_root, "R", "playoffs.R"))
+source(file.path(project_root, "R", "date_resolver.R"))
 ```
 
-**Location**: NFLmarket.R:1708, NFLsimulation.R:755
+Then remove the `source()` lines from individual test files.
 
-### Issue 4: Expected Value Calculation
+### Issue 2: Redundant Validation Scripts
 
-**Formula**: `EV = prob * (decimal_odds - 1) - (1 - prob)`
+**Files**: 10+ validation scripts with overlapping functionality in root directory.
 
-**Test**: Fair bet (50% at +100 odds) should return EV = 0.
+**Fix**: Consolidate into `validation/` directory:
+- Keep `validation_pipeline.R` as primary (rename to `validation/run_validation.R`)
+- Merge `rolling_validation_system.R` and `rolling_window_validation.R`
+- Move remaining files to `validation/`
 
-### Issue 5: Kelly Stake Calculation
+### Issue 3: Stale Artifacts in Git
 
-**Implementation**: Conservative 1/8 Kelly with edge skepticism and max stake cap.
+**Files**:
+- `.RData` - R session data (should never be committed)
+- `nul` - Empty Windows error file
+- `NFLvsmarket_report.html` - Generated report (should be gitignored)
 
-```r
-conservative_kelly_stake <- function(prob, odds,
-                                     kelly_fraction = 0.125,  # 1/8 Kelly
-                                     max_edge = 0.10,
-                                     max_stake = 0.02) {
-  # Full Kelly * fraction * edge_penalty, capped at max_stake
-}
+**Fix**:
+```bash
+git rm --cached .RData nul NFLvsmarket_report.html
 ```
 
-### Issue 6: Market Shrinkage
+### Issue 4: Missing Lintr Configuration
 
-**Requirement**: Blend model probability toward market consensus.
+**Issue**: VS Code R extension may crash when linting without `.lintr` file.
 
-**Default**: 60% market weight → `shrunk = 0.4*model + 0.6*market`
-
-### Issue 7: Validation Metrics
-
-**Brier Score**: `mean((predicted - actual)^2)` - lower is better.
-
-**Log Loss**: `-mean(actual*log(pred) + (1-actual)*log(1-pred))` - lower is better.
-
-**Accuracy**: `mean((pred > 0.5) == actual)` - higher is better.
-
-### Issue 8: Edge Classification
-
-**Thresholds**:
-- `<= 0`: "negative"
-- `0-5%`: "realistic"
-- `5-10%`: "optimistic"
-- `10-15%`: "suspicious"
-- `> 15%`: "implausible"
-
-### Issues 9-11: Type-Safe Joins
-
-**Key Type Standards**:
-- `game_id`: character
-- `season`: integer
-- `week`: integer
-
-**Functions**:
-- `standardize_join_keys()`: Renames aliases and coerces types
-- `collapse_by_keys_relaxed()`: Merges duplicate rows (first non-NA value)
-- `ensure_unique_join_keys()`: Removes duplicate key combinations
-
-### Issues 12-17: Data Quality Tracking
-
-**Module**: `R/data_validation.R`
-
-**Functions**:
-- `reset_data_quality()` - Initialize tracking environment
-- `update_injury_quality(status, seasons_missing)` - Track injury data
-- `update_weather_quality(status, games_fallback)` - Track weather data
-- `update_market_quality(status, games_missing)` - Track market data
-- `update_calibration_quality(method, leakage_free)` - Track calibration method
-- `compute_overall_quality()` - Return "high"/"medium"/"low" rating
-- `generate_quality_badge_html()` - HTML badge for reports
-
-**Status Values**:
-- Injury: "complete", "partial", "missing", "unknown"
-- Weather: "api", "partial", "default", "unknown"
-- Market: "complete", "missing", "unknown"
-- Calibration: "isotonic_nested_cv", "isotonic_global", "none", "unknown"
-
-### Issue 18: Configuration Parameters
-
-**Required in config.R**:
-- `SHRINKAGE` (default: 0.6)
-- `KELLY_FRACTION` (default: 0.125)
-- `N_TRIALS` (default: 100000)
-- `SEED` (default: 42)
-
-### Issues 19-20: Test Suite and Documentation
-
-**Test Files**:
-- `tests/testthat/test-utils.R` - 20+ tests for utility functions
-- `tests/testthat/test-data-validation.R` - 10+ tests for validation module
-
-**Documentation Files**:
-- `CLAUDE.md` - Claude Code context and instructions
-- `AUDIT.md` - This comprehensive audit report
-- `README.md` - Project overview and quick start
-
-## Verification
-
-### Run Full Verification Script
-```r
-source("scripts/verify_requirements.R")
+**Fix**: Create `.lintr`:
+```yaml
+linters: linters_with_defaults(
+  line_length_linter(120),
+  commented_code_linter = NULL
+)
+exclusions: list(
+  "renv" = Inf,
+  "run_logs" = Inf
+)
 ```
 
-### Run Test Suite
-```r
-testthat::test_dir("tests/testthat")
+---
+
+## Recommended Repository Structure
+
+```
+nfl/
+├── R/                           # Library functions (NO CHANGES)
+│   ├── utils.R                  # Canonical utilities
+│   ├── data_validation.R        # Data validation
+│   ├── logging.R                # Structured logging
+│   ├── playoffs.R               # Playoff logic
+│   ├── date_resolver.R          # Date resolution
+│   └── contracts.R              # NEW: Data contracts
+├── scripts/                     # Utility scripts
+│   ├── verify_requirements.R    # Existing
+│   ├── verify_repo_integrity.R  # NEW: Schema/invariant checks
+│   └── run_matrix.R             # NEW: Run all artifacts
+├── validation/                  # Validation scripts
+│   ├── run_validation.R         # Primary validation (renamed)
+│   ├── model_validation.R       # Statistical testing
+│   ├── injury_validation.R      # Injury impact (renamed)
+│   ├── benchmarking.R           # vs FiveThirtyEight (renamed)
+│   ├── calibration.R            # Calibration analysis (renamed)
+│   ├── rolling_validation.R     # Rolling window (merged)
+│   └── playoffs_validation.R    # Existing
+├── tests/
+│   └── testthat/
+│       ├── setup.R              # NEW: Source R/ modules
+│       ├── test-utils.R         # FIXED: Remove source()
+│       ├── test-data-validation.R
+│       ├── test-date-resolver.R
+│       ├── test-playoffs.R
+│       └── test-game-type-mapping.R
+├── docs/                        # Optional: Move markdown
+│   └── (keep in root for now)
+├── run_logs/                    # Generated (gitignored)
+├── reports/                     # NEW: Generated reports
+├── .github/workflows/ci.yml     # CI config
+├── config.R                     # Central configuration
+├── run_week.R                   # Main entry point
+├── NFLsimulation.R              # Core engine
+├── NFLmarket.R                  # Market analysis
+├── NFLbrier_logloss.R           # Metrics
+├── injury_scalp.R               # Injury loading
+├── DESCRIPTION                  # Package metadata
+├── README.md                    # Overview
+├── GETTING_STARTED.md           # Setup guide
+├── DOCUMENTATION.md             # Technical reference
+├── CLAUDE.md                    # Agent context
+├── AUDIT.md                     # This file
+├── CHANGELOG.md                 # NEW: Change log
+├── .lintr                       # NEW: Lintr config
+├── .gitignore                   # Git ignore
+└── renv.lock                    # Dependencies
 ```
 
-### Run Weekly Simulation
-```r
-source("run_week.R")
-# Verify: comparison table non-empty, HTML report generated, data quality badge present
+---
+
+## Action Items (Priority Order)
+
+### P0: Critical (Must Fix)
+
+1. **Create `tests/testthat/setup.R`** - Fix test path resolution
+2. **Remove stale artifacts** - `.RData`, `nul`, `NFLvsmarket_report.html`
+3. **Update `.gitignore`** - Add `*.html` to prevent re-addition
+
+### P1: High (Should Fix)
+
+4. **Create `.lintr`** - Prevent VS Code crashes
+5. **Update VS Code settings** - Add R extension config
+6. **Delete `tests/test_core_math.R`** - Duplicate of test-utils.R
+
+### P2: Medium (Recommended)
+
+7. **Move validation scripts to `validation/`** - Clean root directory
+8. **Deprecate R 4.5.1 compat scripts** - One-time fixes applied
+9. **Merge duplicate validation scripts** - rolling_validation_system + rolling_window_validation
+10. **Create `R/contracts.R`** - Data contract definitions
+
+### P3: Low (Nice to Have)
+
+11. **Create `scripts/verify_repo_integrity.R`** - Automated schema checks
+12. **Create `scripts/run_matrix.R`** - Execute all runnable artifacts
+13. **Add `reports/` directory** - Centralize generated outputs
+
+---
+
+## Verification Commands
+
+After remediation, verify with:
+
+```bash
+# 1. Run tests (should all pass)
+Rscript -e "testthat::test_dir('tests/testthat')"
+
+# 2. Run verification script
+Rscript scripts/verify_requirements.R
+
+# 3. Run weekly simulation
+Rscript run_week.R 16 2024
+
+# 4. Check for stale files
+git status --porcelain
 ```
 
-## Files Modified
+---
 
-| File | Changes |
-|------|---------|
-| `R/utils.R` | Added type-safe join utilities, edge classification |
-| `R/data_validation.R` | Complete data quality tracking infrastructure |
-| `NFLsimulation.R` | Fixed join, integrated data quality tracking |
-| `NFLmarket.R` | Fixed join, added quality badge to HTML reports |
-| `config.R` | Added all tunable parameters |
-| `tests/testthat/test-utils.R` | Comprehensive utility tests |
-| `tests/testthat/test-data-validation.R` | Data validation tests |
+## Files to Delete (Safe)
 
-## Known Limitations
+These files can be safely deleted with no impact:
 
-1. **2025 Injury Data**: Shows as "missing" until nflverse releases data
+| File | Reason |
+|------|--------|
+| `.RData` | Stale session data |
+| `nul` | Empty Windows error file |
+| `NFLvsmarket_report.html` | Generated artifact |
+| `tests/test_core_math.R` | Duplicates test-utils.R |
+| `comprehensive_test_results.rds` | Regenerable artifact |
+| `model_validation_*.rds` | Regenerable artifacts |
+| `r451_compatibility_report.rds` | Regenerable artifact |
+
+---
+
+## Files to Deprecate (Safe)
+
+Mark with `# DEPRECATED:` comment and remove after 1 release:
+
+| File | Reason |
+|------|--------|
+| `r451_compatibility_fixes.R` | One-time R 4.5.1 patches applied |
+| `comprehensive_r451_test_suite.R` | One-time compat tests completed |
+
+---
+
+## Data Contract Definitions (Proposed)
+
+Create `R/contracts.R` with required columns and types:
+
+```r
+# Schedule contract
+SCHEDULE_CONTRACT <- list(
+  required = c("game_id", "season", "week", "home_team", "away_team", "gameday"),
+  types = list(game_id = "character", season = "integer", week = "integer",
+               home_team = "character", away_team = "character")
+)
+
+# Predictions contract
+PREDICTIONS_CONTRACT <- list(
+  required = c("game_id", "season", "week", "home_win_prob"),
+  types = list(game_id = "character", season = "integer", week = "integer",
+               home_win_prob = "numeric"),
+  constraints = list(home_win_prob = list(min = 0, max = 1))
+)
+```
+
+---
+
+## Known Limitations (Accepted)
+
+1. **2025 Injury Data**: May show "missing" until nflverse releases data
 2. **Neutral Site Games**: Use league-average weather conditions
 3. **New Stadiums**: May need manual coordinate additions
+4. **Calibration Leakage**: Nested CV has minimal impact; documented
 
-## Calibration Notes
+---
 
-The codebase has two isotonic calibration modes:
-- **Nested CV** (lines 5174-5235): Leave-one-week-out, leakage-free, used for production
-- **Global** (lines 5141-5168): Uses all data, marked "DIAGNOSTIC ONLY"
+## Previous Audit Summary (20 Issues)
 
-The data quality tracker records which method is in use via `update_calibration_quality()`.
+The previous audit documented 20 issues that have been addressed:
+
+| # | Issue | Status |
+|---|-------|--------|
+| 1-8 | Core utility functions | RESOLVED |
+| 9-11 | Type-safe joins | RESOLVED |
+| 12-17 | Data quality tracking | RESOLVED |
+| 18 | Config parameters | RESOLVED |
+| 19 | Test suite | NEEDS FIX (path issue) |
+| 20 | Documentation | RESOLVED |
+
+---
+
+## Appendix: Line Count Summary
+
+| Category | Files | Lines |
+|----------|-------|-------|
+| Core Engine | 4 | 13,073 |
+| R/ Library | 5 | 2,281 |
+| Validation | 11 | 6,353 |
+| Tests | 6 | ~500 |
+| Scripts | 1 | 551 |
+| **Total** | **27** | **~22,758** |
+
+---
+
+*End of Audit Report*

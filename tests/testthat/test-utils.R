@@ -1,9 +1,8 @@
 # =============================================================================
 # Tests for R/utils.R - Core Utility Functions
 # =============================================================================
-
-# Load the utilities
-source(file.path(dirname(dirname(dirname(testthat::test_path()))), "R", "utils.R"))
+# Note: R/utils.R is loaded by tests/testthat/setup.R
+# =============================================================================
 
 # =============================================================================
 # ODDS CONVERSION TESTS

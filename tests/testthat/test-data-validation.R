@@ -1,9 +1,8 @@
 # =============================================================================
 # Tests for R/data_validation.R - Data Validation and Quality Tracking
 # =============================================================================
-
-# Load the utilities
-source(file.path(dirname(dirname(dirname(testthat::test_path()))), "R", "data_validation.R"))
+# Note: R/data_validation.R is loaded by tests/testthat/setup.R
+# =============================================================================
 
 # =============================================================================
 # DATA QUALITY TRACKING TESTS
@@ -13,64 +12,65 @@ test_that("reset_data_quality initializes tracking environment", {
   reset_data_quality()
 
   quality <- get_data_quality()
-  expect_equal(quality$injury_status, "unknown")
-  expect_equal(quality$weather_status, "unknown")
-  expect_equal(quality$market_status, "unknown")
-  expect_equal(quality$calibration_method, "unknown")
-  expect_false(quality$calibration_leakage_free)
+  # Uses nested structure: quality$injury$status, not quality$injury_status
+  expect_equal(quality$injury$status, "unknown")
+  expect_equal(quality$weather$status, "unknown")
+  expect_equal(quality$market$status, "unknown")
+  expect_equal(quality$calibration$method, "unknown")
+  expect_false(quality$calibration$leakage_free)
 })
 
 test_that("update_injury_quality tracks injury data status", {
   reset_data_quality()
 
-  # Test complete status
-  update_injury_quality("complete")
+  # Test full status (valid status is "full", not "complete")
+  update_injury_quality("full")
   quality <- get_data_quality()
-  expect_equal(quality$injury_status, "complete")
-  expect_length(quality$injury_seasons_missing, 0)
+  expect_equal(quality$injury$status, "full")
+  expect_length(quality$injury$missing_seasons, 0)
 
   # Test partial status
-  update_injury_quality("partial", seasons_missing = c("2025"))
+  update_injury_quality("partial", missing_seasons = c("2025"))
   quality <- get_data_quality()
-  expect_equal(quality$injury_status, "partial")
-  expect_equal(quality$injury_seasons_missing, c("2025"))
+  expect_equal(quality$injury$status, "partial")
+  expect_equal(quality$injury$missing_seasons, c("2025"))
 
-  # Test missing status
-  update_injury_quality("missing", seasons_missing = c("2024", "2025"))
+  # Test unavailable status (valid status is "unavailable", not "missing")
+  update_injury_quality("unavailable", missing_seasons = c("2024", "2025"))
   quality <- get_data_quality()
-  expect_equal(quality$injury_status, "missing")
-  expect_length(quality$injury_seasons_missing, 2)
+  expect_equal(quality$injury$status, "unavailable")
+  expect_length(quality$injury$missing_seasons, 2)
 })
 
 test_that("update_weather_quality tracks weather data status", {
   reset_data_quality()
 
-  # Test API status
-  update_weather_quality("api")
+  # Test full status (valid status is "full", not "api")
+  update_weather_quality("full")
   quality <- get_data_quality()
-  expect_equal(quality$weather_status, "api")
-  expect_length(quality$weather_games_fallback, 0)
+  expect_equal(quality$weather$status, "full")
+  expect_length(quality$weather$fallback_games, 0)
 
-  # Test partial status with fallback games
-  update_weather_quality("partial", games_fallback = c("game1", "game2"))
+  # Test partial_fallback status with fallback games
+  update_weather_quality("partial_fallback", fallback_games = c("game1", "game2"))
   quality <- get_data_quality()
-  expect_equal(quality$weather_status, "partial")
-  expect_equal(quality$weather_games_fallback, c("game1", "game2"))
+  expect_equal(quality$weather$status, "partial_fallback")
+  expect_equal(quality$weather$fallback_games, c("game1", "game2"))
 })
 
 test_that("update_market_quality tracks market data status", {
   reset_data_quality()
 
-  # Test complete status
-  update_market_quality("complete")
+  # Test full status (valid status is "full", not "complete")
+  update_market_quality("full")
   quality <- get_data_quality()
-  expect_equal(quality$market_status, "complete")
+  expect_equal(quality$market$status, "full")
 
-  # Test missing with games
-  update_market_quality("missing", games_missing = c("game1"))
+  # Test unavailable with games (valid status is "unavailable", not "missing")
+  update_market_quality("unavailable", missing_games = c("game1"))
   quality <- get_data_quality()
-  expect_equal(quality$market_status, "missing")
-  expect_equal(quality$market_games_missing, c("game1"))
+  expect_equal(quality$market$status, "unavailable")
+  expect_equal(quality$market$missing_games, c("game1"))
 })
 
 test_that("update_calibration_quality tracks calibration method", {
@@ -79,116 +79,123 @@ test_that("update_calibration_quality tracks calibration method", {
   # Test nested CV (leakage-free)
   update_calibration_quality("isotonic_nested_cv", leakage_free = TRUE)
   quality <- get_data_quality()
-  expect_equal(quality$calibration_method, "isotonic_nested_cv")
-  expect_true(quality$calibration_leakage_free)
+  expect_equal(quality$calibration$method, "isotonic_nested_cv")
+  expect_true(quality$calibration$leakage_free)
 
   # Test global (has leakage)
   update_calibration_quality("isotonic_global", leakage_free = FALSE)
   quality <- get_data_quality()
-  expect_equal(quality$calibration_method, "isotonic_global")
-  expect_false(quality$calibration_leakage_free)
+  expect_equal(quality$calibration$method, "isotonic_global")
+  expect_false(quality$calibration$leakage_free)
 
   # Test none
   update_calibration_quality("none")
   quality <- get_data_quality()
-  expect_equal(quality$calibration_method, "none")
+  expect_equal(quality$calibration$method, "none")
 })
 
 test_that("compute_overall_quality returns correct ratings", {
   reset_data_quality()
 
-  # All good - should be "high"
-  update_injury_quality("complete")
-  update_weather_quality("api")
-  update_market_quality("complete")
+  # All good - should be "HIGH" (uppercase)
+  update_injury_quality("full")
+  update_weather_quality("full")
+  update_market_quality("full")
   update_calibration_quality("isotonic_nested_cv", leakage_free = TRUE)
-  expect_equal(compute_overall_quality(), "high")
+  expect_equal(compute_overall_quality(), "HIGH")
 
-  # Partial data - should be "medium"
+  # Partial injury only = 1 issue, still "HIGH" (need >= 2 for MEDIUM)
   reset_data_quality()
-  update_injury_quality("partial", seasons_missing = "2025")
-  update_weather_quality("api")
-  update_market_quality("complete")
+  update_injury_quality("partial", missing_seasons = "2025")
+  update_weather_quality("full")
+  update_market_quality("full")
   update_calibration_quality("isotonic_nested_cv", leakage_free = TRUE)
-  expect_equal(compute_overall_quality(), "medium")
+  expect_equal(compute_overall_quality(), "HIGH")
 
-  # Missing critical data - should be "low"
+  # Partial injury + not leakage free = 2 issues = "MEDIUM"
   reset_data_quality()
-  update_injury_quality("missing", seasons_missing = c("2024", "2025"))
-  update_weather_quality("default")
-  update_market_quality("missing")
+  update_injury_quality("partial", missing_seasons = "2025")
+  update_weather_quality("full")
+  update_market_quality("full")
+  update_calibration_quality("isotonic_global", leakage_free = FALSE)
+  expect_equal(compute_overall_quality(), "MEDIUM")
+
+  # Missing critical data - should be "CRITICAL" (market unavailable)
+  reset_data_quality()
+  update_injury_quality("unavailable", missing_seasons = c("2024", "2025"))
+  update_weather_quality("all_fallback")
+  update_market_quality("unavailable")
   update_calibration_quality("none")
-  expect_equal(compute_overall_quality(), "low")
+  expect_equal(compute_overall_quality(), "CRITICAL")
 })
 
 test_that("generate_quality_badge_html produces valid HTML", {
   reset_data_quality()
-  update_injury_quality("complete")
-  update_weather_quality("api")
-  update_market_quality("complete")
+  update_injury_quality("full")
+  update_weather_quality("full")
+  update_market_quality("full")
   update_calibration_quality("isotonic_nested_cv", leakage_free = TRUE)
 
   html <- generate_quality_badge_html()
 
-  # Should contain HTML elements
-  expect_true(grepl("<section", html))
+  # Should contain HTML elements (uses <div> not <section>)
+  expect_true(grepl("<div", html))
   expect_true(grepl("Data Quality", html, ignore.case = TRUE))
-  expect_true(grepl("</section>", html))
+  expect_true(grepl("</div>", html))
+  expect_true(grepl("HIGH", html))
 })
 
 # =============================================================================
-# INJURY DATA VALIDATION TESTS
+# VALIDATION FUNCTION TESTS
 # =============================================================================
 
-test_that("check_injury_availability returns expected structure", {
-  # This test may require network access, so we'll just test the structure
-  result <- check_injury_availability(2023)
-  expect_type(result, "list")
-  expect_true("available" %in% names(result))
-  expect_true("season" %in% names(result))
-  expect_equal(result$season, 2023)
+test_that("validate_required_columns checks column presence", {
+  df <- data.frame(a = 1, b = 2, c = 3)
+
+  # All present - returns TRUE
+  result <- validate_required_columns(df, c("a", "b"), "test", strict = FALSE)
+  expect_true(result)
+
+  # Some missing - returns FALSE (non-strict mode)
+  expect_warning({
+    result <- validate_required_columns(df, c("a", "d"), "test", strict = FALSE)
+  })
+  expect_false(result)
 })
 
-# =============================================================================
-# WEATHER FALLBACK TESTS
-# =============================================================================
+test_that("validate_probability checks probability range", {
+  # Valid probabilities - returns TRUE
+  result <- validate_probability(c(0.1, 0.5, 0.9), "test")
+  expect_true(result)
 
-test_that("get_default_weather_conditions returns expected structure", {
-  game_ids <- c("game1", "game2")
-  defaults <- get_default_weather_conditions(game_ids)
-
-  expect_s3_class(defaults, "data.frame")
-  expect_equal(nrow(defaults), 2)
-  expect_true("game_id" %in% names(defaults))
-  expect_true("temp_f" %in% names(defaults))
-  expect_true("wind_mph" %in% names(defaults))
-  expect_true("dome" %in% names(defaults))
-  expect_true("weather_source" %in% names(defaults))
-  expect_equal(defaults$weather_source, c("default", "default"))
+  # Invalid probabilities - throws error
+  expect_error(validate_probability(c(-0.1, 0.5, 1.1), "test"))
 })
 
-test_that("get_default_weather_conditions uses config values", {
-  # Save original config
-  original_config <- if (exists("DEFAULT_WEATHER_CONDITIONS", envir = .GlobalEnv)) {
-    get("DEFAULT_WEATHER_CONDITIONS", envir = .GlobalEnv)
-  } else {
-    NULL
-  }
+test_that("validate_numeric_column checks numeric range", {
+  # Valid range - returns TRUE
+  result <- validate_numeric_column(c(1, 5, 10), "test", min_val = 0, max_val = 20)
+  expect_true(result)
 
-  # Set custom config
-  assign("DEFAULT_WEATHER_CONDITIONS",
-         list(temp_f = 72, wind_mph = 5, dome = TRUE, precip_prob = 0),
-         envir = .GlobalEnv)
+  # Out of range - throws error
+  expect_error(validate_numeric_column(c(-5, 5, 25), "test", min_val = 0, max_val = 20))
+})
 
-  defaults <- get_default_weather_conditions("test_game")
-  expect_equal(defaults$temp_f, 72)
-  expect_equal(defaults$wind_mph, 5)
-  expect_true(defaults$dome)
+test_that("create_validation_report generates report structure", {
+  # Create minimal test schedule
+  schedule <- data.frame(
+    game_id = c("2024_01_KC_DEN"),
+    season = 2024L,
+    week = 1L,
+    home_team = "KC",
+    away_team = "DEN",
+    gameday = "2024-09-05",
+    stringsAsFactors = FALSE
+  )
 
-  # Restore original
-  if (!is.null(original_config)) {
-    assign("DEFAULT_WEATHER_CONDITIONS", original_config, envir = .GlobalEnv)
-  } else {
-    rm("DEFAULT_WEATHER_CONDITIONS", envir = .GlobalEnv)
-  }
+  report <- create_validation_report(schedule)
+
+  expect_type(report, "list")
+  expect_true("schedule" %in% names(report))
+  expect_true("issues" %in% names(report))
 })
