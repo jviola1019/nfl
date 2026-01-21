@@ -2524,6 +2524,47 @@ game_modifiers <- tibble(
   precip_prob = numeric()
 )
 
+# =============================================================================
+# PLAYOFF GAME TYPE MAPPING
+# =============================================================================
+# Maps week numbers to expected game_type values from nflreadr schedule data.
+# Regular season (weeks 1-18): "REG"
+# Playoffs:
+#   Week 19: "WC"  (Wild Card)
+#   Week 20: "DIV" (Divisional)
+#   Week 21: "CON" (Conference Championship)
+#   Week 22: "SB"  (Super Bowl)
+# =============================================================================
+
+.WEEK_TO_GAME_TYPE <- list(
+  `19` = "WC",
+  `20` = "DIV",
+  `21` = "CON",
+  `22` = "SB"
+)
+
+#' Get expected game_type for a given week
+#' @param week Week number (1-22)
+#' @return Expected game_type string ("REG", "WC", "DIV", "CON", or "SB")
+get_expected_game_type <- function(week) {
+  week <- as.integer(week)
+  if (is.na(week) || week < 1 || week > 22) {
+    return(NA_character_)
+  }
+  if (week <= 18) {
+    return("REG")
+  }
+  .WEEK_TO_GAME_TYPE[[as.character(week)]]
+}
+
+#' Check if a week is a playoff week
+#' @param week Week number
+#' @return TRUE if playoff week (19-22), FALSE otherwise
+is_playoff_week_sim <- function(week) {
+  week <- as.integer(week)
+  !is.na(week) && week >= 19 && week <= 22
+}
+
 # ------------------------ DATA LOAD -------------------------------------------
 seasons_hfa <- (SEASON - 9):(SEASON - 0)
 sched <- load_schedules(seasons = seasons_hfa) |>
@@ -2609,8 +2650,13 @@ sched <- sched %>%
   )
 
 
+# Determine expected game_type for this week (REG for regular season, playoff codes for weeks 19-22)
+.expected_game_type <- get_expected_game_type(WEEK_TO_SIM)
+message(sprintf("Filtering schedule for Season %d, Week %d, game_type = '%s'",
+                SEASON, WEEK_TO_SIM, .expected_game_type))
+
 week_slate <- sched %>%
-  filter(season_std == SEASON, week_std == WEEK_TO_SIM, game_type_std == "REG") %>%
+  filter(season_std == SEASON, week_std == WEEK_TO_SIM, game_type_std == .expected_game_type) %>%
   transmute(
     game_id,
     season = season_std,
@@ -2921,7 +2967,42 @@ travel_tbl <- week_slate %>%
   ) %>%
   dplyr::select(game_id, travel_mu_adj_home, travel_mu_adj_away)
 
-if (nrow(week_slate) == 0) stop(sprintf("No games found for %s Wk %s.", SEASON, WEEK_TO_SIM))
+# Enhanced error handling when no games found
+if (nrow(week_slate) == 0) {
+  # Find available weeks in the schedule for this season
+  available_weeks <- sched %>%
+    dplyr::filter(season_std == SEASON) %>%
+    dplyr::distinct(week_std, game_type_std) %>%
+    dplyr::arrange(week_std)
+
+  # Build informative error message
+  week_info <- if (nrow(available_weeks) > 0) {
+    paste(sprintf("  Week %d (%s)", available_weeks$week_std, available_weeks$game_type_std),
+          collapse = "\n")
+  } else {
+    "  (No weeks found for this season)"
+  }
+
+  # Get expected game type for clarity
+  expected_type <- get_expected_game_type(WEEK_TO_SIM)
+
+  stop(paste0(
+    "\n============================================================\n",
+    sprintf("NO GAMES FOUND for Season %d, Week %d\n", SEASON, WEEK_TO_SIM),
+    "============================================================\n",
+    sprintf("Expected game_type: '%s'\n\n", expected_type),
+    "This could mean:\n",
+    "  1. The week hasn't been played yet (check if games are scheduled)\n",
+    "  2. Wrong season/week combination\n",
+    "  3. Data not yet available from nflreadr\n\n",
+    sprintf("Available weeks in %d schedule:\n%s\n\n", SEASON, week_info),
+    "To fix:\n",
+    "  - Change WEEK_TO_SIM in config.R to an available week\n",
+    "  - Or run: Rscript run_week.R <week> <season>\n",
+    "============================================================"),
+    call. = FALSE
+  )
+}
 
 teams_on_slate <- sort(unique(c(week_slate$home_team, week_slate$away_team)))
 
