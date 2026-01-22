@@ -12,9 +12,10 @@ PROB_EPSILON <- 1e-9
 #' @title Join Key Aliases
 #' @description Canonical names and their common aliases for join operations
 JOIN_KEY_ALIASES <- list(
- game_id = c("game_id", "gameid", "gameId", "gid"),
-  season  = c("season", "season_std", "Season", "season_year", "seasonYear", "year"),
-  week    = c("week", "week_std", "Week", "game_week", "gameWeek", "gameday_week", "wk")
+  game_id   = c("game_id", "gameid", "gameId", "gid"),
+  season    = c("season", "season_std", "Season", "season_year", "seasonYear", "year"),
+  week      = c("week", "week_std", "Week", "game_week", "gameWeek", "gameday_week", "wk"),
+  game_type = c("game_type", "gameType", "type", "game_phase")
 )
 
 #' @title Prediction Join Keys
@@ -226,6 +227,7 @@ accuracy <- function(pred_prob, actual_outcome, threshold = 0.5) {
 #'   - game_id: character
 #'   - season: integer
 #'   - week: integer
+#'   - game_type: character (REG, POST, WC, DIV, CON, SB)
 #' @param df Data frame to standardize
 #' @param key_alias List mapping canonical names to aliases
 #' @return Data frame with standardized, typed join keys
@@ -256,6 +258,9 @@ standardize_join_keys <- function(df, key_alias = JOIN_KEY_ALIASES) {
   }
   if ("week" %in% names(out)) {
     out$week <- as.integer(out$week)
+  }
+  if ("game_type" %in% names(out)) {
+    out$game_type <- as.character(out$game_type)
   }
 
   out

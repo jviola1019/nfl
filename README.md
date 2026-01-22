@@ -4,7 +4,7 @@
 
 A production-ready statistical model for predicting NFL game outcomes using Monte Carlo simulation and data-driven analysis.
 
-**Version**: 2.5
+**Version**: 2.6
 **R Version Required**: 4.3.0+ (tested on 4.5.1)
 **Status**: Production-Ready
 
@@ -347,7 +347,7 @@ This model is built on publicly available NFL data from the nflverse project. Al
 
 ## Updates & Maintenance
 
-**Current Version**: 2.5 (January 2026)
+**Current Version**: 2.6 (January 2026)
 
 **Recent fixes (v2.5)**:
 - Fixed data quality API mismatches in NFLsimulation.R and verify_requirements.R

@@ -287,5 +287,5 @@ Rscript -e "source('run_week.R')"
 
 ---
 
-*Last updated: 2026-01-21*
-*Version: 2.4.1*
+*Last updated: 2026-01-22*
+*Version: 2.6.0*

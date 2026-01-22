@@ -9,6 +9,7 @@ local({
   utils_path <- file.path(base_path, "utils.R")
   validation_path <- file.path(base_path, "data_validation.R")
   logging_path <- file.path(base_path, "logging.R")
+  playoffs_path <- file.path(base_path, "playoffs.R")
 
   if (file.exists(utils_path)) {
     tryCatch(source(utils_path), error = function(e) {
@@ -23,6 +24,11 @@ local({
   if (file.exists(logging_path)) {
     tryCatch(source(logging_path), error = function(e) {
       message(sprintf("Note: Could not source R/logging.R: %s", conditionMessage(e)))
+    })
+  }
+  if (file.exists(playoffs_path)) {
+    tryCatch(source(playoffs_path), error = function(e) {
+      message(sprintf("Note: Could not source R/playoffs.R: %s", conditionMessage(e)))
     })
   }
 })
@@ -2298,6 +2304,7 @@ score_cache_key <- function(start_season, end_season, weeks, trials, seed, rho) 
 calib_cache_key <- function(season, n_years, halflife, use_sos, sos_pow, trials, rho, seed){
   digest::digest(list(
     tag = "calib_sim_df_nb",
+    version = 2L,  # v2: includes playoff games (WC/DIV/CON/SB) in calibration
     season = season,
     n_years = n_years,
     halflife = halflife,
@@ -2654,6 +2661,15 @@ sched <- sched %>%
 .expected_game_type <- get_expected_game_type(WEEK_TO_SIM)
 message(sprintf("Filtering schedule for Season %d, Week %d, game_type = '%s'",
                 SEASON, WEEK_TO_SIM, .expected_game_type))
+
+# Log playoff mode notice
+if (is_playoff_week_sim(WEEK_TO_SIM)) {
+  message("═══════════════════════════════════════════════════════════════")
+  message("🏈 PLAYOFF MODE ACTIVE")
+  message("   Calibration includes historical playoff games for better accuracy.")
+  message("   Note: Playoff sample size is smaller than regular season.")
+  message("═══════════════════════════════════════════════════════════════")
+}
 
 week_slate <- sched %>%
   filter(season_std == SEASON, week_std == WEEK_TO_SIM, game_type_std == .expected_game_type) %>%
@@ -4278,14 +4294,27 @@ games_ready <- games_ready %>%
 # --- Manual HFA (team-specific; use your 5-year shrinked/capped estimate) ---
 # If you already built a per-team HFA table elsewhere, join it here as `home_hfa_pts`.
 # For now, reuse league_hfa as a fallback and add DEN altitude flavor already in hfa_tbl.
+# FIX: Apply playoff HFA multiplier when in playoff mode
+.playoff_hfa_mult <- if (exists("get_playoff_hfa_multiplier", mode = "function") && is_playoff_week_sim(WEEK_TO_SIM)) {
+  round_name <- derive_playoff_round_from_week(WEEK_TO_SIM)
+  get_playoff_hfa_multiplier(round_name)
+} else {
+  1.0
+}
+
 games_ready <- games_ready %>%
   mutate(
     HFA_pts = coalesce(home_hfa, league_hfa),  # if you have team-specific, prefer that
+    HFA_pts = HFA_pts * .playoff_hfa_mult,     # Apply playoff multiplier
     HFA_pts = pmin(pmax(HFA_pts, -6), 6)       # cap at +/-6
   ) %>%
   mutate(
     mu_home = pmax(mu_home + HFA_pts, 0)
   )
+
+if (.playoff_hfa_mult != 1.0) {
+  message(sprintf("🏈 Playoff HFA adjustment: %.0f%% boost applied", (.playoff_hfa_mult - 1) * 100))
+}
 
 # NA-proofing and sensible bounds (light touch)
 games_ready <- games_ready |>
@@ -5170,18 +5199,21 @@ if (file.exists(.calib_path)) {
   calib_sim_df <- readRDS(.calib_path)
 } else {
   # (optional) parallel on Unix/macOS; harmless single-core on Windows
+  # FIX: Include playoff games in calibration (WC/DIV/CON/SB) for playoff mode support
+  .calib_game_types <- c("REG", "WC", "DIV", "CON", "SB")
   weeks_by_season <- lapply(calib_seasons, function(s){
-    sort(unique(sched$week[sched$season == s & sched$game_type == "REG"]))
+    sort(unique(sched$week[sched$season == s & sched$game_type %in% .calib_game_types]))
   })
   names(weeks_by_season) <- calib_seasons
 
   # sequential fallback
   build_one <- function(s, w){
     result <- week_inputs_and_sim_2w(s, w, CALIB_TRIALS)
-    # Add season and week columns for fold identification
+    # Add season, week, and game_type columns for fold identification and tracking
     if (is.data.frame(result) && nrow(result) > 0) {
       result$season <- s
       result$week <- w
+      result$game_type <- get_expected_game_type(w)  # Track game type for calibration diagnostics
     }
     result
   }
@@ -5192,7 +5224,8 @@ if (file.exists(.calib_path)) {
     wks <- weeks_by_season[[as.character(s0)]]
     for (wk in wks) {
       idx <- idx + 1L
-      message(sprintf("Calibrating: season %d week %d ...", s0, wk))
+      gt <- get_expected_game_type(wk)
+      message(sprintf("Calibrating: season %d week %d (%s)...", s0, wk, gt))
       out[[idx]] <- build_one(s0, wk)
       flush.console()
     }
@@ -5202,8 +5235,15 @@ if (file.exists(.calib_path)) {
     dplyr::filter(!is.na(y_home), is.finite(p_home_2w_sim)) %>%
     dplyr::mutate(
       # Create fold ID for leave-one-week-out CV (season_week identifier)
-      fold_id = paste0(season, "_", week)
+      fold_id = paste0(season, "_", week),
+      # Track playoff vs regular season for diagnostics
+      is_playoff = week >= 19
     )
+
+  # Log calibration composition
+  n_reg <- sum(calib_sim_df$game_type == "REG", na.rm = TRUE)
+  n_playoff <- sum(calib_sim_df$is_playoff, na.rm = TRUE)
+  message(sprintf("Calibration data: %d regular season games, %d playoff games", n_reg, n_playoff))
 
   saveRDS(calib_sim_df, .calib_path)
 }
@@ -5352,14 +5392,26 @@ if (!nrow(calib_sim_df)) {
   message("─────────────────────────────────────────────────────────────────")
 
   # Store calibration diagnostics for later analysis
+  # Track playoff game inclusion for calibration quality reporting
+  n_reg_games <- if ("is_playoff" %in% names(calib_sim_df)) sum(!calib_sim_df$is_playoff, na.rm = TRUE) else nrow(calib_sim_df)
+  n_playoff_games <- if ("is_playoff" %in% names(calib_sim_df)) sum(calib_sim_df$is_playoff, na.rm = TRUE) else 0L
+
   calibration_diagnostics <- list(
     n_folds = length(unique_folds),
     n_games = nrow(calib_sim_df),
+    n_regular_season = n_reg_games,
+    n_playoff = n_playoff_games,
+    includes_playoffs = n_playoff_games > 0,
     brier_uncalibrated = brier_uncalibrated,
     brier_global = brier_global,
     brier_nested = brier_nested,
     nested_improvement_pct = 100 * (brier_global - brier_nested) / brier_global
   )
+
+  if (n_playoff_games > 0) {
+    message(sprintf("📊 Calibration includes %d playoff games (%d regular season)",
+                    n_playoff_games, n_reg_games))
+  }
 
   # USE NESTED CV MAPPING BY DEFAULT (no data leakage)
   message("✅ Using nested CV isotonic calibration (leave-one-week-out, no leakage)")
@@ -7416,6 +7468,26 @@ if (!is.null(fit_deploy)) {
 # 3) Isotonic-correct the blended prob (if we trained the map)
 final$home_p_2w_blend_raw <- if (!is.null(map_blend)) map_blend(p_raw) else p_raw
 
+# FIX: Apply playoff-specific shrinkage (more market trust in playoffs)
+if (exists("get_playoff_shrinkage", mode = "function") && is_playoff_week_sim(WEEK_TO_SIM)) {
+  round_name <- derive_playoff_round_from_week(WEEK_TO_SIM)
+  playoff_shrinkage <- get_playoff_shrinkage(round_name)
+  default_shrinkage <- 0.60  # Regular season default
+
+  # Only adjust if playoff shrinkage is higher (more market trust)
+  if (!is.na(playoff_shrinkage) && playoff_shrinkage > default_shrinkage) {
+    extra_market_weight <- playoff_shrinkage - default_shrinkage
+    mask <- is.finite(final$home_p_2w_mkt)
+    if (any(mask)) {
+      # Blend more toward market for playoffs
+      final$home_p_2w_blend_raw[mask] <- (1 - extra_market_weight) * final$home_p_2w_blend_raw[mask] +
+                                          extra_market_weight * final$home_p_2w_mkt[mask]
+      message(sprintf("🏈 Playoff shrinkage: +%.0f%% extra market weight applied (%.0f%% total)",
+                      extra_market_weight * 100, playoff_shrinkage * 100))
+    }
+  }
+}
+
 final <- final %>%
   dplyr::mutate(
     home_p_2w_blend = align_blend_with_margin(
@@ -7457,6 +7529,33 @@ final <- final %>%
 
 
 message("Blend (ridge+iso) added: home_p_2w_blend/home_win_prob_blend/away_win_prob_blend")
+
+# ---- Output validation: Check for implausible probabilities ----
+if (nrow(final) > 0) {
+  extreme_probs <- final %>%
+    dplyr::filter(home_p_2w_blend > 0.90 | home_p_2w_blend < 0.10)
+
+  if (nrow(extreme_probs) > 0) {
+    warning(sprintf(
+      "⚠️ %d game(s) have extreme probabilities (>90%% or <10%%). ",
+      nrow(extreme_probs)
+    ))
+    for (i in seq_len(min(nrow(extreme_probs), 3))) {
+      message(sprintf("   - %s vs %s: Home %.1f%%",
+                      extreme_probs$home_team[i],
+                      extreme_probs$away_team[i],
+                      extreme_probs$home_p_2w_blend[i] * 100))
+    }
+    message("   Review model inputs if these seem unrealistic for playoff games.")
+  }
+
+  na_probs <- sum(is.na(final$home_p_2w_blend) | !is.finite(final$home_p_2w_blend))
+  if (na_probs > 0) {
+    warning(sprintf("⚠️ %d game(s) have NA/Inf blend probabilities. Falling back to model prob.",
+                    na_probs))
+    final$home_p_2w_blend <- dplyr::coalesce(final$home_p_2w_blend, final$home_p_2w_model)
+  }
+}
 # ---- END deployment ridge+isotonic block ----
 
 # Prepare snapshot for the current slate's moneyline report before kicking off

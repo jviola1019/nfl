@@ -2,6 +2,45 @@
 
 All notable changes to the NFL Prediction Model are documented in this file.
 
+## [2.6.0] - 2026-01-22
+
+### Playoff Mode Enhancements
+
+**Calibration Improvements (NFLsimulation.R)**
+- Calibration now includes playoff games (WC/DIV/CON/SB) in addition to regular season
+- Added `is_playoff` and `game_type` tracking to calibration data
+- Cache version bumped to v2 to invalidate old regular-season-only caches
+- Calibration diagnostics now report playoff vs regular season game counts
+
+**Playoff Adjustments Applied**
+- R/playoffs.R now sourced in NFLsimulation.R for playoff-specific features
+- Home Field Advantage multiplier applied for playoff weeks (15-25% boost)
+- Playoff-specific market shrinkage applied (extra 5-15% market trust)
+- Output validation warns about extreme probabilities (>90% or <10%)
+
+**Join Key Improvements (R/utils.R)**
+- Added `game_type` to `JOIN_KEY_ALIASES` for reliable playoff/regular season filtering
+- `standardize_join_keys()` now coerces `game_type` to character type
+- `PREDICTION_JOIN_KEYS` now includes `game_type`
+
+**Configuration Validation (config.R)**
+- Added `.validate_config()` function that runs at config load time
+- Validates: WEEK_TO_SIM (1-22), SEASON (2002-current+1), N_TRIALS (>=1000), SHRINKAGE (0-1), KELLY_FRACTION (0-0.5)
+- Clear error messages for invalid configuration
+
+**Bug Fixes**
+- Fixed R/date_resolver.R: `phase = "offseason"` instead of `NA_character_` for empty boundaries
+- Fixed R/date_resolver.R: Added `suppressWarnings()` to `min()/max()` on empty groups
+- Test suite: 0 failures, 0 warnings, 6 skips (acceptable), 317 passes
+
+### Test Results
+
+After v2.6 fixes:
+- **Test suite**: 317 passed, 0 fail, 0 warnings, 6 skipped
+- **R 4.5.1 compatibility**: Verified
+
+---
+
 ## [2.5.0] - 2026-01-21
 
 ### Critical API Fixes

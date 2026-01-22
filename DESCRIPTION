@@ -1,6 +1,6 @@
 Package: nflpredict
 Title: NFL Game Prediction Model
-Version: 2.4.1
+Version: 2.6.0
 Authors@R: person("Data Analyst", email = "analyst@example.com", role = c("aut", "cre"))
 Description: A comprehensive NFL game prediction model using Monte Carlo simulation,
     Gaussian copula correlation, isotonic regression calibration, and Kelly staking.

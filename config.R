@@ -547,6 +547,64 @@ if (getRversion() >= "4.5.0") {
 set.seed(SEED)
 
 # =============================================================================
+# CONFIGURATION VALIDATION
+# =============================================================================
+# Validates critical parameters to catch common configuration errors early
+
+.validate_config <- function() {
+  errors <- character(0)
+  warnings <- character(0)
+
+  # WEEK_TO_SIM validation
+  if (!is.numeric(WEEK_TO_SIM) || WEEK_TO_SIM < 1 || WEEK_TO_SIM > 22) {
+    errors <- c(errors, sprintf("WEEK_TO_SIM=%s is invalid. Must be 1-22.", WEEK_TO_SIM))
+  }
+
+  # SEASON validation
+  current_year <- as.integer(format(Sys.Date(), "%Y"))
+  if (!is.numeric(SEASON) || SEASON < 2002 || SEASON > current_year + 1) {
+    errors <- c(errors, sprintf("SEASON=%s is invalid. Must be 2002-%d.", SEASON, current_year + 1))
+  }
+
+  # N_TRIALS validation
+  if (!is.numeric(N_TRIALS) || N_TRIALS < 1000) {
+    errors <- c(errors, sprintf("N_TRIALS=%s is too low. Minimum 1000 recommended.", N_TRIALS))
+  }
+  if (N_TRIALS > 1000000) {
+    warnings <- c(warnings, sprintf("N_TRIALS=%s is very high. May be slow.", format(N_TRIALS, big.mark = ",")))
+  }
+
+  # SHRINKAGE validation
+  if (!is.numeric(SHRINKAGE) || SHRINKAGE < 0 || SHRINKAGE > 1) {
+    errors <- c(errors, sprintf("SHRINKAGE=%s is invalid. Must be 0-1.", SHRINKAGE))
+  }
+
+  # KELLY_FRACTION validation
+  if (!is.numeric(KELLY_FRACTION) || KELLY_FRACTION <= 0 || KELLY_FRACTION > 0.5) {
+    errors <- c(errors, sprintf("KELLY_FRACTION=%s is invalid. Must be (0, 0.5].", KELLY_FRACTION))
+  }
+
+  # SEED validation
+  if (!is.numeric(SEED) || SEED < 1) {
+    errors <- c(errors, sprintf("SEED=%s is invalid. Must be positive integer.", SEED))
+  }
+
+  # Report results
+  if (length(warnings) > 0) {
+    for (w in warnings) warning(w, call. = FALSE)
+  }
+  if (length(errors) > 0) {
+    for (e in errors) message("CONFIG ERROR: ", e)
+    stop("Configuration validation failed. Fix errors above.", call. = FALSE)
+  }
+
+  invisible(TRUE)
+}
+
+# Run validation
+.validate_config()
+
+# =============================================================================
 # CONFIGURATION SUMMARY
 # =============================================================================
 
