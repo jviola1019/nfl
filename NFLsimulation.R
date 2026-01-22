@@ -3139,13 +3139,15 @@ safe_load_injuries <- function(seasons, prefer_fast = TRUE, ...) {
   }
 
   # Update data quality tracking
+  # Valid statuses: "full", "partial", "unavailable"
+  # Parameter name: missing_seasons (not seasons_missing)
   if (exists("update_injury_quality", mode = "function")) {
     if (nrow(injuries) == 0) {
-      update_injury_quality("missing", seasons_missing = as.character(seasons))
+      update_injury_quality("unavailable", missing_seasons = as.character(seasons))
     } else if (length(missing)) {
-      update_injury_quality("partial", seasons_missing = as.character(missing))
+      update_injury_quality("partial", missing_seasons = as.character(missing))
     } else {
-      update_injury_quality("complete")
+      update_injury_quality("full")
     }
   }
 
@@ -3956,15 +3958,17 @@ if (isTRUE(warn_stadium_fallback) && length(.stadium_fallback_games) > 0 && !.st
 }
 
 # Update data quality tracking for weather
+# Valid statuses: "full", "partial_fallback", "all_fallback"
+# Parameter name: fallback_games (not games_fallback)
 if (exists("update_weather_quality", mode = "function")) {
   total_games <- nrow(weather_inputs)
   fallback_count <- length(.stadium_fallback_games)
   if (fallback_count == 0) {
-    update_weather_quality("api", games_fallback = character(0))
+    update_weather_quality("full", fallback_games = character(0))
   } else if (fallback_count < total_games) {
-    update_weather_quality("partial", games_fallback = .stadium_fallback_games)
+    update_weather_quality("partial_fallback", fallback_games = .stadium_fallback_games)
   } else {
-    update_weather_quality("default", games_fallback = .stadium_fallback_games)
+    update_weather_quality("all_fallback", fallback_games = .stadium_fallback_games)
   }
 }
 

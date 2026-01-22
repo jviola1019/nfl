@@ -36,6 +36,13 @@ skip <- function(test_name, reason = "") {
 }
 
 # =============================================================================
+# Load required packages
+# =============================================================================
+suppressPackageStartupMessages({
+  library(dplyr)
+})
+
+# =============================================================================
 # ISSUE 1: R/utils.R exists and contains canonical functions
 # =============================================================================
 cat("--- Issue 1: Canonical utils.R module ---\n")
@@ -343,16 +350,17 @@ if (exists("reset_data_quality", mode = "function")) {
   reset_data_quality()
   quality <- get_data_quality()
 
-  if (quality$injury_status == "unknown" && quality$weather_status == "unknown") {
+  # Uses nested structure: quality$injury$status (not quality$injury_status)
+  if (identical(quality$injury$status, "unknown") && identical(quality$weather$status, "unknown")) {
     pass("reset_data_quality initializes tracking")
   } else {
     fail("reset_data_quality initialization")
   }
 
-  # Test update functions
-  update_injury_quality("complete")
+  # Test update functions (valid status is "full", not "complete")
+  update_injury_quality("full")
   quality <- get_data_quality()
-  if (quality$injury_status == "complete") {
+  if (identical(quality$injury$status, "full")) {
     pass("update_injury_quality tracking works")
   } else {
     fail("update_injury_quality tracking")
@@ -367,30 +375,31 @@ if (exists("reset_data_quality", mode = "function")) {
 cat("\n--- Issue 14: Overall quality computation ---\n")
 if (exists("compute_overall_quality", mode = "function")) {
   reset_data_quality()
-  update_injury_quality("complete")
-  update_weather_quality("api")
-  update_market_quality("complete")
+  # Valid statuses: injury/market = "full"/"partial"/"unavailable", weather = "full"/"partial_fallback"/"all_fallback"
+  update_injury_quality("full")
+  update_weather_quality("full")
+  update_market_quality("full")
   update_calibration_quality("isotonic_nested_cv", leakage_free = TRUE)
 
   overall <- compute_overall_quality()
-  if (overall == "high") {
-    pass("compute_overall_quality returns 'high' for complete data")
+  if (identical(overall, "HIGH")) {
+    pass("compute_overall_quality returns 'HIGH' for complete data")
   } else {
     fail("compute_overall_quality high rating", sprintf("got '%s'", overall))
   }
 
-  # Test degraded quality
+  # Test degraded quality (market unavailable = CRITICAL)
   reset_data_quality()
-  update_injury_quality("missing", seasons_missing = c("2024", "2025"))
-  update_weather_quality("default")
-  update_market_quality("missing")
+  update_injury_quality("unavailable", missing_seasons = c("2024", "2025"))
+  update_weather_quality("all_fallback")
+  update_market_quality("unavailable")
   update_calibration_quality("none")
 
   overall <- compute_overall_quality()
-  if (overall == "low") {
-    pass("compute_overall_quality returns 'low' for degraded data")
+  if (identical(overall, "CRITICAL")) {
+    pass("compute_overall_quality returns 'CRITICAL' for degraded data")
   } else {
-    fail("compute_overall_quality low rating")
+    fail("compute_overall_quality critical rating", sprintf("got '%s'", overall))
   }
 } else {
   skip("Overall quality computation", "compute_overall_quality not defined")
@@ -402,14 +411,15 @@ if (exists("compute_overall_quality", mode = "function")) {
 cat("\n--- Issue 15: HTML badge generation ---\n")
 if (exists("generate_quality_badge_html", mode = "function")) {
   reset_data_quality()
-  update_injury_quality("complete")
-  update_weather_quality("api")
-  update_market_quality("complete")
+  update_injury_quality("full")
+  update_weather_quality("full")
+  update_market_quality("full")
   update_calibration_quality("isotonic_nested_cv", leakage_free = TRUE)
 
   html <- generate_quality_badge_html()
 
-  if (grepl("<section", html) && grepl("Data Quality", html, ignore.case = TRUE)) {
+  # Note: generate_quality_badge_html uses <div>, not <section>
+  if (grepl("<div", html) && grepl("Data Quality", html, ignore.case = TRUE)) {
     pass("generate_quality_badge_html produces valid HTML")
   } else {
     fail("generate_quality_badge_html HTML structure")

@@ -4,7 +4,7 @@
 
 A production-ready statistical model for predicting NFL game outcomes using Monte Carlo simulation and data-driven analysis.
 
-**Version**: 2.4
+**Version**: 2.5
 **R Version Required**: 4.3.0+ (tested on 4.5.1)
 **Status**: Production-Ready
 
@@ -174,44 +174,115 @@ See [DOCUMENTATION.md](DOCUMENTATION.md) for complete validation methodology.
 **Common issues and detailed troubleshooting**: See **[GETTING_STARTED.md](GETTING_STARTED.md#troubleshooting)**
 
 **Quick fixes**:
-- `"could not find function 'year'"`: Install lubridate → `install.packages("lubridate")`
-- `"object 'season' not found"`: Fixed in current version (v2.0)
+- `"could not find function 'year'"`: Run `install.packages("lubridate")`
+- `"could not find function '%>%'"`: Run `install.packages("dplyr")`
+- `"unused argument (seasons_missing)"`: Update to v2.5 - API fixed
 - No predictions: Check `WEEK_TO_SIM` and `SEASON` in config.R
+- Tests fail with path errors: Ensure `tests/testthat/setup.R` exists
+
+**Verify Repository Integrity**:
+```bash
+Rscript scripts/verify_repo_integrity.R  # Should show 35/35 passed
+Rscript scripts/run_matrix.R             # Should show 9/9 passed
+```
 
 ---
 
-## File Structure
+## Complete File Inventory
 
-### Core Files (Run These)
-- **`run_week.R`** - Main entry point for weekly analysis (recommended)
-- **`config.R`** - All model parameters and settings
-- **`NFLsimulation.R`** - Main prediction engine
-- **`NFLmarket.R`** - Market comparison and betting analysis utilities
-- **`NFLbrier_logloss.R`** - Model evaluation metrics
-- **`injury_scalp.R`** - Injury data loading with multiple fallback sources
+### Entry Points (Run These)
+| File | Purpose |
+|------|---------|
+| `run_week.R` | **PRIMARY ENTRYPOINT** - Weekly prediction pipeline |
+| `config.R` | All tunable parameters (SEASON, WEEK, N_TRIALS, etc.) |
 
-### Environment & CI
-- **`renv.lock`** - Package versions for reproducibility
-- **`renv/`** - renv configuration (library excluded from git)
-- **`.github/workflows/ci.yml`** - GitHub Actions CI workflow
-- **`.gitignore`** - Git ignore rules
+### Core Engine (7,800+ lines each)
+| File | Purpose |
+|------|---------|
+| `NFLsimulation.R` | Monte Carlo simulation engine (~7,800 lines) |
+| `NFLmarket.R` | Market comparison and HTML report generation (~3,900 lines) |
+| `NFLbrier_logloss.R` | Brier score, log loss, calibration metrics (~1,150 lines) |
+| `injury_scalp.R` | Injury data loading with fallback sources |
 
-### Validation Files (Test Model Performance)
-- **`validation_pipeline.R`** - Hyperparameter tuning and cross-validation
-- **`model_validation.R`** - Statistical significance testing
-- **`injury_model_validation.R`** - Injury impact validation
-- **`professional_model_benchmarking.R`** - Compare to FiveThirtyEight/ESPN
-- **`calibration_refinement.R`** - Probability calibration analysis
+### R Package Modules (`R/`)
+| File | Purpose |
+|------|---------|
+| `R/utils.R` | **CANONICAL** - Core utilities (clamp, odds, Kelly, shrinkage) |
+| `R/logging.R` | Structured logging (log_info, log_warn, log_error) |
+| `R/data_validation.R` | Data quality tracking and validation |
+| `R/playoffs.R` | Playoff round detection and game type handling |
+| `R/date_resolver.R` | Timezone-safe datetime parsing |
+
+### Verification Scripts (`scripts/`)
+| File | Purpose |
+|------|---------|
+| `scripts/verify_repo_integrity.R` | Schema + invariant verification (35 checks) |
+| `scripts/verify_requirements.R` | Package dependency validation |
+| `scripts/run_matrix.R` | Execute all artifacts, record PASS/FAIL |
+
+### Test Suite (`tests/testthat/`)
+| File | Purpose |
+|------|---------|
+| `tests/testthat/setup.R` | Test infrastructure - loads R/ modules |
+| `tests/testthat/test-utils.R` | Tests for R/utils.R functions |
+| `tests/testthat/test-data-validation.R` | Tests for data quality tracking |
+| `tests/testthat/test-playoffs.R` | Tests for playoff detection |
+| `tests/testthat/test-date-resolver.R` | Tests for datetime parsing |
+| `tests/testthat/test-game-type-mapping.R` | Tests for game type constants |
+
+### Validation Scripts (Model Testing)
+| File | Purpose |
+|------|---------|
+| `validation_pipeline.R` | Hyperparameter tuning with cross-validation |
+| `model_validation.R` | Statistical significance testing |
+| `injury_model_validation.R` | Validate injury impact coefficients |
+| `professional_model_benchmarking.R` | Compare to FiveThirtyEight/ESPN |
+| `calibration_refinement.R` | Isotonic regression tuning |
+| `rolling_validation_system.R` | Rolling window backtesting |
+| `rolling_window_validation.R` | Time-series validation |
+| `ensemble_calibration_implementation.R` | Multi-method calibration |
+| `simplified_baseline_comparison.R` | Baseline model comparisons |
+| `lasso_feature_selection.R` | Feature importance via LASSO |
+| `run_validation_example.R` | Example validation run |
+| `validation/playoffs_validation.R` | Playoff-specific validation |
+
+### Utility Scripts
+| File | Purpose |
+|------|---------|
+| `r451_compatibility_fixes.R` | R 4.5.1 compatibility patches |
+| `final_verification_checklist.R` | Pre-deployment verification |
+| `comprehensive_code_validation.R` | Code quality checks |
+| `comprehensive_r451_test_suite.R` | R version compatibility tests |
+| `production_deployment_checklist.R` | Production readiness checks |
 
 ### Documentation
-- **`README.md`** - This file (project overview)
-- **`GETTING_STARTED.md`** - Beginner guide for RStudio and VS Code
-- **`DOCUMENTATION.md`** - Complete technical reference and validation methodology
-- **`CLAUDE.md`** - Context file for Claude Code sessions
+| File | Purpose |
+|------|---------|
+| `README.md` | This file - project overview |
+| `GETTING_STARTED.md` | IDE setup guide (RStudio + VS Code) |
+| `DOCUMENTATION.md` | Complete technical methodology |
+| `CLAUDE.md` | **AUTHORITATIVE** - Agent context and API reference |
+| `CHANGELOG.md` | Version history and fixes |
+| `AUDIT.md` | File classification and inventory |
 
-### Utility Files
-- **`r451_compatibility_fixes.R`** - R 4.5.1 compatibility patches
-- **`final_verification_checklist.R`** - Pre-deployment checks
+### Configuration & Environment
+| File | Purpose |
+|------|---------|
+| `DESCRIPTION` | R package metadata |
+| `renv.lock` | Package versions for reproducibility |
+| `renv/` | renv configuration (library excluded from git) |
+| `.lintr` | lintr configuration (120 char lines) |
+| `.gitignore` | Git ignore rules |
+| `.github/workflows/ci.yml` | GitHub Actions CI workflow |
+| `.vscode/settings.json` | VS Code R extension settings |
+| `.vscode/launch.json` | VS Code debug configuration |
+
+### Generated Outputs (gitignored)
+| Directory | Purpose |
+|-----------|---------|
+| `run_logs/` | Execution logs from run_matrix.R |
+| `reports/` | Generated HTML reports |
+| `*.rds` | Cached validation results |
 
 ---
 
@@ -276,16 +347,24 @@ This model is built on publicly available NFL data from the nflverse project. Al
 
 ## Updates & Maintenance
 
-**Current Version**: 2.4 (January 2026)
+**Current Version**: 2.5 (January 2026)
 
-**Recent fixes (v2.4)**:
+**Recent fixes (v2.5)**:
+- Fixed data quality API mismatches in NFLsimulation.R and verify_requirements.R
+- Corrected parameter names: `missing_seasons` (not `seasons_missing`), `fallback_games` (not `games_fallback`)
+- Corrected status values: `"full"` (not `"complete"`), `"unavailable"` (not `"missing"`)
+- Created `tests/testthat/setup.R` for proper test path resolution
+- Created `scripts/verify_repo_integrity.R` with 35 schema+invariant checks
+- Created `scripts/run_matrix.R` to execute all artifacts with PASS/FAIL tracking
+- Fixed `R/date_resolver.R` vectorization bugs
+- Updated `CLAUDE.md` as authoritative agent guide with API reference
+
+**Previous fixes (v2.4)**:
 - Fixed kickoff_local timezone bug with `safe_with_tz()` helper
 - Consolidated R utility functions into `R/utils.R` (canonical source of truth)
 - Added type-safe joins via `standardize_join_keys()` with proper type coercion
 - Created `R/logging.R` for structured logging
 - Created `R/data_validation.R` for centralized data validation
-- Added comprehensive test suite in `tests/testthat/`
-- Streamlined documentation to 3 files (README, GETTING_STARTED, DOCUMENTATION)
 
 **Previous fixes (v2.3)**:
 - Fixed division-by-zero in devig_2way() and Kelly calculations

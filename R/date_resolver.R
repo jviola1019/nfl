@@ -244,11 +244,13 @@ get_week_boundaries <- function(schedule) {
     dplyr::filter(!is.na(.data$kickoff_local)) %>%
     dplyr::group_by(.data$season, .data$week) %>%
     dplyr::summarise(
-      earliest_kickoff = min(.data$kickoff_local, na.rm = TRUE),
-      latest_kickoff = max(.data$kickoff_local, na.rm = TRUE),
+      earliest_kickoff = suppressWarnings(min(.data$kickoff_local, na.rm = TRUE)),
+      latest_kickoff = suppressWarnings(max(.data$kickoff_local, na.rm = TRUE)),
       n_games = dplyr::n(),
       .groups = "drop"
     ) %>%
+    # Filter out weeks with no valid game times (min/max returned Inf/-Inf)
+    dplyr::filter(!is.infinite(.data$earliest_kickoff)) %>%
     dplyr::mutate(
       # Add buffer windows
       window_start = .data$earliest_kickoff - lubridate::days(DATE_RESOLVER_CONFIG$week_buffer_pre),
@@ -376,7 +378,7 @@ resolve_nfl_context <- function(target_date = Sys.time(),
       error = "Could not calculate week boundaries",
       season = NA_integer_,
       week = NA_integer_,
-      phase = NA_character_,
+      phase = "offseason",
       round = NA_character_,
       schedule_rows = NULL
     ))

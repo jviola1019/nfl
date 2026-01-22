@@ -71,8 +71,10 @@ get_playoff_week <- function(round_name) {
 #' @return Playoff round name or NA if not a playoff week
 get_round_from_week <- function(week) {
   week <- as.integer(week)
+  if (is.na(week)) return(NA_character_)
   for (round_name in names(PLAYOFF_ROUNDS)) {
-    if (identical(PLAYOFF_ROUNDS[[round_name]]$week, week)) {
+    # Use == instead of identical() to handle numeric/integer type mismatch
+    if (isTRUE(PLAYOFF_ROUNDS[[round_name]]$week == week)) {
       return(round_name)
     }
   }

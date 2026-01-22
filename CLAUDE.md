@@ -1,114 +1,291 @@
-# NFL Prediction Model - Claude Code Context
+# NFL Prediction Model - Claude Code Agent Guide
 
-This file provides context for Claude Code sessions working on this repository.
+**This file is the SINGLE SOURCE OF TRUTH for how Claude Code should operate in this repository.**
 
-## Project Overview
+---
 
-This is an NFL game prediction model using Monte Carlo simulation with:
+## 1. REPO CONTEXT
+
+### What This Project Does
+
+An NFL game prediction model using Monte Carlo simulation with:
 - Negative Binomial score distributions with Gaussian copula correlation
-- Isotonic regression calibration
+- Isotonic regression calibration (nested cross-validation)
 - 60% market shrinkage for probability estimates
 - 1/8 Kelly staking with edge skepticism
 - Strength-of-schedule and injury adjustments
 
-## Repository Structure
+### Primary Entrypoints
 
-```
-nfl/
-├── R/                          # Modular R package source
-│   ├── utils.R                 # Core utility functions (CANONICAL)
-│   ├── logging.R               # Structured logging utilities
-│   └── data_validation.R       # Data validation & fallbacks
-├── tests/
-│   └── testthat/
-│       └── test-utils.R        # Unit tests for utilities
-├── NFLsimulation.R             # Main simulation engine (~7600 lines)
-├── NFLmarket.R                 # Market analysis & reporting (~3900 lines)
-├── NFLbrier_logloss.R          # Evaluation metrics (~1150 lines)
-├── config.R                    # Configuration parameters
-├── run_week.R                  # Entry point for weekly predictions
-└── DESCRIPTION                 # R package metadata
-```
+| File | Purpose | Run Command |
+|------|---------|-------------|
+| `run_week.R` | Weekly predictions | `source("run_week.R")` |
+| `config.R` | Configuration | Edit `SEASON`, `WEEK_TO_SIM` |
+| `scripts/verify_repo_integrity.R` | Integrity check | `Rscript scripts/verify_repo_integrity.R` |
+| `scripts/run_matrix.R` | Run all artifacts | `Rscript scripts/run_matrix.R` |
 
-## Key Design Decisions
+### Expected Outputs
 
-### Canonical Function Locations
+When `run_week.R` completes successfully:
+1. **HTML Report**: `NFLvsmarket_report.html` with game predictions
+2. **Run Logs**: `run_logs/config_*.rds`, `run_logs/final_*.rds`
+3. **Console**: Data quality badge, simulation progress, calibration status
 
-**R/utils.R** is the SINGLE SOURCE OF TRUTH for:
-- `clamp_probability()` - epsilon = 1e-9
-- `american_to_probability()`, `american_to_decimal()`
-- `expected_value_units()`, `conservative_kelly_stake()`
-- `shrink_probability_toward_market()` - default 60% market weight
-- `brier_score()`, `log_loss()`, `accuracy()`
-- `standardize_join_keys()` - **CRITICAL: coerces types for safe joins**
+### What "Correct" Looks Like
 
-### Type-Safe Joins
+- `scripts/verify_repo_integrity.R`: 35/35 checks pass
+- `scripts/run_matrix.R`: 9/9 artifacts pass
+- `testthat::test_dir("tests/testthat")`: ~310 tests pass (some skips OK)
+- `run_week.R`: Completes without exit code 1
 
-The `standardize_join_keys()` function:
-1. Renames column aliases to canonical names (game_id, season, week)
-2. **Coerces to standard types**: game_id=character, season=integer, week=integer
+---
 
-This prevents the "JOIN PRODUCED ZERO ROWS" errors from type mismatches.
+## 2. AGENT OPERATING RULES
 
-### Configuration
+### ALWAYS Do This
 
-Use `config.R` for all tunable parameters. Do NOT hardcode:
-- Shrinkage factors
-- Kelly fractions
-- Simulation counts
-- Validation splits
+1. **Start in READ-ONLY audit mode** - Never modify code before understanding the failure
+2. **Reproduce errors before fixing** - Run the failing command first
+3. **Prefer minimal diffs** - Small, reversible changes only
+4. **Run verification after changes** - `Rscript scripts/verify_repo_integrity.R`
+5. **No silent fallbacks** - Every data issue must be logged and flagged
+6. **No unverifiable claims** - Don't claim metrics without running scripts
+7. **Use canonical API** - Check R/data_validation.R for correct function signatures
 
-## Common Tasks
+### NEVER Do This
 
-### Run Weekly Simulation
+1. **Guess at fixes** without understanding root cause
+2. **Add features** while fixing bugs
+3. **Refactor** unrelated code
+4. **Delete files** without verifying they're unused via run_matrix
+5. **Commit untested changes**
+6. **Use hardcoded values** - Put in config.R instead
+
+### Data Quality API Reference
+
 ```r
+# CORRECT status values (memorize these!)
+update_injury_quality("full" | "partial" | "unavailable", missing_seasons = c(...))
+update_weather_quality("full" | "partial_fallback" | "all_fallback", fallback_games = c(...))
+update_market_quality("full" | "partial" | "unavailable", missing_games = c(...))
+update_calibration_quality(method = "...", leakage_free = TRUE/FALSE)
+
+# Access quality (nested structure!)
+quality <- get_data_quality()
+quality$injury$status      # NOT quality$injury_status
+quality$weather$status     # NOT quality$weather_status
+quality$market$status      # NOT quality$market_status
+quality$calibration$method # NOT quality$calibration_method
+
+# Overall quality returns uppercase
+compute_overall_quality()  # Returns "HIGH", "MEDIUM", "LOW", "CRITICAL"
+```
+
+---
+
+## 3. STANDARD AGENT PROMPTS
+
+### Audit Agent (Use First)
+
+```
+Read the entire repo. Do not edit any files.
+Identify:
+1. Runtime failures (run run_week.R with traceback)
+2. Schema mismatches (check data_validation.R API calls)
+3. Join risks (search for *_join without standardize_join_keys)
+4. Data quality issues (silent fallbacks, missing error handling)
+
+Output a diagnosis report before any fixes.
+```
+
+### Fix Agent (After Audit)
+
+```
+Implement the minimal fix for the identified root cause.
+Rules:
+1. Change only the lines needed to fix the issue
+2. Add regression test if applicable
+3. No refactors, no feature additions
+4. Run verify_repo_integrity.R after fix
+5. Document the change in CHANGELOG.md
+```
+
+### Validation Agent (After Fixes)
+
+```
+Re-run all verification:
+1. Rscript scripts/verify_repo_integrity.R (must show 35/35 pass)
+2. Rscript scripts/run_matrix.R (must show 9/9 pass)
+3. testthat::test_dir("tests/testthat") (check for regressions)
+4. Verify HTML report generates if run_week.R was changed
+
+Report: PASS/FAIL with evidence.
+```
+
+### Docs Agent (When Requested)
+
+```
+Update documentation:
+1. README.md - Verify file inventory is complete
+2. CHANGELOG.md - Add dated entry for changes made
+3. CLAUDE.md - Update if agent rules need clarification
+4. Verify all run commands work as documented
+```
+
+---
+
+## 4. STOP / CONTINUE CHECKPOINT RULES
+
+### STOP and Ask for Confirmation When:
+
+1. **Deleting any file** (even if appears unused)
+2. **Changing config.R defaults** (affects all users)
+3. **Modifying NFLsimulation.R or NFLmarket.R** (core engine, high risk)
+4. **Adding new dependencies** (affects renv.lock)
+5. **Changing API signatures** in R/data_validation.R
+6. **Exit code 1 persists** after first fix attempt
+
+### Continue Automatically When:
+
+1. Fixing obvious typos or syntax errors
+2. Updating test expectations to match correct behavior
+3. Adding log/debug statements
+4. Updating documentation only
+5. Running verification scripts
+6. Creating new test files
+
+---
+
+## 5. COMMON FAILURE PLAYBOOK
+
+### Exit Code 1 After Injury Loading
+
+**Symptom**: Script crashes after "Loaded X injury records for season YYYY"
+
+**Diagnosis**:
+```r
+options(error=function(){traceback(2); quit(status=1)})
 source("run_week.R")
-# Edit WEEK_TO_SIM in config.R first
 ```
 
-### Run Tests
+**Common Causes**:
+1. Wrong API call: `update_injury_quality("complete")` should be `"full"`
+2. Wrong parameter: `seasons_missing` should be `missing_seasons`
+3. 2025 injury data 404 (expected, should be handled gracefully)
+
+**Fix**: Check NFLsimulation.R lines 3144-3150 for correct API calls.
+
+### Invalid Week Error
+
+**Symptom**: "No games found for Week X"
+
+**Diagnosis**: Check config.R `WEEK_TO_SIM` value against valid weeks.
+
+**Valid Weeks**:
+- Regular season: 1-18
+- Wild Card: 19
+- Divisional: 20
+- Conference: 21
+- Super Bowl: 22
+
+### Empty Join Results
+
+**Symptom**: `build_moneyline_comparison_table()` returns 0 rows
+
+**Diagnosis**:
 ```r
-testthat::test_dir("tests/testthat")
+# Check key types before join
+str(schedule[c("game_id", "season", "week")])
+str(predictions[c("game_id", "season", "week")])
 ```
 
-### Validate Data
-```r
-source("R/data_validation.R")
-report <- create_validation_report(schedule, predictions, injuries)
-print_validation_report(report)
+**Fix**: Apply `standardize_join_keys()` to both tables before joining.
+
+### lintr normalizePath("") Error
+
+**Symptom**: VS Code R extension crashes or shows normalizePath errors
+
+**Fix**: Ensure `.lintr` file exists and excludes problematic directories:
+```
+exclusions: list("renv" = Inf, "run_logs" = Inf)
 ```
 
-## Known Issues & Workarounds
+### HTML Report Not Generated
 
-1. **Injury Data for 2025**: May fail to load. The model will proceed with zero injury impact and log a warning.
+**Symptom**: run_week.R completes but no HTML file
 
-2. **Join Failures**: If `build_moneyline_comparison_table()` returns empty:
-   - Check that both sides have been passed through `standardize_join_keys()`
-   - Verify overlapping values in game_id, season, week
+**Diagnosis**: Check for earlier errors; report generation is near end of pipeline.
 
-3. **Calibration Leakage**: The nested CV isotonic calibration has minimal impact. Consider Platt scaling for simpler models.
+**Common Causes**:
+1. gt package not installed
+2. Previous step produced empty results
+3. File write permission issue
 
-## Code Style
+---
 
-- Use `dplyr` for data manipulation
-- Prefer explicit `pkg::fun()` calls for non-standard packages
-- Use `log_info()`, `log_warn()`, `log_error()` from R/logging.R instead of `cat()`
-- No runtime `install.packages()` calls - use renv
-- Document functions with roxygen2 style comments
+## 6. FILE INVENTORY (Quick Reference)
 
-## Testing Requirements
+### Core Pipeline (DO NOT DELETE)
+- `run_week.R` - Entry point
+- `config.R` - Configuration
+- `NFLsimulation.R` - Simulation engine (7800+ lines)
+- `NFLmarket.R` - Market analysis (3900+ lines)
+- `NFLbrier_logloss.R` - Metrics
 
-Before committing:
-1. Run `testthat::test_dir("tests/testthat")`
-2. Verify Week 16 simulation produces valid HTML output
-3. Check that join operations don't produce empty results
+### R/ Library (Canonical Source)
+- `R/utils.R` - Core utilities (SINGLE SOURCE OF TRUTH)
+- `R/data_validation.R` - Data quality tracking
+- `R/logging.R` - Structured logging
+- `R/playoffs.R` - Playoff logic
+- `R/date_resolver.R` - Date resolution
 
-## Performance Notes
+### Scripts
+- `scripts/verify_repo_integrity.R` - 35-check verification
+- `scripts/verify_requirements.R` - 20-issue audit verification
+- `scripts/run_matrix.R` - Execute all artifacts
 
-- NFLsimulation.R uses Sobol QMC sequences with antithetic variates
-- Default 100,000 trials; reduce to 40,000 for backtesting
-- Memory usage scales with N_TRIALS * n_games
+### Tests
+- `tests/testthat/setup.R` - Test infrastructure
+- `tests/testthat/test-*.R` - Unit tests
 
-## Contact
+### Documentation
+- `README.md` - Project overview
+- `GETTING_STARTED.md` - Setup guide
+- `DOCUMENTATION.md` - Technical reference
+- `CLAUDE.md` - This file (agent guide)
+- `AUDIT.md` - Repository audit report
+- `CHANGELOG.md` - Change log
 
-For questions about model methodology, see DOCUMENTATION.md and RESULTS.md.
+---
+
+## 7. VERIFICATION COMMANDS (Run These)
+
+```bash
+# 1. Basic integrity (should show 35/35 pass)
+Rscript scripts/verify_repo_integrity.R
+
+# 2. Full artifact matrix (should show 9/9 pass)
+Rscript scripts/run_matrix.R
+
+# 3. Unit tests (310+ tests, some skips OK)
+Rscript -e "testthat::test_dir('tests/testthat')"
+
+# 4. Run weekly simulation (use valid week!)
+# Edit config.R first: WEEK_TO_SIM <- 16; SEASON <- 2024
+Rscript -e "source('run_week.R')"
+```
+
+---
+
+## 8. WHEN IN DOUBT
+
+1. Run `scripts/verify_repo_integrity.R` first
+2. Read error messages carefully - they usually tell you exactly what's wrong
+3. Check this file's API reference section
+4. Search for similar patterns in test files
+5. Ask for clarification rather than guessing
+
+---
+
+*Last updated: 2026-01-21*
+*Version: 2.4.1*

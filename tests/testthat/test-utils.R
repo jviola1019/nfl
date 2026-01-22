@@ -18,7 +18,7 @@ test_that("american_to_probability handles standard cases", {
   # Underdogs (positive odds)
   expect_equal(american_to_probability(100), 0.5, tolerance = 0.001)
   expect_equal(american_to_probability(110), 0.476, tolerance = 0.001)
-  expect_equal(american_to_probability(200), 0.333, tolerance = 0.001)
+  expect_equal(american_to_probability(200), 1/3, tolerance = 0.001)
   expect_equal(american_to_probability(300), 0.25, tolerance = 0.001)
 })
 
