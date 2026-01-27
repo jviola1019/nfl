@@ -13,49 +13,70 @@ suppressPackageStartupMessages({
 })
 
 # =============================================================================
-# CANONICAL UTILITY FUNCTIONS - Single source of truth for the entire codebase
+# SOURCE CANONICAL UTILITIES FROM R/utils.R
 # =============================================================================
-# These functions are used by NFLmarket.R, NFLsimulation.R, and tests.
-# Do NOT redefine these in other files - source this file instead.
+# R/utils.R is the SINGLE SOURCE OF TRUTH for utility functions.
+# This file provides fallback definitions only if R/utils.R is not available.
+
+local({
+  utils_path <- if (file.exists("R/utils.R")) "R/utils.R" else file.path(getwd(), "R/utils.R")
+  if (file.exists(utils_path)) {
+    tryCatch(source(utils_path), error = function(e) {
+      message(sprintf("Note: Could not source R/utils.R: %s", conditionMessage(e)))
+    })
+  }
+})
+
+# =============================================================================
+# FALLBACK UTILITY FUNCTIONS - Only defined if not already loaded from R/utils.R
+# =============================================================================
 
 # Standard epsilon for probability clamping (prevents log(0) and division issues)
-PROB_EPSILON <- 1e-9
+if (!exists("PROB_EPSILON", inherits = FALSE)) {
+  PROB_EPSILON <- 1e-9
+}
 
 #' Clamp probability to valid range [eps, 1-eps]
 #' @param p Probability value(s) to clamp
 #' @param eps Epsilon for numerical stability (default: PROB_EPSILON = 1e-9)
 #' @return Clamped probability in [eps, 1-eps]
-clamp_probability <- function(p, eps = PROB_EPSILON) {
-  p <- suppressWarnings(as.numeric(p))
-  pmin(pmax(p, eps), 1 - eps)
+if (!exists("clamp_probability", inherits = FALSE)) {
+  clamp_probability <- function(p, eps = PROB_EPSILON) {
+    p <- suppressWarnings(as.numeric(p))
+    pmin(pmax(p, eps), 1 - eps)
+  }
 }
 
 #' Convert American odds to implied probability
 #' @param odds American odds (e.g., -110, +150)
 #' @return Implied probability (not de-vigged)
-american_to_probability <- function(odds) {
-  odds <- suppressWarnings(as.numeric(odds))
-  dplyr::case_when(
-    is.na(odds) ~ NA_real_,
-    !is.finite(odds) ~ NA_real_,
-    odds == 0 ~ NA_real_,
-    odds < 0 ~ (-odds) / ((-odds) + 100),
-    TRUE ~ 100 / (odds + 100)
-  )
+if (!exists("american_to_probability", inherits = FALSE)) {
+  american_to_probability <- function(odds) {
+    odds <- suppressWarnings(as.numeric(odds))
+    dplyr::case_when(
+      is.na(odds) ~ NA_real_,
+      !is.finite(odds) ~ NA_real_,
+      odds == 0 ~ NA_real_,
+      odds < 0 ~ (-odds) / ((-odds) + 100),
+      TRUE ~ 100 / (odds + 100)
+    )
+  }
 }
 
 #' Convert American odds to decimal odds
 #' @param odds American odds (e.g., -110, +150)
 #' @return Decimal odds (e.g., 1.91, 2.50)
-american_to_decimal <- function(odds) {
-  odds <- suppressWarnings(as.numeric(odds))
-  dec <- rep(NA_real_, length(odds))
-  valid <- is.finite(odds) & odds != 0
-  neg_mask <- valid & odds < 0
-  pos_mask <- valid & odds > 0
-  dec[neg_mask] <- 1 + 100 / abs(odds[neg_mask])
-  dec[pos_mask] <- 1 + odds[pos_mask] / 100
-  dec
+if (!exists("american_to_decimal", inherits = FALSE)) {
+  american_to_decimal <- function(odds) {
+    odds <- suppressWarnings(as.numeric(odds))
+    dec <- rep(NA_real_, length(odds))
+    valid <- is.finite(odds) & odds != 0
+    neg_mask <- valid & odds < 0
+    pos_mask <- valid & odds > 0
+    dec[neg_mask] <- 1 + 100 / abs(odds[neg_mask])
+    dec[pos_mask] <- 1 + odds[pos_mask] / 100
+    dec
+  }
 }
 
 #' Calculate expected value in units
@@ -307,7 +328,7 @@ compare_to_market <- function(res,
   rolling_B <- as.integer(rolling_B)
 
   # --- helpers (scoped to this function) ---
-  .clamp01 <- function(x, eps = 1e-12) pmin(pmax(x, eps), 1 - eps)
+  .clamp01 <- function(x, eps = PROB_EPSILON) pmin(pmax(x, eps), 1 - eps)
   .pick_col <- function(df, cands) { nm <- intersect(cands, names(df)); if (length(nm)) nm[1] else NA_character_ }
   .first_non_missing <- function(x) {
     if (!length(x)) {
@@ -335,7 +356,7 @@ compare_to_market <- function(res,
     )
   }
   brier2 <- function(p,y) mean((p - y)^2, na.rm = TRUE)
-  logloss2 <- function(p,y,eps=1e-12){
+  logloss2 <- function(p,y,eps=PROB_EPSILON){
     p <- .clamp01(p, eps); -mean(y*log(p) + (1-y)*log(1-p), na.rm = TRUE)
   }
   

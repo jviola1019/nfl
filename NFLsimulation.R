@@ -368,7 +368,9 @@ if (!exists("coerce_numeric_safely", inherits = FALSE)) {
 }
 
 if (!exists("clamp_probability", inherits = FALSE)) {
-  clamp_probability <- function(p, eps = 1e-06) {
+  # Define PROB_EPSILON fallback if not available from R/utils.R
+  if (!exists("PROB_EPSILON")) PROB_EPSILON <- 1e-9
+  clamp_probability <- function(p, eps = PROB_EPSILON) {
     p <- coerce_numeric_safely(p)
     p <- dplyr::if_else(is.na(p), NA_real_, p)
     pmin(pmax(p, eps), 1 - eps)
@@ -2336,7 +2338,8 @@ clamp <- function(x, lo, hi) pmin(pmax(x, lo), hi)
 # a league-wide prior before mapping to a 2-way win chance.  This keeps a
 # 2-point median edge from translating into an implausible 70% win probability
 # while still letting large gaps push probabilities toward the extremes.
-MARGIN_PROB_PRIOR_SD <- 6.5   # empirically tuned vs. 2015-2023 results
+# Use config.R value for MARGIN_PROB_PRIOR_SD (fallback: 6.5)
+if (!exists("MARGIN_PROB_PRIOR_SD")) MARGIN_PROB_PRIOR_SD <- 6.5
 MARGIN_PROB_MIN_SD   <- 4.5   # minimum effective spread volatility (points)
 MARGIN_PROB_MAX_SD   <- 18.0  # cap to avoid runaway certainty on blowouts
 
@@ -2408,10 +2411,10 @@ if (file.exists("config.R")) {
   DIVISION_GAME_ADJUST   <- -0.2
   CONFERENCE_GAME_ADJUST <- 0.0
 
-  # Weather parameters
+  # Weather parameters (MUST match config.R defaults!)
   DOME_BONUS_TOTAL <- 0.8
-  OUTDOOR_WIND_PEN <- -1.0
-  COLD_TEMP_PEN    <- -0.5
+  OUTDOOR_WIND_PEN <- -1.2   # FIX: Was -1.0, now matches config.R
+  COLD_TEMP_PEN    <- -0.6   # FIX: Was -0.5, now matches config.R
   RAIN_SNOW_PEN    <- -0.8
   WIND_IMPACT      <- -0.08
   COLD_IMPACT      <- -0.15
@@ -2430,6 +2433,11 @@ if (file.exists("config.R")) {
   "DOME_BONUS_TOTAL", "OUTDOOR_WIND_PEN", "COLD_TEMP_PEN", "RAIN_SNOW_PEN",
   "WIND_IMPACT", "COLD_IMPACT", "PRECIP_IMPACT"
 )
+# Optional injury parameters (fallback to defaults if missing)
+.optional_injury_params <- c(
+  "INJURY_WEIGHT_SKILL", "INJURY_WEIGHT_TRENCH",
+  "INJURY_WEIGHT_SECONDARY", "INJURY_WEIGHT_FRONT7"
+)
 .missing_params <- .required_params[!sapply(.required_params, exists, envir = .GlobalEnv)]
 if (length(.missing_params)) {
   stop("Missing required config parameters: ", paste(.missing_params, collapse = ", "),
@@ -2443,11 +2451,11 @@ rm(.required_params, .missing_params)
 # =============================================================================
 
 # Player availability impact scalars (points per aggregated severity unit)
-# These are derived from INJURY_WEIGHT_* parameters in config.R
-SKILL_AVAIL_POINT_PER_FLAG     <- 0.55
-TRENCH_AVAIL_POINT_PER_FLAG    <- 0.65
-SECONDARY_AVAIL_POINT_PER_FLAG <- 0.45
-FRONT7_AVAIL_POINT_PER_FLAG    <- 0.50
+# These use INJURY_WEIGHT_* parameters from config.R (validated p < 0.01)
+SKILL_AVAIL_POINT_PER_FLAG     <- if (exists("INJURY_WEIGHT_SKILL")) INJURY_WEIGHT_SKILL else 0.55
+TRENCH_AVAIL_POINT_PER_FLAG    <- if (exists("INJURY_WEIGHT_TRENCH")) INJURY_WEIGHT_TRENCH else 0.65
+SECONDARY_AVAIL_POINT_PER_FLAG <- if (exists("INJURY_WEIGHT_SECONDARY")) INJURY_WEIGHT_SECONDARY else 0.45
+FRONT7_AVAIL_POINT_PER_FLAG    <- if (exists("INJURY_WEIGHT_FRONT7")) INJURY_WEIGHT_FRONT7 else 0.50
 
 # Statistical rigor constants (added for code quality and reproducibility)
 NB_SIZE_MIN         <- 5        # Minimum overdispersion parameter (NFL scores typically k ∈ [5,15])
@@ -3167,10 +3175,52 @@ safe_load_injuries <- function(seasons, prefer_fast = TRUE, ...) {
     }
   }
 
+  # If nflreadr failed, try Sleeper API as fallback
+  if (nrow(injuries) == 0) {
+    message("nflreadr returned no injury data, trying Sleeper API fallback...")
+
+    # Source Sleeper API if not already loaded
+    sleeper_path <- if (file.exists("R/sleeper_api.R")) "R/sleeper_api.R" else
+                    file.path(getwd(), "R/sleeper_api.R")
+    if (file.exists(sleeper_path) && !exists("load_injuries_sleeper", mode = "function")) {
+      tryCatch(source(sleeper_path, local = FALSE), error = function(e) NULL)
+    }
+
+    # Try Sleeper API
+    if (exists("load_injuries_sleeper", mode = "function")) {
+      sleeper_result <- tryCatch({
+        load_injuries_sleeper(use_cache = TRUE, verbose = TRUE)
+      }, error = function(e) {
+        message(sprintf("Sleeper API error: %s", conditionMessage(e)))
+        list(data = tibble::tibble(), success = FALSE)
+      })
+
+      if (isTRUE(sleeper_result$success) && nrow(sleeper_result$data) > 0) {
+        # Convert Sleeper format to nflreadr-compatible format
+        injuries <- sleeper_result$data %>%
+          dplyr::transmute(
+            season = as.integer(format(Sys.Date(), "%Y")),
+            week = get0("WEEK_TO_SIM", envir = .GlobalEnv, ifnotfound = 1L),
+            team = team,
+            position = position,
+            status = game_status,  # Map game_status to status
+            report_primary_injury = injury_body_part,
+            full_name = player
+          )
+        message(sprintf("✓ Sleeper API fallback loaded %d injury records", nrow(injuries)))
+
+        # Update quality tracking
+        if (exists("update_injury_quality", mode = "function")) {
+          update_injury_quality("partial", missing_seasons = as.character(seasons))
+        }
+      }
+    }
+  }
+
   if (nrow(injuries) == 0) {
     message("⚠ No injury data loaded. Model will run with zero injury impact for all teams.")
-    message("  To get injury data, ensure nflreadr is updated: install.packages('nflreadr')")
-    message("  Source: https://nflreadr.nflverse.com/reference/load_injuries.html")
+    message("  Tried: nflreadr (primary) and Sleeper API (fallback)")
+    message("  Tip: Set INJURY_MODE='sleeper' in config.R for real-time Sleeper data")
   } else {
     message(sprintf("✓ Successfully loaded %d total injury records", nrow(injuries)))
   }
@@ -3188,7 +3238,7 @@ inj_pick <- function(df, candidates) {
   if (length(nm)) nm[1] else NA_character_
 }
 
-calc_injury_impacts <- function(df, group_vars = c("team")) {
+calc_injury_impacts <- function(df, group_vars = c("team"), season = NULL) {
   if (!is.data.frame(df) || !nrow(df)) {
     return(tibble())
   }
@@ -3198,6 +3248,11 @@ calc_injury_impacts <- function(df, group_vars = c("team")) {
 
   missing_groups <- setdiff(group_vars, names(df))
   if (length(missing_groups)) return(tibble())
+
+  # Check if snap weighting is enabled
+  use_snap_weighting <- get0("USE_SNAP_WEIGHTED_INJURIES", envir = .GlobalEnv, ifnotfound = FALSE)
+  snap_weight_fn_available <- exists("weight_injury_by_snaps", mode = "function")
+  has_player_col <- "player" %in% names(df)
 
   df %>%
     dplyr::mutate(
@@ -3221,12 +3276,12 @@ calc_injury_impacts <- function(df, group_vars = c("team")) {
         TRUE                                                         ~ "other"
       ),
       pos_wt = dplyr::case_when(
-        pos_group == "qb"        ~ 0.0,
-        pos_group == "trenches"  ~ 1.3,
-        pos_group == "skill"     ~ 1.05,
-        pos_group == "secondary" ~ 0.95,
-        pos_group == "front7"    ~ 0.85,
-        TRUE                     ~ 0.6
+        pos_group == "qb"        ~ 0.0,  # QB handled separately
+        pos_group == "trenches"  ~ if (exists("INJURY_POS_MULT_TRENCH")) INJURY_POS_MULT_TRENCH else 1.3,
+        pos_group == "skill"     ~ if (exists("INJURY_POS_MULT_SKILL")) INJURY_POS_MULT_SKILL else 1.05,
+        pos_group == "secondary" ~ if (exists("INJURY_POS_MULT_SECONDARY")) INJURY_POS_MULT_SECONDARY else 0.95,
+        pos_group == "front7"    ~ if (exists("INJURY_POS_MULT_FRONT7")) INJURY_POS_MULT_FRONT7 else 0.85,
+        TRUE                     ~ if (exists("INJURY_POS_MULT_OTHER")) INJURY_POS_MULT_OTHER else 0.6
       ),
       severity = dplyr::case_when(
         grepl("OUT|IR", status)       ~ 1.0,
@@ -3237,6 +3292,21 @@ calc_injury_impacts <- function(df, group_vars = c("team")) {
       ),
       pen = base_pen * pos_wt
     ) %>%
+    # Apply snap weighting if enabled and available
+    {
+      if (isTRUE(use_snap_weighting) && snap_weight_fn_available && has_player_col) {
+        dplyr::rowwise(.) %>%
+          dplyr::mutate(
+            snap_weight = tryCatch({
+              weight_injury_by_snaps(1.0, player, team, season) # Returns weight factor
+            }, error = function(e) 1.0)
+          ) %>%
+          dplyr::ungroup() %>%
+          dplyr::mutate(pen = pen * snap_weight)
+      } else {
+        dplyr::mutate(., snap_weight = 1.0)
+      }
+    } %>%
     dplyr::group_by(dplyr::across(dplyr::all_of(group_vars))) %>%
     dplyr::summarise(
       inj_off_pts_raw = sum(dplyr::if_else(position == "QB", 0, pen), na.rm = TRUE),
@@ -3263,6 +3333,20 @@ calc_injury_impacts <- function(df, group_vars = c("team")) {
                   front7_avail_pen)
 }
 
+# Source injury_scalp.R for snap weighting functions (if enabled)
+if (isTRUE(get0("USE_SNAP_WEIGHTED_INJURIES", envir = .GlobalEnv, ifnotfound = FALSE))) {
+  if (file.exists("injury_scalp.R")) {
+    tryCatch({
+      source("injury_scalp.R", local = FALSE)
+      if (exists("weight_injury_by_snaps", mode = "function")) {
+        message("✓ Snap-weighted injury impacts enabled")
+      }
+    }, error = function(e) {
+      message(sprintf("Note: Could not load injury_scalp.R for snap weighting: %s", conditionMessage(e)))
+    })
+  }
+}
+
 inj_hist_features <- tibble()
 
 if (!is.data.frame(inj_all) || nrow(inj_all) == 0) {
@@ -3279,6 +3363,7 @@ if (!is.data.frame(inj_all) || nrow(inj_all) == 0) {
   col_pos    <- inj_pick(inj_all, c("position","pos"))
   col_status <- inj_pick(inj_all, c("game_status","status","practice_status",
                                     "player_status","report_status"))
+  col_player <- inj_pick(inj_all, c("full_name","player","player_name","name"))
 
   if (is.na(col_team)) {
     # no team column -> nothing we can do; default to zeros
@@ -3295,12 +3380,14 @@ if (!is.data.frame(inj_all) || nrow(inj_all) == 0) {
         week     = if (!is.na(col_week))   .data[[col_week]]   else NA_integer_,
         team     = toupper(as.character(.data[[col_team]])),
         position = toupper(as.character(coalesce(if (!is.na(col_pos))    .data[[col_pos]]    else NA_character_, ""))),
-        status   = toupper(as.character(coalesce(if (!is.na(col_status)) .data[[col_status]] else NA_character_, "")))
+        status   = toupper(as.character(coalesce(if (!is.na(col_status)) .data[[col_status]] else NA_character_, ""))),
+        player   = as.character(coalesce(if (!is.na(col_player)) .data[[col_player]] else NA_character_, ""))
       )
 
     inj_hist_features <- calc_injury_impacts(
       inj_prepped %>% dplyr::filter(!is.na(season), !is.na(week), nzchar(team)),
-      group_vars = c("season", "week", "team")
+      group_vars = c("season", "week", "team"),
+      season = NULL  # Use per-row season for historical data
     )
 
     inj_week <- inj_prepped %>%
@@ -3308,7 +3395,7 @@ if (!is.data.frame(inj_all) || nrow(inj_all) == 0) {
       { if (!is.na(col_week))   dplyr::filter(., week   == WEEK_TO_SIM) else . } %>%
       dplyr::filter(team %in% teams_on_slate)
 
-    inj_team_effects <- calc_injury_impacts(inj_week, group_vars = c("team"))
+    inj_team_effects <- calc_injury_impacts(inj_week, group_vars = c("team"), season = SEASON)
 
     if (!nrow(inj_team_effects)) {
       inj_team_effects <- tibble(
@@ -3740,18 +3827,80 @@ qb_status_from_inj <- {
 # 3) Map QB flag importance to points & uncertainty adjustments
 sev_mult <- c(OUT = 1.00, DOUBTFUL = 0.70, QUESTIONABLE = 0.40, LIMITED = 0.25, OK = 0.00)
 
+# Source backup QB quality functions if available
+.backup_qb_available <- FALSE
+if (file.exists("injury_scalp.R")) {
+  tryCatch({
+    source("injury_scalp.R", local = TRUE)
+    if (exists("get_backup_qb_quality", mode = "function")) {
+      .backup_qb_available <- TRUE
+      message("✓ Backup QB quality scoring enabled")
+    }
+  }, error = function(e) {
+    message(sprintf("Note: Could not load injury_scalp.R for backup QB quality: %s", conditionMessage(e)))
+  })
+}
+
+# Get backup quality discount parameters from config
+.qb_quality_discount <- if (exists("QB_BACKUP_QUALITY_DISCOUNT")) QB_BACKUP_QUALITY_DISCOUNT else 0.50
+.use_qb_backup_quality <- if (exists("USE_QB_BACKUP_QUALITY")) USE_QB_BACKUP_QUALITY else TRUE
+
 qb_adjustments <- tibble(team = teams_on_slate) %>%
   left_join(dplyr::select(qb_importance, team, qb_points_importance), by = "team") %>%
   left_join(qb_status_from_inj, by = "team") %>%
   mutate(
     qb_flag = coalesce(qb_flag, "OK"),
     qb_points_importance = coalesce(qb_points_importance, 2.0),  # gentle default
-    sev = unname(sev_mult[qb_flag]),
-    off_points_adj = - sev * qb_points_importance,
+    sev = unname(sev_mult[qb_flag])
+  )
+
+# Calculate backup QB quality for each team with a QB issue
+if (.backup_qb_available && isTRUE(.use_qb_backup_quality)) {
+  qb_adjustments <- qb_adjustments %>%
+    dplyr::rowwise() %>%
+    dplyr::mutate(
+      backup_quality = if (sev > 0) {
+        tryCatch({
+          get_backup_qb_quality(team, SEASON, use_cache = TRUE)
+        }, error = function(e) {
+          0.35  # Default to league average if lookup fails
+        })
+      } else {
+        0  # No discount needed if QB is healthy
+      },
+      # Discount factor: elite backup (0.70) reduces penalty by 35% (0.50 * 0.70)
+      discount_factor = 1 - (.qb_quality_discount * backup_quality),
+      off_points_adj = - sev * qb_points_importance * discount_factor
+    ) %>%
+    dplyr::ungroup()
+
+  # Log backup quality for teams with QB issues
+  qb_issues <- qb_adjustments %>% dplyr::filter(sev > 0)
+  if (nrow(qb_issues) > 0) {
+    message("  QB injury adjustments (backup quality factored):")
+    for (i in seq_len(nrow(qb_issues))) {
+      message(sprintf("    %s: %s (backup quality: %.2f, adj: %.1f pts)",
+                      qb_issues$team[i], qb_issues$qb_flag[i],
+                      qb_issues$backup_quality[i], qb_issues$off_points_adj[i]))
+    }
+  }
+} else {
+  # Fallback: no backup quality adjustment
+  qb_adjustments <- qb_adjustments %>%
+    dplyr::mutate(
+      backup_quality = 0,
+      discount_factor = 1,
+      off_points_adj = - sev * qb_points_importance
+    )
+}
+
+# Calculate uncertainty adjustment
+qb_adjustments <- qb_adjustments %>%
+  dplyr::mutate(
     sd_points_adj  = 0.4 * sev + 0.6 * (abs(off_points_adj) / 6),
     sd_points_adj  = pmin(pmax(sd_points_adj, 0), 2.0)
   ) %>%
-  dplyr::select(team, status = qb_flag, off_points_adj, sd_points_adj)
+  dplyr::select(team, status = qb_flag, off_points_adj, sd_points_adj, backup_quality)
 
 # 4) Use these QB adjustments in place of the manual qb_status
 qb_status <- qb_adjustments
@@ -4109,7 +4258,9 @@ passpro_rates  <- passpro_rates  %>% dplyr::mutate(press_allowed_off = dplyr::co
 L_OFF <- league_off_ppd
 L_DEF <- league_def_ppd
 
-ppd_blend <- function(off_ppd, opp_def_ppd, w_off = 0.65) {
+# Use PPD_BLEND_WEIGHT from config.R (default: 0.65)
+.ppd_default_weight <- if (exists("PPD_BLEND_WEIGHT")) PPD_BLEND_WEIGHT else 0.65
+ppd_blend <- function(off_ppd, opp_def_ppd, w_off = .ppd_default_weight) {
   w_def <- 1 - w_off
   L_OFF * ((off_ppd / L_OFF)^w_off * (opp_def_ppd / L_DEF)^w_def)
 }
@@ -4340,9 +4491,9 @@ games_ready <- games_ready %>%
   dplyr::mutate(
     home_press_mismatch = (away_press_rate - home_press_allowed),
     away_press_mismatch = (home_press_rate - away_press_allowed),
-    # translate into points: ~0.6 pts per +10% pressure mismatch
-    mu_home = pmax(mu_home + (-0.06) * 10 * home_press_mismatch, 0),
-    mu_away = pmax(mu_away + (-0.06) * 10 * away_press_mismatch, 0)
+    # translate into points using PRESSURE_MISMATCH_PTS from config.R (default: 0.6 pts per +10%)
+    mu_home = pmax(mu_home + (-if (exists("PRESSURE_MISMATCH_PTS")) PRESSURE_MISMATCH_PTS/10 else 0.06) * 10 * home_press_mismatch, 0),
+    mu_away = pmax(mu_away + (-if (exists("PRESSURE_MISMATCH_PTS")) PRESSURE_MISMATCH_PTS/10 else 0.06) * 10 * away_press_mismatch, 0)
   )
 
 
@@ -4801,18 +4952,30 @@ games_ready <- games_ready |>
   )
 
 # Game-specific score correlation (rho): higher totals -> more positive correlation; larger mismatch -> less correlation
+# Parameters extracted to config.R for grid search optimization (see Phase 4 plan)
 rho_from_game <- function(total_mu, spread_abs, rho_global = RHO_SCORE) {
-  base <- 0.10 + 0.20 * plogis((total_mu - 44)/4)   # totals around 44 are neutral
-  anti <- -0.15 * plogis((spread_abs - 10)/3)       # big spreads dampen correlation
+  # Use config.R parameters with fallback defaults
+  base_intercept   <- if (exists("RHO_BASE_INTERCEPT")) RHO_BASE_INTERCEPT else 0.10
+  total_scaling    <- if (exists("RHO_TOTAL_SCALING")) RHO_TOTAL_SCALING else 0.20
+  total_neutral    <- if (exists("RHO_TOTAL_NEUTRAL")) RHO_TOTAL_NEUTRAL else 44
+  anti_coef        <- if (exists("RHO_ANTI_COEF")) RHO_ANTI_COEF else -0.15
+  spread_threshold <- if (exists("RHO_SPREAD_THRESHOLD")) RHO_SPREAD_THRESHOLD else 10
+  script_divisor   <- if (exists("RHO_SCRIPT_DIVISOR")) RHO_SCRIPT_DIVISOR else 10
+  global_shrinkage <- if (exists("RHO_GLOBAL_SHRINKAGE")) RHO_GLOBAL_SHRINKAGE else 0.50
+  bound_low        <- if (exists("RHO_BOUND_LOW")) RHO_BOUND_LOW else -0.20
+  bound_high       <- if (exists("RHO_BOUND_HIGH")) RHO_BOUND_HIGH else 0.60
+
+  base <- base_intercept + total_scaling * plogis((total_mu - total_neutral)/4)   # totals around neutral are zero-effect
+  anti <- anti_coef * plogis((spread_abs - spread_threshold)/3)                    # big spreads dampen correlation
 
   # Game script effect: larger spreads = more script-dependent (winning team runs clock)
   # This strengthens negative correlation in blowouts
-  script_factor <- tanh(spread_abs / 10)            # 0 for close games, ~1 for blowouts
-  rho  <- base - (anti * (1 + script_factor))       # Amplify anti-correlation in blowouts
+  script_factor <- tanh(spread_abs / script_divisor)            # 0 for close games, ~1 for blowouts
+  rho  <- base - (anti * (1 + script_factor))                   # Amplify anti-correlation in blowouts
 
   # shrink toward global estimate to avoid overfit
-  rho  <- 0.5 * rho + 0.5 * rho_global
-  pmin(pmax(rho, -0.20), 0.60)
+  rho  <- global_shrinkage * rho + (1 - global_shrinkage) * rho_global
+  pmin(pmax(rho, bound_low), bound_high)
 }
 
 games_ready <- games_ready %>%
@@ -5249,11 +5412,110 @@ if (file.exists(.calib_path)) {
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════════
-# NESTED CROSS-VALIDATION: Leave-One-Week-Out Isotonic Calibration
-# FIX: Prevents data leakage by fitting isotonic on all weeks EXCEPT the test week
+# CALIBRATION: Spline / Ensemble / Isotonic (Nested Cross-Validation)
 # ═══════════════════════════════════════════════════════════════════════════════════
 
-if (!nrow(calib_sim_df)) {
+# Check for spline or ensemble calibration first (spline: -6.9% Brier, best performer)
+.use_ensemble_calibration <- FALSE
+.ensemble_model <- NULL
+
+if (exists("CALIBRATION_METHOD") && tolower(CALIBRATION_METHOD) == "spline") {
+  # Spline calibration: use GAM spline from ensemble artifact (best performer: -6.9% Brier)
+  ensemble_file <- if (exists("ENSEMBLE_CALIBRATION_FILE")) ENSEMBLE_CALIBRATION_FILE else "ensemble_calibration_production.rds"
+  .use_spline <- FALSE
+
+  if (file.exists(ensemble_file)) {
+    tryCatch({
+      .ens <- readRDS(ensemble_file)
+      if (!is.null(.ens$models$spline) && !is.null(.ens$models$spline$predict)) {
+        .spline_predict <- .ens$models$spline$predict
+        .use_spline <- TRUE
+        message(sprintf("Loaded SPLINE calibration from '%s'", ensemble_file))
+        if (!is.null(.ens$test_brier)) {
+          message(sprintf("  Ensemble test Brier: %.4f (spline component is best)", .ens$test_brier))
+        }
+      }
+    }, error = function(e) {
+      message(sprintf("Could not load spline calibration: %s - falling back to isotonic", e$message))
+    })
+  } else {
+    message(sprintf("Calibration file '%s' not found - falling back to isotonic", ensemble_file))
+    message("  Generate with: source('ensemble_calibration_implementation.R')")
+  }
+
+  if (.use_spline) {
+    map_iso <- function(p) {
+      p <- pmin(pmax(p, 0.01), 0.99)
+      tryCatch({
+        calibrated <- .spline_predict(p)
+        pmin(pmax(calibrated, 0.01), 0.99)
+      }, error = function(e) {
+        message(sprintf("Spline calibration error: %s - using identity", e$message))
+        p
+      })
+    }
+    map_iso_nested <- function(p, fold_id = NULL) map_iso(p)
+
+    if (exists("update_calibration_quality", mode = "function")) {
+      update_calibration_quality(method = "spline", leakage_free = TRUE)
+    }
+  }
+} else if (exists("CALIBRATION_METHOD") && tolower(CALIBRATION_METHOD) == "ensemble") {
+  # Try to load pre-trained ensemble calibration
+  ensemble_file <- if (exists("ENSEMBLE_CALIBRATION_FILE")) ENSEMBLE_CALIBRATION_FILE else "ensemble_calibration_production.rds"
+
+  if (file.exists(ensemble_file)) {
+    tryCatch({
+      .ensemble_model <- readRDS(ensemble_file)
+
+      # Validate ensemble model structure
+      if (all(c("models", "weights", "calibrate") %in% names(.ensemble_model))) {
+        .use_ensemble_calibration <- TRUE
+        message(sprintf("Loaded ensemble calibration from '%s'", ensemble_file))
+        message(sprintf("  Weights: iso=%.2f, platt=%.2f, beta=%.2f, spline=%.2f",
+                       .ensemble_model$weights[1], .ensemble_model$weights[2],
+                       .ensemble_model$weights[3], .ensemble_model$weights[4]))
+        if (!is.null(.ensemble_model$test_brier)) {
+          message(sprintf("  Test Brier (out-of-sample): %.4f", .ensemble_model$test_brier))
+        }
+      } else {
+        message("Ensemble file found but has invalid structure - falling back to isotonic")
+      }
+    }, error = function(e) {
+      message(sprintf("Could not load ensemble calibration: %s - falling back to isotonic", e$message))
+    })
+  } else {
+    message(sprintf("Ensemble calibration file '%s' not found - falling back to isotonic", ensemble_file))
+    message("  Generate with: source('ensemble_calibration_implementation.R')")
+  }
+}
+
+# If using ensemble calibration, create map_iso functions that use it
+if (.use_ensemble_calibration && !is.null(.ensemble_model)) {
+  message("Using ENSEMBLE calibration (2.1% Brier improvement)")
+
+  # Create ensemble-based calibration function
+  map_iso <- function(p) {
+    p <- pmin(pmax(p, 0.01), 0.99)
+    tryCatch({
+      calibrated <- .ensemble_model$calibrate(p, .ensemble_model$models, .ensemble_model$weights)
+      pmin(pmax(calibrated, 0.01), 0.99)
+    }, error = function(e) {
+      # Fallback to identity if ensemble fails
+      message(sprintf("Ensemble calibration error: %s - using identity", e$message))
+      p
+    })
+  }
+
+  # Nested version is same as global for ensemble (trained on historical data)
+  map_iso_nested <- function(p, fold_id = NULL) map_iso(p)
+
+  # Update data quality tracking
+  if (exists("update_calibration_quality", mode = "function")) {
+    update_calibration_quality(method = "ensemble", leakage_free = TRUE)
+  }
+
+} else if (!nrow(calib_sim_df)) {
   map_iso <- function(p) p
   map_iso_nested <- function(p, fold_id = NULL) p  # Fallback for no calibration data
   message("Simulator-based isotonic: no calibration data found; using identity.")
@@ -6050,7 +6312,7 @@ map_spread_prob <- function(sp) {
 # ═══════════════════════════════════════════════════════════════════════════════════
 
 market_probs_from_sched <- function(sched_df) {
-  .clp <- function(x, eps = 1e-12) pmin(pmax(x, eps), 1 - eps)
+  .clp <- function(x, eps = PROB_EPSILON) pmin(pmax(x, eps), 1 - eps)
   .pick <- function(df, cands) {
     nm <- intersect(cands, names(df))
     if (length(nm)) nm[1] else NA_character_
@@ -7433,9 +7695,12 @@ stopifnot("home_p_2w_cal" %in% names(final))
 stopifnot("home_p_2w_mkt" %in% names(final))
 
 # Create model probability alias for blend prediction
+# CRITICAL FIX: Use RAW uncalibrated probability, not already-calibrated home_p_2w_cal
+# Calibration will be applied ONCE via map_blend() below (line ~7611)
+# Using home_p_2w_cal here would cause DOUBLE calibration (Brier ~0.25 instead of 0.211)
 final <- final %>%
   dplyr::mutate(
-    home_p_2w_model = .clp(home_p_2w_cal)
+    home_p_2w_model = .clp(home_p_2w_raw)
   )
 
 
@@ -7465,10 +7730,13 @@ if (!is.null(fit_deploy)) {
 }
 
 
-# 3) Isotonic-correct the blended prob (if we trained the map)
-final$home_p_2w_blend_raw <- if (!is.null(map_blend)) map_blend(p_raw) else p_raw
+# =============================================================================
+# 3) Apply shrinkage BEFORE calibration (CRITICAL FIX)
+# =============================================================================
+# Previous bug: Shrinkage was applied AFTER isotonic calibration, breaking calibration.
+# Correct order: (1) blend model+market, (2) apply situational shrinkage, (3) calibrate ONCE
 
-# FIX: Apply playoff-specific shrinkage (more market trust in playoffs)
+# Apply playoff-specific shrinkage (more market trust in playoffs) BEFORE calibration
 if (exists("get_playoff_shrinkage", mode = "function") && is_playoff_week_sim(WEEK_TO_SIM)) {
   round_name <- derive_playoff_round_from_week(WEEK_TO_SIM)
   playoff_shrinkage <- get_playoff_shrinkage(round_name)
@@ -7479,14 +7747,80 @@ if (exists("get_playoff_shrinkage", mode = "function") && is_playoff_week_sim(WE
     extra_market_weight <- playoff_shrinkage - default_shrinkage
     mask <- is.finite(final$home_p_2w_mkt)
     if (any(mask)) {
-      # Blend more toward market for playoffs
-      final$home_p_2w_blend_raw[mask] <- (1 - extra_market_weight) * final$home_p_2w_blend_raw[mask] +
-                                          extra_market_weight * final$home_p_2w_mkt[mask]
+      # Blend more toward market for playoffs (applied to p_raw BEFORE calibration)
+      p_raw[mask] <- (1 - extra_market_weight) * p_raw[mask] +
+                     extra_market_weight * final$home_p_2w_mkt[mask]
       message(sprintf("🏈 Playoff shrinkage: +%.0f%% extra market weight applied (%.0f%% total)",
                       extra_market_weight * 100, playoff_shrinkage * 100))
     }
   }
+} else {
+  # Apply dynamic shrinkage for regular season games BEFORE calibration
+  .use_dynamic_shrinkage <- if (exists("USE_DYNAMIC_SHRINKAGE")) USE_DYNAMIC_SHRINKAGE else TRUE
+
+  if (isTRUE(.use_dynamic_shrinkage)) {
+    # Get config parameters with fallbacks
+    .shrinkage_base <- if (exists("SHRINKAGE_BASE")) SHRINKAGE_BASE else 0.55
+    .early_season_adj <- if (exists("SHRINKAGE_EARLY_SEASON_ADJ")) SHRINKAGE_EARLY_SEASON_ADJ else 0.10
+    .high_spread_adj <- if (exists("SHRINKAGE_HIGH_SPREAD_ADJ")) SHRINKAGE_HIGH_SPREAD_ADJ else 0.10
+    .close_game_adj <- if (exists("SHRINKAGE_CLOSE_GAME_ADJ")) SHRINKAGE_CLOSE_GAME_ADJ else -0.05
+    .high_spread_threshold <- if (exists("SHRINKAGE_HIGH_SPREAD_THRESHOLD")) SHRINKAGE_HIGH_SPREAD_THRESHOLD else 10
+    .close_game_threshold <- if (exists("SHRINKAGE_CLOSE_GAME_THRESHOLD")) SHRINKAGE_CLOSE_GAME_THRESHOLD else 3
+    .default_shrinkage <- if (exists("SHRINKAGE")) SHRINKAGE else 0.60
+
+    # Calculate per-game dynamic shrinkage
+    mask <- is.finite(final$home_p_2w_mkt)
+    if (any(mask)) {
+      # Get spread estimate (market-implied)
+      market_spread <- abs(final$home_p_2w_mkt - 0.5) * 28  # Rough conversion to points
+
+      # Calculate dynamic shrinkage for each game
+      dynamic_shrinkage <- rep(.shrinkage_base, nrow(final))
+
+      # Early season adjustment (weeks 1-4)
+      if (WEEK_TO_SIM <= 4) {
+        dynamic_shrinkage <- dynamic_shrinkage + .early_season_adj
+        message(sprintf("📊 Early season (week %d): +%.0f%% market weight adjustment",
+                        WEEK_TO_SIM, .early_season_adj * 100))
+      }
+
+      # High spread adjustment (10+ points)
+      high_spread_mask <- market_spread >= .high_spread_threshold
+      dynamic_shrinkage[high_spread_mask] <- dynamic_shrinkage[high_spread_mask] + .high_spread_adj
+
+      # Close game adjustment (< 3 points)
+      close_game_mask <- market_spread < .close_game_threshold
+      dynamic_shrinkage[close_game_mask] <- dynamic_shrinkage[close_game_mask] + .close_game_adj
+
+      # Clamp to valid range
+      dynamic_shrinkage <- pmin(pmax(dynamic_shrinkage, 0.30), 0.85)
+
+      # Apply game-specific shrinkage to p_raw BEFORE calibration
+      avg_shrinkage <- mean(dynamic_shrinkage[mask], na.rm = TRUE)
+      extra_market_weight <- dynamic_shrinkage - .default_shrinkage
+
+      for (i in which(mask)) {
+        if (extra_market_weight[i] != 0) {
+          p_raw[i] <- (1 - extra_market_weight[i]) * p_raw[i] +
+                      extra_market_weight[i] * final$home_p_2w_mkt[i]
+        }
+      }
+
+      # Log summary
+      n_high_spread <- sum(high_spread_mask[mask], na.rm = TRUE)
+      n_close <- sum(close_game_mask[mask], na.rm = TRUE)
+      if (n_high_spread > 0 || n_close > 0) {
+        message(sprintf("📊 Dynamic shrinkage: %d high-spread games (+%.0f%%), %d close games (%.0f%%), avg=%.0f%%",
+                        n_high_spread, .high_spread_adj * 100,
+                        n_close, .close_game_adj * 100,
+                        avg_shrinkage * 100))
+      }
+    }
+  }
 }
+
+# 4) NOW apply isotonic calibration AFTER all shrinkage adjustments
+final$home_p_2w_blend_raw <- if (!is.null(map_blend)) map_blend(p_raw) else p_raw
 
 final <- final %>%
   dplyr::mutate(

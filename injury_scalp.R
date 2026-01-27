@@ -23,6 +23,16 @@ suppressPackageStartupMessages({
   library(purrr)
 })
 
+# Source Sleeper API integration if available
+local({
+  sleeper_path <- if (file.exists("R/sleeper_api.R")) "R/sleeper_api.R" else file.path(getwd(), "R/sleeper_api.R")
+  if (file.exists(sleeper_path)) {
+    tryCatch(source(sleeper_path), error = function(e) {
+      message(sprintf("Note: Could not source R/sleeper_api.R: %s", conditionMessage(e)))
+    })
+  }
+})
+
 # Track injury mode used this session for HTML report banner
 .INJURY_MODE_USED <- NULL
 .INJURY_FALLBACK_SEASON <- NULL
@@ -48,7 +58,7 @@ load_injury_data <- function(seasons,
   mode <- mode %||% get0("INJURY_MODE", envir = .GlobalEnv, ifnotfound = "auto")
   mode <- tolower(trimws(mode))
 
-  valid_modes <- c("auto", "off", "last_available", "manual", "scalp")
+  valid_modes <- c("auto", "off", "last_available", "manual", "scalp", "sleeper")
   if (!mode %in% valid_modes) {
     warning(sprintf("Invalid INJURY_MODE '%s'; defaulting to 'auto'", mode))
     mode <- "auto"
@@ -97,8 +107,95 @@ if (mode == "off") {
     return(load_injury_scalp(seasons, week, teams))
   }
 
-  # Mode: auto or last_available - use nflreadr with fallbacks
+  # Mode: sleeper - use Sleeper API for real-time injury data
+  if (mode == "sleeper") {
+    return(load_injury_from_sleeper(teams))
+  }
+
+  # Mode: auto or last_available - try Sleeper first, then nflreadr with fallbacks
+  if (mode == "auto") {
+    # Try Sleeper API first (real-time data)
+    sleeper_result <- load_injury_from_sleeper(teams)
+    if (nrow(sleeper_result$data) > 0) {
+      return(sleeper_result)
+    }
+    message("Sleeper API returned no data, falling back to nflreadr...")
+  }
+
   return(load_injury_nflreadr(seasons, mode))
+}
+
+#' Load injuries from Sleeper API
+#'
+#' @param teams Vector of team abbreviations
+#' @return List with data and metadata (compatible with load_injury_data return)
+load_injury_from_sleeper <- function(teams = NULL) {
+
+  result <- list(
+    data = tibble::tibble(),
+    mode_used = "sleeper",
+    fallback_season = NULL,
+    message = NULL
+  )
+
+  # Check if Sleeper API is available
+  if (!exists("load_injuries_sleeper", mode = "function")) {
+    result$message <- "Sleeper API not available (R/sleeper_api.R not loaded)"
+    message(result$message)
+    .INJURY_MODE_USED <<- "sleeper (unavailable)"
+    return(result)
+  }
+
+  # Try to load from Sleeper
+  sleeper_result <- tryCatch({
+    load_injuries_sleeper(teams = teams, use_cache = TRUE, verbose = TRUE)
+  }, error = function(e) {
+    message(sprintf("Sleeper API error: %s", conditionMessage(e)))
+    list(data = tibble::tibble(), success = FALSE, message = conditionMessage(e))
+  })
+
+  if (!isTRUE(sleeper_result$success) || nrow(sleeper_result$data) == 0) {
+    result$message <- sleeper_result$message %||% "Sleeper API returned no data"
+    message(result$message)
+    .INJURY_MODE_USED <<- "sleeper (no data)"
+    return(result)
+  }
+
+  # Normalize to standard format
+  if (exists("normalize_sleeper_injuries", mode = "function")) {
+    result$data <- normalize_sleeper_injuries(sleeper_result$data)
+  } else {
+    # Fallback normalization
+    result$data <- sleeper_result$data %>%
+      dplyr::transmute(
+        team = team,
+        player = player,
+        position = position,
+        practice_wed = NA_character_,
+        practice_thu = NA_character_,
+        practice_fri = NA_character_,
+        game_status = game_status,
+        injury_desc = dplyr::coalesce(injury_body_part, injury_notes, injury_status),
+        availability = availability,
+        source = "sleeper"
+      )
+  }
+
+  result$message <- sprintf("Loaded %d injuries from Sleeper API", nrow(result$data))
+  message(result$message)
+  .INJURY_MODE_USED <<- "sleeper"
+
+  # Track top impacts for reporting
+  if (nrow(result$data) > 0) {
+    .INJURY_TOP_IMPACTS <<- result$data %>%
+      dplyr::filter(availability < 0.5) %>%
+      dplyr::group_by(team) %>%
+      dplyr::slice_head(n = 3) %>%
+      dplyr::ungroup() %>%
+      as.list()
+  }
+
+  result
 }
 
 
@@ -896,4 +993,555 @@ get_injury_report_info <- function() {
       sprintf("Injury mode: %s", .INJURY_MODE_USED %||% "auto")
     }
   )
+}
+
+
+# =============================================================================
+# SECTION 11: Backup QB Quality Scoring
+# =============================================================================
+# Assesses backup QB quality to modulate QB injury penalty
+# Elite backups (Cooper Rush, Tyrod Taylor) should reduce penalty vs practice squad QBs
+
+# Cache for backup QB quality scores (avoid repeated API calls)
+.QB_BACKUP_QUALITY_CACHE <- new.env(parent = emptyenv())
+
+#' Get backup QB quality score for a team
+#'
+#' @param team Team abbreviation (e.g., "DAL", "KC")
+#' @param season Season year (default: current)
+#' @param use_cache Use cached values if available (default: TRUE)
+#' @return Numeric quality score 0-1 (0 = poor backup, 1 = elite backup)
+#'
+#' @details Quality score based on:
+#'   - Historical QB rating when starting (if available)
+#'   - Years of experience
+#'   - Career win-loss record
+#'   - Whether they've started games recently
+#'
+#' @examples
+#' get_backup_qb_quality("DAL", 2024)  # Cooper Rush = ~0.65
+#' get_backup_qb_quality("NE", 2024)   # Practice squad = ~0.15
+get_backup_qb_quality <- function(team, season = NULL, use_cache = TRUE) {
+
+  # Default to current season
+  season <- season %||% get0("SEASON", envir = .GlobalEnv, ifnotfound = as.integer(format(Sys.Date(), "%Y")))
+
+  # Check cache first
+  cache_key <- sprintf("%s_%d", team, season)
+  if (use_cache && exists(cache_key, envir = .QB_BACKUP_QUALITY_CACHE)) {
+    return(get(cache_key, envir = .QB_BACKUP_QUALITY_CACHE))
+  }
+
+  # Default quality score (league average backup)
+  default_quality <- 0.35
+
+  # Try to load depth charts
+  depth_charts <- tryCatch({
+    if (requireNamespace("nflreadr", quietly = TRUE)) {
+      nflreadr::load_depth_charts(seasons = season)
+    } else {
+      NULL
+    }
+  }, error = function(e) {
+    message(sprintf("Could not load depth charts: %s", conditionMessage(e)))
+    NULL
+  })
+
+  if (is.null(depth_charts) || !is.data.frame(depth_charts) || nrow(depth_charts) == 0) {
+    if (use_cache) assign(cache_key, default_quality, envir = .QB_BACKUP_QUALITY_CACHE)
+    return(default_quality)
+  }
+
+  # Find QB2 for this team
+  team_qbs <- depth_charts %>%
+    dplyr::filter(
+      club_code == team | team == !!team,
+      position == "QB"
+    ) %>%
+    dplyr::arrange(depth_team)
+
+  if (nrow(team_qbs) < 2) {
+    if (use_cache) assign(cache_key, default_quality, envir = .QB_BACKUP_QUALITY_CACHE)
+    return(default_quality)
+  }
+
+  # Get QB2 (second on depth chart)
+  qb2_name <- team_qbs$full_name[2]
+  qb2_gsis <- if ("gsis_id" %in% names(team_qbs)) team_qbs$gsis_id[2] else NULL
+
+  # Try to get historical stats for QB2
+  qb2_stats <- tryCatch({
+    if (requireNamespace("nflreadr", quietly = TRUE)) {
+      # Load player stats for recent seasons
+      stats <- nflreadr::load_player_stats(seasons = (season - 3):season) %>%
+        dplyr::filter(
+          position == "QB",
+          (full_name == qb2_name | player_display_name == qb2_name |
+           (!is.null(qb2_gsis) & player_id == qb2_gsis))
+        )
+
+      if (nrow(stats) == 0) return(NULL)
+
+      # Calculate quality metrics
+      stats %>%
+        dplyr::filter(attempts >= 10) %>%  # At least 10 attempts
+        dplyr::summarise(
+          games_started = dplyr::n(),
+          total_attempts = sum(attempts, na.rm = TRUE),
+          passer_rating_avg = mean(passer_rating, na.rm = TRUE),
+          td_int_ratio = sum(passing_tds, na.rm = TRUE) / pmax(sum(interceptions, na.rm = TRUE), 1),
+          epa_per_play = mean(passing_epa / pmax(attempts, 1), na.rm = TRUE)
+        )
+    } else {
+      NULL
+    }
+  }, error = function(e) {
+    NULL
+  })
+
+  # Calculate quality score based on available data
+  quality_score <- default_quality
+
+  if (!is.null(qb2_stats) && nrow(qb2_stats) > 0) {
+    # Experience component (0-0.3): more games = better
+    exp_score <- pmin(qb2_stats$games_started / 20, 1) * 0.3
+
+    # Passer rating component (0-0.4): higher rating = better
+    # NFL average is ~90, elite is 100+
+    rating_score <- if (!is.na(qb2_stats$passer_rating_avg)) {
+      pmin(pmax((qb2_stats$passer_rating_avg - 70) / 40, 0), 1) * 0.4
+    } else {
+      0.15  # Default if no rating
+    }
+
+    # TD/INT ratio component (0-0.2): higher ratio = better
+    tdi_score <- if (!is.na(qb2_stats$td_int_ratio)) {
+      pmin(qb2_stats$td_int_ratio / 3, 1) * 0.2
+    } else {
+      0.05  # Default
+    }
+
+    # EPA component (0-0.1): positive EPA = good
+    epa_score <- if (!is.na(qb2_stats$epa_per_play)) {
+      pmin(pmax((qb2_stats$epa_per_play + 0.1) / 0.3, 0), 1) * 0.1
+    } else {
+      0.03  # Default
+    }
+
+    quality_score <- exp_score + rating_score + tdi_score + epa_score
+  } else {
+    # No stats available - use known backup quality lookup
+    known_quality <- get_known_backup_quality(qb2_name, team, season)
+    if (!is.na(known_quality)) {
+      quality_score <- known_quality
+    }
+  }
+
+  # Bound to [0, 1]
+  quality_score <- pmin(pmax(quality_score, 0), 1)
+
+  # Cache the result
+  if (use_cache) assign(cache_key, quality_score, envir = .QB_BACKUP_QUALITY_CACHE)
+
+  quality_score
+}
+
+
+#' Get known backup QB quality from pre-defined list
+#'
+#' @param qb_name QB name
+#' @param team Team abbreviation
+#' @param season Season year
+#' @return Quality score or NA if not in lookup
+get_known_backup_quality <- function(qb_name, team, season) {
+
+  # Known quality backups (2023-2025)
+  # These are QBs with meaningful NFL experience as backups/spot starters
+  known_quality <- list(
+    # Elite tier (0.65-0.80): Proven starters, high draft picks
+    "Cooper Rush" = 0.70,
+    "Tyrod Taylor" = 0.65,
+    "Jacoby Brissett" = 0.60,
+    "Gardner Minshew" = 0.65,
+    "Jameis Winston" = 0.60,
+    "Marcus Mariota" = 0.55,
+    "Joe Flacco" = 0.65,
+    "Andy Dalton" = 0.60,
+    "Case Keenum" = 0.55,
+    "Colt McCoy" = 0.50,
+
+    # Good tier (0.45-0.60): Experienced backups
+    "Mike White" = 0.50,
+    "Taylor Heinicke" = 0.50,
+    "Sam Darnold" = 0.50,
+    "Ryan Tannehill" = 0.55,
+    "Jimmy Garoppolo" = 0.60,
+    "Drew Lock" = 0.45,
+    "Mason Rudolph" = 0.45,
+    "Mitch Trubisky" = 0.50,
+    "Tyler Huntley" = 0.50,
+    "Easton Stick" = 0.45,
+
+    # Average tier (0.30-0.45): Limited experience
+    "Brett Rypien" = 0.35,
+    "Kyle Allen" = 0.40,
+    "Trace McSorley" = 0.30,
+    "Tommy DeVito" = 0.35,
+    "Jeff Driskel" = 0.35,
+    "Tim Boyle" = 0.30,
+    "Dorian Thompson-Robinson" = 0.40,
+    "Anthony Richardson" = 0.45,
+
+    # Below average tier (0.15-0.30): Rookie/practice squad
+    "default" = 0.25
+  )
+
+  # Try to match QB name
+  for (name_pattern in names(known_quality)) {
+    if (grepl(name_pattern, qb_name, ignore.case = TRUE)) {
+      return(known_quality[[name_pattern]])
+    }
+  }
+
+  NA_real_
+}
+
+
+#' Calculate QB injury penalty adjusted for backup quality
+#'
+#' @param team Team abbreviation
+#' @param qb_status QB injury status (OUT, DOUBTFUL, QUESTIONABLE, etc.)
+#' @param season Season year
+#' @return Point penalty (negative value)
+#'
+#' @details
+#' Base penalty from config QB_OUT_BASE_PENALTY (default 7.2)
+#' Adjusted by: penalty * (1 - QB_BACKUP_QUALITY_DISCOUNT * backup_quality)
+#' Example: Elite backup (0.70) with 50% discount = 7.2 * (1 - 0.5 * 0.70) = 4.68 pts
+calculate_qb_injury_penalty <- function(team, qb_status, season = NULL) {
+
+  # Get config values with fallbacks
+  base_penalty <- get0("QB_OUT_BASE_PENALTY", envir = .GlobalEnv, ifnotfound = 7.2)
+  quality_discount <- get0("QB_BACKUP_QUALITY_DISCOUNT", envir = .GlobalEnv, ifnotfound = 0.50)
+  use_quality <- get0("USE_QB_BACKUP_QUALITY", envir = .GlobalEnv, ifnotfound = TRUE)
+
+  # Determine severity multiplier based on status
+  status <- toupper(trimws(qb_status))
+  severity <- dplyr::case_when(
+    grepl("OUT|IR", status)       ~ 1.0,
+    grepl("DOUBTFUL", status)     ~ 0.7,
+    grepl("QUESTIONABLE", status) ~ 0.35,
+    grepl("LIMITED", status)      ~ 0.15,
+    TRUE                          ~ 0.0
+  )
+
+  if (severity == 0) {
+    return(0)
+  }
+
+  # Get backup quality if enabled
+  backup_quality <- if (isTRUE(use_quality)) {
+    tryCatch({
+      get_backup_qb_quality(team, season)
+    }, error = function(e) {
+      0.35  # Default to league average backup
+    })
+  } else {
+    0  # No discount if quality scoring disabled
+  }
+
+  # Calculate adjusted penalty
+  # Higher backup quality = lower penalty
+  # Formula: base * severity * (1 - discount * quality)
+  # Elite backup (0.70) with 50% discount: 7.2 * (1 - 0.5 * 0.70) = 4.68
+  # Poor backup (0.20) with 50% discount: 7.2 * (1 - 0.5 * 0.20) = 6.48
+  discount_factor <- 1 - (quality_discount * backup_quality)
+  adjusted_penalty <- base_penalty * severity * discount_factor
+
+  # Return negative value (penalty)
+  -adjusted_penalty
+}
+
+
+#' Clear the backup QB quality cache
+#'
+#' @description Useful for testing or when depth charts update
+clear_qb_quality_cache <- function() {
+  rm(list = ls(envir = .QB_BACKUP_QUALITY_CACHE), envir = .QB_BACKUP_QUALITY_CACHE)
+  message("QB backup quality cache cleared")
+}
+
+
+# =============================================================================
+# SECTION 12: Snap-Count Weighted Injury Impacts
+# =============================================================================
+# WR1 (60% snaps) should have higher injury impact than WR5 (5% snaps)
+# Uses nflreadr::load_participation() for snap data
+
+# Cache for player snap percentages
+.SNAP_PCT_CACHE <- new.env(parent = emptyenv())
+
+#' Load player snap percentages for a team
+#'
+#' @param team Team abbreviation
+#' @param season Season year
+#' @param weeks Weeks to average (default: last 4 completed weeks)
+#' @param use_cache Use cached values (default: TRUE)
+#' @return Tibble with player, position, snap_pct columns
+#'
+#' @details Uses nflreadr::load_participation() to get snap counts
+#' Calculates average snap percentage over recent weeks
+load_player_snap_percentages <- function(team, season = NULL, weeks = NULL, use_cache = TRUE) {
+
+  season <- season %||% get0("SEASON", envir = .GlobalEnv, ifnotfound = as.integer(format(Sys.Date(), "%Y")))
+
+  # Check cache
+
+  cache_key <- sprintf("%s_%d", team, season)
+  if (use_cache && exists(cache_key, envir = .SNAP_PCT_CACHE)) {
+    return(get(cache_key, envir = .SNAP_PCT_CACHE))
+  }
+
+  # Default result
+  default_result <- tibble::tibble(
+    player = character(),
+    position = character(),
+    snap_pct = numeric()
+  )
+
+  # Try to load participation data
+  participation <- tryCatch({
+    if (requireNamespace("nflreadr", quietly = TRUE)) {
+      nflreadr::load_participation(seasons = season)
+    } else {
+      NULL
+    }
+  }, error = function(e) {
+    message(sprintf("Could not load participation data: %s", conditionMessage(e)))
+    NULL
+  })
+
+  if (is.null(participation) || !is.data.frame(participation) || nrow(participation) == 0) {
+    if (use_cache) assign(cache_key, default_result, envir = .SNAP_PCT_CACHE)
+    return(default_result)
+  }
+
+  # Filter to team and calculate snap percentages
+  team_snaps <- tryCatch({
+    # Handle different column naming conventions
+    team_col <- if ("possession_team" %in% names(participation)) "possession_team" else
+                if ("team" %in% names(participation)) "team" else
+                if ("club_code" %in% names(participation)) "club_code" else NULL
+
+    if (is.null(team_col)) {
+      message("Could not find team column in participation data")
+      return(default_result)
+    }
+
+    # Determine weeks to use
+    if (is.null(weeks)) {
+      # Use last 4 completed weeks
+      current_week <- get0("WEEK_TO_SIM", envir = .GlobalEnv, ifnotfound = 1)
+      weeks <- max(1, current_week - 4):(current_week - 1)
+      weeks <- weeks[weeks > 0]
+    }
+
+    # Filter and aggregate
+    filtered <- participation %>%
+      dplyr::filter(
+        .data[[team_col]] == team,
+        week %in% weeks
+      )
+
+    if (nrow(filtered) == 0) {
+      return(default_result)
+    }
+
+    # Calculate average snap percentage per player
+    # Need to identify the snap count and total snap columns
+    snap_col <- if ("offense_snaps" %in% names(filtered)) "offense_snaps" else
+                if ("snaps" %in% names(filtered)) "snaps" else
+                if ("n_offense" %in% names(filtered)) "n_offense" else NULL
+
+    if (is.null(snap_col)) {
+      # Try to calculate from participation strings
+      if ("offense_players" %in% names(filtered)) {
+        # This is a play-level dataset, need different approach
+        return(calculate_snap_pct_from_plays(filtered, team))
+      }
+      return(default_result)
+    }
+
+    # Get player name column
+    player_col <- if ("full_name" %in% names(filtered)) "full_name" else
+                  if ("player_name" %in% names(filtered)) "player_name" else
+                  if ("gsis_id" %in% names(filtered)) "gsis_id" else NULL
+
+    pos_col <- if ("position" %in% names(filtered)) "position" else
+               if ("pos" %in% names(filtered)) "pos" else NULL
+
+    if (is.null(player_col)) {
+      return(default_result)
+    }
+
+    # Aggregate snap percentages
+    result <- filtered %>%
+      dplyr::group_by(
+        player = .data[[player_col]],
+        position = if (!is.null(pos_col)) .data[[pos_col]] else NA_character_
+      ) %>%
+      dplyr::summarise(
+        total_snaps = sum(.data[[snap_col]], na.rm = TRUE),
+        games = dplyr::n_distinct(week),
+        .groups = "drop"
+      ) %>%
+      dplyr::mutate(
+        # Calculate snap percentage relative to team average
+        snap_pct = 100 * total_snaps / max(total_snaps, na.rm = TRUE)
+      ) %>%
+      dplyr::select(player, position, snap_pct)
+
+    result
+
+  }, error = function(e) {
+    message(sprintf("Error calculating snap percentages: %s", conditionMessage(e)))
+    default_result
+  })
+
+  # Cache and return
+  if (use_cache) assign(cache_key, team_snaps, envir = .SNAP_PCT_CACHE)
+  team_snaps
+}
+
+
+#' Calculate snap percentages from play-level participation data
+#'
+#' @param plays Play-level participation data
+#' @param team Team abbreviation
+#' @return Tibble with player, position, snap_pct
+calculate_snap_pct_from_plays <- function(plays, team) {
+
+  default_result <- tibble::tibble(
+    player = character(),
+    position = character(),
+    snap_pct = numeric()
+  )
+
+  tryCatch({
+    # offense_players is a semicolon-separated list of player IDs
+    if (!"offense_players" %in% names(plays)) {
+      return(default_result)
+    }
+
+    # Count total offensive plays
+    total_plays <- nrow(plays)
+
+    if (total_plays == 0) {
+      return(default_result)
+    }
+
+    # Expand player participation
+    player_counts <- plays %>%
+      dplyr::filter(!is.na(offense_players)) %>%
+      dplyr::mutate(
+        players = strsplit(offense_players, ";")
+      ) %>%
+      tidyr::unnest(players) %>%
+      dplyr::filter(nzchar(trimws(players))) %>%
+      dplyr::count(player_id = trimws(players), name = "snaps") %>%
+      dplyr::mutate(
+        snap_pct = 100 * snaps / total_plays
+      )
+
+    # Try to get player names from roster
+    roster <- tryCatch({
+      nflreadr::load_rosters(seasons = get0("SEASON", envir = .GlobalEnv, ifnotfound = 2024))
+    }, error = function(e) NULL)
+
+    if (!is.null(roster) && is.data.frame(roster)) {
+      player_counts <- player_counts %>%
+        dplyr::left_join(
+          roster %>% dplyr::select(gsis_id, full_name, position),
+          by = c("player_id" = "gsis_id")
+        ) %>%
+        dplyr::transmute(
+          player = dplyr::coalesce(full_name, player_id),
+          position = position,
+          snap_pct = snap_pct
+        )
+    } else {
+      player_counts <- player_counts %>%
+        dplyr::transmute(
+          player = player_id,
+          position = NA_character_,
+          snap_pct = snap_pct
+        )
+    }
+
+    player_counts
+
+  }, error = function(e) {
+    message(sprintf("Error in play-level snap calculation: %s", conditionMessage(e)))
+    default_result
+  })
+}
+
+
+#' Apply snap-count weighting to injury impact
+#'
+#' @param base_impact Base injury impact (from position weight)
+#' @param player_name Player name
+#' @param team Team abbreviation
+#' @param season Season year
+#' @return Weighted injury impact
+#'
+#' @details
+#' Formula: base_impact * (snap_pct / SNAP_WEIGHT_REFERENCE)
+#' WR1 at 60% snaps with 50% reference: base_impact * 1.2
+#' WR5 at 10% snaps with 50% reference: base_impact * 0.2
+weight_injury_by_snaps <- function(base_impact, player_name, team, season = NULL) {
+
+  # Check if snap weighting is enabled
+  use_snap_weighting <- get0("USE_SNAP_WEIGHTED_INJURIES", envir = .GlobalEnv, ifnotfound = TRUE)
+  snap_reference <- get0("SNAP_WEIGHT_REFERENCE", envir = .GlobalEnv, ifnotfound = 50)
+
+  if (!isTRUE(use_snap_weighting)) {
+    return(base_impact)
+  }
+
+  # Get snap percentages for team
+  snap_data <- tryCatch({
+    load_player_snap_percentages(team, season, use_cache = TRUE)
+  }, error = function(e) {
+    tibble::tibble()
+  })
+
+  if (nrow(snap_data) == 0) {
+    return(base_impact)  # No data, use unweighted
+  }
+
+  # Find player's snap percentage
+  player_snap <- snap_data %>%
+    dplyr::filter(grepl(player_name, player, ignore.case = TRUE)) %>%
+    dplyr::slice_head(n = 1)
+
+  if (nrow(player_snap) == 0) {
+    # Player not found, use position-based default
+    return(base_impact)
+  }
+
+  snap_pct <- player_snap$snap_pct
+
+  # Apply weighting: higher snap % = higher impact
+  # Bounded to prevent extreme values
+  weight_factor <- pmin(pmax(snap_pct / snap_reference, 0.2), 2.0)
+
+  base_impact * weight_factor
+}
+
+
+#' Clear snap percentage cache
+clear_snap_pct_cache <- function() {
+  rm(list = ls(envir = .SNAP_PCT_CACHE), envir = .SNAP_PCT_CACHE)
+  message("Snap percentage cache cleared")
 }

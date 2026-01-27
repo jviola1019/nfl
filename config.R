@@ -84,10 +84,25 @@ BLEND_ALPHA <- getOption("nfl_sim.blend_alpha", default = 0.25)
 
 #' @description Probability calibration method
 #' @options "isotonic" (isotonic regression), "platt" (Platt scaling),
-#'          "beta" (beta calibration), "ensemble" (weighted ensemble)
-#' @default "isotonic"
-#' @validation Isotonic provides 1.7% Brier improvement; ensemble provides 2.1%
-CALIBRATION_METHOD <- getOption("nfl_sim.calibration", default = "isotonic")
+#'          "beta" (beta calibration), "ensemble" (weighted ensemble),
+#'          "spline" (GAM spline calibration)
+#' @default "spline"
+#' @validation Spline provides -6.9% Brier improvement (best); isotonic is broken (Brier 0.316)
+CALIBRATION_METHOD <- getOption("nfl_sim.calibration", default = "spline")
+
+#' @description Path to pre-trained ensemble calibration model
+#' @default "ensemble_calibration_production.rds"
+#' @note Generate with: source("ensemble_calibration_implementation.R")
+ENSEMBLE_CALIBRATION_FILE <- "ensemble_calibration_production.rds"
+
+#' @description Ensemble calibration weights (fallback if file not found)
+#' @note Weights sum to 1.0; derived from validation set performance
+ENSEMBLE_WEIGHTS_DEFAULT <- list(
+  isotonic = 0.30,
+  platt = 0.25,
+  beta = 0.25,
+  spline = 0.20
+)
 
 # =============================================================================
 # STRENGTH OF SCHEDULE (SOS)
@@ -121,6 +136,65 @@ RECENCY_DECAY_RATE <- 0.15
 #' @range 1.0 to 6.0
 #' @note Lower values = stronger recency bias
 RECENCY_HALFLIFE <- 3.0
+
+# =============================================================================
+# GAUSSIAN COPULA (SCORE CORRELATION) PARAMETERS
+# =============================================================================
+# These parameters control the rho_from_game() function which calculates
+# game-specific score correlation for the Gaussian copula simulation.
+# Extracting them here enables grid search optimization (see Phase 4 plan).
+
+#' @description Base intercept for correlation calculation
+#' @default 0.10
+#' @range 0.05 to 0.15
+#' @note Higher values increase baseline positive correlation
+RHO_BASE_INTERCEPT <- 0.10
+
+#' @description Scaling factor for total points effect on correlation
+#' @default 0.20
+#' @range 0.15 to 0.25
+#' @note Higher totals -> more positive correlation (shootouts)
+RHO_TOTAL_SCALING <- 0.20
+
+#' @description Neutral point for total scoring (points where effect is zero)
+#' @default 44
+#' @range 40 to 48
+#' @note Typical NFL game total is ~44 points
+RHO_TOTAL_NEUTRAL <- 44
+
+#' @description Anti-correlation coefficient for spread effect
+#' @default -0.15
+#' @range -0.25 to -0.05
+#' @note Larger spreads reduce positive correlation (blowouts)
+RHO_ANTI_COEF <- -0.15
+
+#' @description Spread threshold for anti-correlation effect
+#' @default 10
+#' @range 7 to 14
+#' @note Point spread at which anti-correlation effect is half-maximal
+RHO_SPREAD_THRESHOLD <- 10
+
+#' @description Script factor divisor for blowout amplification
+#' @default 10
+#' @range 8 to 15
+#' @note Controls tanh saturation for game script effect
+RHO_SCRIPT_DIVISOR <- 10
+
+#' @description Global shrinkage factor toward league-average rho
+#' @default 0.50
+#' @range 0.40 to 0.60
+#' @note 0.5 = equal weight to game-specific and global estimates
+RHO_GLOBAL_SHRINKAGE <- 0.50
+
+#' @description Lower bound for rho (prevents extreme negative correlation)
+#' @default -0.20
+#' @range -0.30 to -0.10
+RHO_BOUND_LOW <- -0.20
+
+#' @description Upper bound for rho (prevents extreme positive correlation)
+#' @default 0.60
+#' @range 0.50 to 0.70
+RHO_BOUND_HIGH <- 0.60
 
 # =============================================================================
 # VALIDATION SCHEMA - Train/Validation/Test Splits
@@ -180,6 +254,37 @@ DIVISION_GAME_ADJUST <- -0.2
 CONFERENCE_GAME_ADJUST <- 0.0
 
 # =============================================================================
+# PRIMETIME ADJUSTMENTS (REQUIRES VALIDATION)
+# =============================================================================
+# Preliminary analysis shows Thursday games underperform (62.1% accuracy, 0.238 Brier)
+# vs Sunday afternoon (67.4% accuracy, 0.210 Brier).
+# IMPORTANT: These are DISABLED by default until bootstrap test confirms p < 0.05
+# Run: Rscript validation/primetime_significance_test.R to validate
+
+#' @description Enable primetime game adjustments
+#' @default FALSE (requires p < 0.05 validation before enabling)
+#' @note Set to TRUE only after running primetime_significance_test.R
+USE_PRIMETIME_ADJUSTMENTS <- FALSE
+
+#' @description Thursday Night Football adjustment (points)
+#' @default 0.0 (disabled pending validation)
+#' @preliminary Thursday accuracy: 62.1%, Brier: 0.238
+#' @validation PENDING - requires p < 0.05 bootstrap test
+THURSDAY_NIGHT_ADJ <- 0.0
+
+#' @description Sunday Night Football adjustment (points)
+#' @default 0.0 (disabled pending validation)
+#' @preliminary Sunday night accuracy: 65.8%, Brier: 0.218
+#' @validation PENDING - requires p < 0.05 bootstrap test
+SUNDAY_NIGHT_ADJ <- 0.0
+
+#' @description Monday Night Football adjustment (points)
+#' @default 0.0 (disabled pending validation)
+#' @preliminary Monday accuracy: 64.2%, Brier: 0.222
+#' @validation PENDING - requires p < 0.05 bootstrap test
+MONDAY_NIGHT_ADJ <- 0.0
+
+# =============================================================================
 # INJURY DATA MODE
 # =============================================================================
 # Controls how injury data is loaded and processed
@@ -206,6 +311,18 @@ ALLOW_INJURY_SCRAPE <- getOption("nfl_sim.allow_injury_scrape", default = FALSE)
 #' @description Cache directory for scraped injury data
 #' @default "~/.cache/nfl_sim_injuries"
 INJURY_CACHE_DIR <- file.path(path.expand("~"), ".cache", "nfl_sim_injuries")
+
+#' @description Enable snap-count weighted injury impacts
+#' @default TRUE
+#' @note When TRUE, WR1 (60% snaps) has higher impact than WR5 (5% snaps)
+#' @note Uses nflreadr::load_participation() for snap data
+USE_SNAP_WEIGHTED_INJURIES <- TRUE
+
+#' @description Reference snap percentage for weighting (50% = neutral impact)
+#' @default 50
+#' @range 30 to 70
+#' @note Impact formula: base_impact * (snap_pct / SNAP_WEIGHT_REFERENCE)
+SNAP_WEIGHT_REFERENCE <- 50
 
 # =============================================================================
 # INJURY MODEL WEIGHTS (VALIDATED)
@@ -237,6 +354,51 @@ INJURY_WEIGHT_FRONT7 <- 0.50
 #' @default 1.5
 #' @validation QB impact: -7.2 points (literature: -7 to -10)
 QB_INJURY_MULTIPLIER <- 1.5
+
+#' @description Maximum reduction in QB penalty for elite backup
+#' @default 0.50
+#' @range 0.0 to 0.70
+#' @note 0.5 = elite backup (e.g., Cooper Rush) reduces penalty by 50%
+#' @note Quality based on nflreadr depth charts + historical QB2 efficiency
+QB_BACKUP_QUALITY_DISCOUNT <- 0.50
+
+#' @description Base penalty in points when starting QB is out
+#' @default 7.2
+#' @range 5.0 to 10.0
+#' @validation Literature: -7 to -10 points; actual depends on backup quality
+QB_OUT_BASE_PENALTY <- 7.2
+
+#' @description Enable backup QB quality scoring
+#' @default TRUE
+#' @note When FALSE, uses fixed penalty regardless of backup
+USE_QB_BACKUP_QUALITY <- TRUE
+
+# =============================================================================
+# INJURY POSITION MULTIPLIERS (for calc_injury_impacts)
+# =============================================================================
+# These multipliers scale the base injury penalty by position group
+# Used internally during injury impact calculation before INJURY_WEIGHT_* scaling
+
+#' @description Trench position multiplier (OL, DL)
+#' @default 1.3
+#' @note Higher value = trenches weighted more heavily in injury calculations
+INJURY_POS_MULT_TRENCH <- 1.3
+
+#' @description Skill position multiplier (WR, RB, TE)
+#' @default 1.05
+INJURY_POS_MULT_SKILL <- 1.05
+
+#' @description Secondary position multiplier (CB, S)
+#' @default 0.95
+INJURY_POS_MULT_SECONDARY <- 0.95
+
+#' @description Front 7 position multiplier (LB, DL edge)
+#' @default 0.85
+INJURY_POS_MULT_FRONT7 <- 0.85
+
+#' @description Default multiplier for other positions
+#' @default 0.6
+INJURY_POS_MULT_OTHER <- 0.6
 
 # =============================================================================
 # INJURY SCALPING - DETAILED POSITION WEIGHTS
@@ -388,6 +550,21 @@ MONITORING_ACCURACY_THRESHOLD <- 0.48
 #' @default TRUE
 USE_SOBOL <- TRUE
 
+#' @description Prior standard deviation for margin probability estimation
+#' @default 6.5
+#' @validation Empirically tuned vs 2015-2023 results
+MARGIN_PROB_PRIOR_SD <- 6.5
+
+#' @description Offense weight in PPD (points per drive) blending
+#' @default 0.65 (65% offense, 35% opponent defense)
+#' @range 0.5 to 0.8
+PPD_BLEND_WEIGHT <- 0.65
+
+#' @description Points adjustment per 10% pressure rate mismatch
+#' @default 0.6
+#' @note Higher values = more impact from OL/DL matchups
+PRESSURE_MISMATCH_PTS <- 0.6
+
 #' @description Number of cross-validation folds for meta-model training
 #' @default 5
 CV_FOLDS <- 5
@@ -518,6 +695,42 @@ WEEK_BUFFER_POST <- 2
 #' @default 0.60 (60% market weight, 40% model weight)
 #' @range 0.0 to 1.0
 SHRINKAGE <- 0.60
+
+#' @description Enable dynamic shrinkage based on game context
+#' @default TRUE
+#' @note When TRUE, shrinkage varies by week, spread size, and game type
+USE_DYNAMIC_SHRINKAGE <- TRUE
+
+#' @description Base shrinkage when dynamic mode is enabled
+#' @default 0.55
+#' @range 0.40 to 0.70
+SHRINKAGE_BASE <- 0.55
+
+#' @description Additional shrinkage for early season (weeks 1-4)
+#' @default 0.10
+#' @range 0.0 to 0.20
+#' @note Early season has less data; trust market more
+SHRINKAGE_EARLY_SEASON_ADJ <- 0.10
+
+#' @description Shrinkage adjustment for high spreads (10+ points)
+#' @default 0.10
+#' @range 0.0 to 0.15
+#' @note Market is more confident on big mismatches
+SHRINKAGE_HIGH_SPREAD_ADJ <- 0.10
+
+#' @description Shrinkage adjustment for close games (< 3 points)
+#' @default -0.05
+#' @range -0.10 to 0.0
+#' @note Model may have edge in toss-up games
+SHRINKAGE_CLOSE_GAME_ADJ <- -0.05
+
+#' @description Spread threshold for "high spread" adjustment
+#' @default 10
+SHRINKAGE_HIGH_SPREAD_THRESHOLD <- 10
+
+#' @description Spread threshold for "close game" adjustment
+#' @default 3
+SHRINKAGE_CLOSE_GAME_THRESHOLD <- 3
 
 #' @description Kelly criterion fraction for stake sizing
 #' @default 0.125 (1/8 Kelly for conservative bankroll management)
@@ -666,11 +879,23 @@ list2env(
     BLEND_META_MODEL = BLEND_META_MODEL,
     BLEND_ALPHA = BLEND_ALPHA,
     CALIBRATION_METHOD = CALIBRATION_METHOD,
+    ENSEMBLE_CALIBRATION_FILE = ENSEMBLE_CALIBRATION_FILE,
+    ENSEMBLE_WEIGHTS_DEFAULT = ENSEMBLE_WEIGHTS_DEFAULT,
     USE_SOS = USE_SOS,
     SOS_STRENGTH = SOS_STRENGTH,
     USE_RECENCY_DECAY = USE_RECENCY_DECAY,
     RECENCY_DECAY_RATE = RECENCY_DECAY_RATE,
     RECENCY_HALFLIFE = RECENCY_HALFLIFE,
+    # Gaussian copula (score correlation) parameters
+    RHO_BASE_INTERCEPT = RHO_BASE_INTERCEPT,
+    RHO_TOTAL_SCALING = RHO_TOTAL_SCALING,
+    RHO_TOTAL_NEUTRAL = RHO_TOTAL_NEUTRAL,
+    RHO_ANTI_COEF = RHO_ANTI_COEF,
+    RHO_SPREAD_THRESHOLD = RHO_SPREAD_THRESHOLD,
+    RHO_SCRIPT_DIVISOR = RHO_SCRIPT_DIVISOR,
+    RHO_GLOBAL_SHRINKAGE = RHO_GLOBAL_SHRINKAGE,
+    RHO_BOUND_LOW = RHO_BOUND_LOW,
+    RHO_BOUND_HIGH = RHO_BOUND_HIGH,
     VALIDATION_SCHEMA = VALIDATION_SCHEMA,
     BACKTEST_TRIALS = BACKTEST_TRIALS,
     REST_SHORT_PENALTY = REST_SHORT_PENALTY,
@@ -679,15 +904,31 @@ list2env(
     DEN_ALTITUDE_BONUS = DEN_ALTITUDE_BONUS,
     DIVISION_GAME_ADJUST = DIVISION_GAME_ADJUST,
     CONFERENCE_GAME_ADJUST = CONFERENCE_GAME_ADJUST,
+    # Primetime adjustments (disabled pending validation)
+    USE_PRIMETIME_ADJUSTMENTS = USE_PRIMETIME_ADJUSTMENTS,
+    THURSDAY_NIGHT_ADJ = THURSDAY_NIGHT_ADJ,
+    SUNDAY_NIGHT_ADJ = SUNDAY_NIGHT_ADJ,
+    MONDAY_NIGHT_ADJ = MONDAY_NIGHT_ADJ,
     INJURY_WEIGHT_SKILL = INJURY_WEIGHT_SKILL,
     INJURY_WEIGHT_TRENCH = INJURY_WEIGHT_TRENCH,
     INJURY_WEIGHT_SECONDARY = INJURY_WEIGHT_SECONDARY,
     INJURY_WEIGHT_FRONT7 = INJURY_WEIGHT_FRONT7,
     QB_INJURY_MULTIPLIER = QB_INJURY_MULTIPLIER,
+    QB_BACKUP_QUALITY_DISCOUNT = QB_BACKUP_QUALITY_DISCOUNT,
+    QB_OUT_BASE_PENALTY = QB_OUT_BASE_PENALTY,
+    USE_QB_BACKUP_QUALITY = USE_QB_BACKUP_QUALITY,
+    # Injury position multipliers (for calc_injury_impacts)
+    INJURY_POS_MULT_TRENCH = INJURY_POS_MULT_TRENCH,
+    INJURY_POS_MULT_SKILL = INJURY_POS_MULT_SKILL,
+    INJURY_POS_MULT_SECONDARY = INJURY_POS_MULT_SECONDARY,
+    INJURY_POS_MULT_FRONT7 = INJURY_POS_MULT_FRONT7,
+    INJURY_POS_MULT_OTHER = INJURY_POS_MULT_OTHER,
     INJURY_MODE = INJURY_MODE,
     INJURY_MANUAL_FILE = INJURY_MANUAL_FILE,
     ALLOW_INJURY_SCRAPE = ALLOW_INJURY_SCRAPE,
     INJURY_CACHE_DIR = INJURY_CACHE_DIR,
+    USE_SNAP_WEIGHTED_INJURIES = USE_SNAP_WEIGHTED_INJURIES,
+    SNAP_WEIGHT_REFERENCE = SNAP_WEIGHT_REFERENCE,
     INJURY_POSITION_WEIGHTS = INJURY_POSITION_WEIGHTS,
     PRACTICE_AVAILABILITY = PRACTICE_AVAILABILITY,
     GAME_STATUS_MULTIPLIER = GAME_STATUS_MULTIPLIER,
@@ -729,6 +970,13 @@ list2env(
     WEEK_BUFFER_POST = WEEK_BUFFER_POST,
     # Betting/market parameters
     SHRINKAGE = SHRINKAGE,
+    USE_DYNAMIC_SHRINKAGE = USE_DYNAMIC_SHRINKAGE,
+    SHRINKAGE_BASE = SHRINKAGE_BASE,
+    SHRINKAGE_EARLY_SEASON_ADJ = SHRINKAGE_EARLY_SEASON_ADJ,
+    SHRINKAGE_HIGH_SPREAD_ADJ = SHRINKAGE_HIGH_SPREAD_ADJ,
+    SHRINKAGE_CLOSE_GAME_ADJ = SHRINKAGE_CLOSE_GAME_ADJ,
+    SHRINKAGE_HIGH_SPREAD_THRESHOLD = SHRINKAGE_HIGH_SPREAD_THRESHOLD,
+    SHRINKAGE_CLOSE_GAME_THRESHOLD = SHRINKAGE_CLOSE_GAME_THRESHOLD,
     KELLY_FRACTION = KELLY_FRACTION,
     MAX_EDGE = MAX_EDGE,
     MAX_STAKE = MAX_STAKE,

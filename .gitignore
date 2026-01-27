@@ -1,6 +1,7 @@
 # R Environment
 .Rhistory
 .RData
+.RDataTmp
 .Rproj.user
 .Ruserdata
 
@@ -38,6 +39,9 @@ nul
 # Test/validation artifacts (can be regenerated)
 *_results.rds
 *_report.rds
+model_validation_*.rds
+comprehensive_test_results.rds
+r451_compatibility_report.rds
 
 # Cached data
 .cache/

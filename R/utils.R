@@ -196,9 +196,9 @@ brier_score <- function(pred_prob, actual_outcome) {
 #' Calculate log loss
 #' @param pred_prob Predicted probabilities
 #' @param actual_outcome Actual outcomes (0 or 1)
-#' @param eps Epsilon to prevent log(0)
+#' @param eps Epsilon to prevent log(0) (default: PROB_EPSILON = 1e-9)
 #' @return Log loss (lower is better)
-log_loss <- function(pred_prob, actual_outcome, eps = 1e-15) {
+log_loss <- function(pred_prob, actual_outcome, eps = PROB_EPSILON) {
   pred_prob <- pmax(pmin(pred_prob, 1 - eps), eps)
   valid <- !is.na(pred_prob) & !is.na(actual_outcome)
   if (sum(valid) == 0) return(NA_real_)

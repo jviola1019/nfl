@@ -6,6 +6,15 @@
 # ------------------------------------------------------------------------------
 
 suppressPackageStartupMessages({
+  # Source canonical utilities from R/utils.R first
+  local({
+    utils_path <- if (file.exists("R/utils.R")) "R/utils.R" else file.path(getwd(), "R/utils.R")
+    if (file.exists(utils_path)) {
+      tryCatch(source(utils_path), error = function(e) {
+        message(sprintf("Note: Could not source R/utils.R: %s", conditionMessage(e)))
+      })
+    }
+  })
   source("NFLbrier_logloss.R")
   library(tidyverse)
 })

@@ -2,7 +2,7 @@
 
 A beginner-friendly guide to running NFL game predictions using this statistical model.
 
-**Version**: 2.4
+**Version**: 2.6.2
 **R Version Required**: 4.3.0+ (tested on 4.5.1)
 **Last Updated**: January 2026
 
@@ -118,8 +118,10 @@ injuries <- load_injuries(seasons = 2025)
 
 You can also configure injury mode in `config.R`:
 - `INJURY_MODE = "auto"` (default) - Uses nflreadr with fallback
+- `INJURY_MODE = "sleeper"` - Uses Sleeper API for real-time injury data
 - `INJURY_MODE = "off"` - Disables injury adjustments
 - `INJURY_MODE = "last_available"` - Uses most recent available season
+- `INJURY_MODE = "scalp"` - Scrapes ESPN for current week data
 
 ### "Predictions seem incorrect"
 1. Verify `WEEK_TO_SIM` and `SEASON` in `config.R`

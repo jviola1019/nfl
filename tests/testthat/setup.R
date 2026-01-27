@@ -59,6 +59,16 @@ source_module <- function(module_name) {
   }
 }
 
+# Load config.R first (defines all global parameters)
+config_path <- file.path(PROJECT_ROOT, "config.R")
+if (file.exists(config_path)) {
+  message("Loading config from: ", config_path)
+  source(config_path, local = FALSE)
+  message("  Loaded: config.R")
+} else {
+  warning("config.R not found at: ", config_path)
+}
+
 # Load all R/ modules in dependency order
 message("Loading R modules from: ", PROJECT_ROOT)
 
@@ -72,6 +82,13 @@ source_module("data_validation")
 # Modules that may depend on logging/utils
 source_module("playoffs")
 source_module("date_resolver")
+
+# Optional modules (may not exist in all versions)
+tryCatch({
+  source_module("sleeper_api")
+}, error = function(e) {
+  message("  Skipped: R/sleeper_api.R (optional)")
+})
 
 message("Test setup complete.\n")
 

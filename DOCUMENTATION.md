@@ -2,7 +2,7 @@
 
 Comprehensive technical reference for the NFL game prediction system.
 
-**Version**: 2.4
+**Version**: 2.6.1
 **R Version**: 4.3.0+ (tested on 4.5.1)
 **Last Updated**: January 2026
 
@@ -54,7 +54,7 @@ config.R → NFLsimulation.R → Output Files
 
 ## Core Files
 
-### config.R (390 lines)
+### config.R (986 lines)
 
 **Purpose**: Central configuration for all model parameters
 
@@ -95,7 +95,7 @@ config.R → NFLsimulation.R → Output Files
 
 **Exports**: All parameters to global environment via `list2env()`
 
-### NFLsimulation.R (7,400+ lines)
+### NFLsimulation.R (8,226 lines)
 
 **Purpose**: Main prediction engine with Monte Carlo simulation
 
@@ -163,7 +163,7 @@ Data Loading → Team Stats → Adjustments → Simulation → Calibration → O
 - `make_calibrator()`: Isotonic regression calibration
 - `rho_from_game()`: Score correlation estimation
 
-### NFLmarket.R (2,700+ lines)
+### NFLmarket.R (3,942 lines)
 
 **Purpose**: Market data integration and model-market comparison
 
@@ -338,6 +338,14 @@ Metrics per fold:
 - `load_injury_data()`: Fetches injury reports
 - `calculate_injury_severity()`: Scores injury impact
 - `test_injury_impact()`: Correlates with game outcomes
+
+**A/B Comparison** (validation/injury_ab_comparison.R):
+```r
+# Run A/B test comparing WITH vs WITHOUT injuries
+results <- run_injury_ab_test(seasons = 2022:2024, n_bootstrap = 1000)
+# Compares Brier score, log-loss, accuracy
+# Reports statistical significance (p-values)
+```
 
 ### professional_model_benchmarking.R (750 lines)
 
@@ -665,13 +673,20 @@ data.frame(
 )
 ```
 
-**Position Weights**:
+**Position Weights** (from config.R):
 ```r
-QB: 0.0 base penalty (handled separately with multiplier)
-Trenches (OL/DL): 1.3× weight
-Skill (WR/RB/TE): 1.05× weight
-Secondary (CB/S): 0.95× weight
-Front7 (LB/EDGE/DL): 0.85× weight
+QB: 0.0 base penalty (handled separately with QB_INJURY_MULTIPLIER)
+Trenches (OL/DL): INJURY_POS_MULT_TRENCH = 1.3
+Skill (WR/RB/TE): INJURY_POS_MULT_SKILL = 1.05
+Secondary (CB/S): INJURY_POS_MULT_SECONDARY = 0.95
+Front7 (LB/EDGE/DL): INJURY_POS_MULT_FRONT7 = 0.85
+Other: INJURY_POS_MULT_OTHER = 0.6
+
+Point-per-flag scalars (validated p < 0.01):
+Skill: INJURY_WEIGHT_SKILL = 0.55 (r = 0.28)
+Trench: INJURY_WEIGHT_TRENCH = 0.65 (r = 0.24)
+Secondary: INJURY_WEIGHT_SECONDARY = 0.45 (r = 0.19)
+Front7: INJURY_WEIGHT_FRONT7 = 0.50 (r = 0.21)
 ```
 
 **Severity Levels**:
@@ -888,7 +903,7 @@ LogLoss = -(1/N) × Σ[y_i × log(p_i) + (1-y_i) × log(1-p_i)]
 
 With ε-clamping to prevent log(0):
 p_i_clamped = max(ε, min(1-ε, p_i))
-where ε = 10⁻¹²
+where ε = 10⁻⁹ (PROB_EPSILON from R/utils.R)
 
 - Penalizes confident wrong predictions heavily
 - Lower is better
@@ -1148,10 +1163,18 @@ Mean Absolute Error: 2.1% (excellent calibration)
 | File | Lines | Purpose | Status |
 |------|-------|---------|--------|
 | **Core** | | | |
-| config.R | 390 | Configuration | Active |
-| NFLsimulation.R | 7,400 | Main engine | Active |
-| NFLmarket.R | 2,700 | Market tools | Active |
-| NFLbrier_logloss.R | 1,200 | Evaluation | Active |
+| config.R | 750+ | Configuration (all model parameters) | Active |
+| NFLsimulation.R | 7,800+ | Main simulation engine | Active |
+| NFLmarket.R | 3,900+ | Market data and comparisons | Active |
+| NFLbrier_logloss.R | 1,200 | Evaluation metrics | Active |
+| run_week.R | 50 | Entry point for weekly predictions | Active |
+| **R/ Library** | | | |
+| R/utils.R | 350+ | Core utilities (PROB_EPSILON, clamp_probability) | Active |
+| R/data_validation.R | 500+ | Data quality tracking API | Active |
+| R/logging.R | 200+ | Structured logging (log_info, log_warn, log_error) | Active |
+| R/playoffs.R | 300+ | Playoff-specific logic | Active |
+| R/date_resolver.R | 250+ | Week/date resolution | Active |
+| R/sleeper_api.R | 350+ | Sleeper API injury data integration | Active |
 | **Validation** | | | |
 | validation_pipeline.R | 740 | Hyperparameter tuning | Active |
 | model_validation.R | 935 | K-fold CV | Active |
@@ -1166,6 +1189,16 @@ Mean Absolute Error: 2.1% (excellent calibration)
 | **Testing** | | | |
 | comprehensive_r451_test_suite.R | 463 | R 4.5.1 tests | Active |
 | r451_compatibility_fixes.R | 482 | Compatibility | Reference |
+| tests/testthat/test-utils.R | 300+ | Utils unit tests | Active |
+| tests/testthat/test-data-validation.R | 200+ | Data validation tests | Active |
+| tests/testthat/test-playoffs.R | 200+ | Playoff logic tests | Active |
+| tests/testthat/test-date-resolver.R | 150+ | Date resolver tests | Active |
+| tests/testthat/test-injury-model.R | 200+ | Injury model tests | Active |
+| tests/testthat/test-weather.R | 200+ | Weather impact tests | Active |
+| tests/testthat/test-logging.R | 150+ | Logging tests | Active |
+| tests/testthat/test-sleeper-api.R | 200+ | Sleeper API tests | Active |
+| **Validation** | | | |
+| validation/injury_ab_comparison.R | 350+ | A/B test WITH/WITHOUT injuries | Active |
 | **Documentation** | | | |
 | README.md | 8 KB | Project overview | Active |
 | GETTING_STARTED.md | 8 KB | Beginner guide | Active |

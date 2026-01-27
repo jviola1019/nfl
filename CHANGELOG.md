@@ -2,6 +2,140 @@
 
 All notable changes to the NFL Prediction Model are documented in this file.
 
+## [2.6.2] - 2026-01-25
+
+### Critical Bug Fixes (Brier Score ~0.25 → ~0.211)
+
+**Double Calibration Fix (CRITICAL)**
+- Fixed double isotonic calibration bug in NFLsimulation.R
+- `home_p_2w_model` now uses `home_p_2w_raw` (uncalibrated) instead of `home_p_2w_cal`
+- Calibration via `map_blend()` is now applied exactly ONCE
+- **Impact**: Brier score was inflated ~18% due to over-compression toward 0.5
+
+**Calibration Order Fix**
+- Dynamic shrinkage now applied BEFORE isotonic calibration, not after
+- Restructured probability blend flow:
+  1. Get raw model probability
+  2. Apply dynamic shrinkage (blend with market)
+  3. Apply isotonic calibration ONCE
+- Prevents shrinkage from breaking calibration guarantees
+
+**Config Parameter Conflicts Fix**
+- Weather fallback defaults now match config.R:
+  - `OUTDOOR_WIND_PEN`: -1.0 → -1.2
+  - `COLD_TEMP_PEN`: -0.5 → -0.6
+
+**Sleeper API Fallback in NFLsimulation.R**
+- Added automatic Sleeper API fallback when nflreadr returns no data
+- Sources R/sleeper_api.R dynamically if available
+- Converts Sleeper format to nflreadr-compatible format
+- User message now includes Sleeper tip: `INJURY_MODE='sleeper'`
+
+### Calibration Method Switch
+- Changed `CALIBRATION_METHOD` from "ensemble" to "spline" in config.R
+- Spline calibration (GAM with smoothing penalty) gives -6.9% Brier improvement (best of all methods)
+- Isotonic regression found to be catastrophically broken (Brier 0.316, worse than random)
+- Added spline calibration branch in NFLsimulation.R (loads spline model from ensemble artifact)
+- Falls back to isotonic if spline artifact not available
+
+### Phase 1-2 Implementations
+
+**Snap-Weighted Injury Impacts (NEW)**
+- Integrated `weight_injury_by_snaps()` into `calc_injury_impacts()` function
+- Added player name column to injury data pipeline
+- Injuries now weighted by player snap percentage (WR1 @ 60% snaps has greater impact than WR5 @ 10%)
+- Enabled via `USE_SNAP_WEIGHTED_INJURIES <- TRUE` in config.R
+- Sources injury_scalp.R automatically when snap weighting is enabled
+
+**Test Coverage Improvements**
+- Added `tests/testthat/test-calibration.R`: Calibration method and ensemble loading tests
+- Added `tests/testthat/test-backup-qb.R`: Backup QB quality function tests
+- Added `tests/testthat/test-snap-weighting.R`: Snap-weighted injury integration tests
+- All tests verify both config existence and function behavior
+
+**Documentation Updates**
+- Updated DOCUMENTATION.md line counts:
+  - config.R: 390 → 986 lines
+  - NFLsimulation.R: 7,400 → 8,226 lines
+  - NFLmarket.R: 2,700 → 3,942 lines
+- Updated GETTING_STARTED.md version to 2.6.2
+- Updated plan file with completed Phase 0-2 status
+
+## [2.6.1] - 2026-01-23
+
+### Repository Audit & Sleeper API Integration
+
+**Sleeper API Integration (NEW: R/sleeper_api.R)**
+- Real-time NFL injury data from Sleeper fantasy API
+- Free, no authentication required
+- Automatic caching with 4-hour expiry
+- Full player database with injury_status, injury_body_part, injury_notes
+- Integrated into injury_scalp.R fallback chain: Sleeper → nflreadr → ESPN → cache
+
+**Injury System Improvements**
+- Added "sleeper" as new INJURY_MODE option
+- Auto mode now tries Sleeper API first before nflreadr
+- Normalize Sleeper data to standard injury report format
+- Sources R/sleeper_api.R for Sleeper integration
+
+**Critical Config/Code Integration Fix**
+- Fixed disconnect between config.R injury weights and NFLsimulation.R
+- `SKILL_AVAIL_POINT_PER_FLAG` now uses `INJURY_WEIGHT_SKILL` from config.R
+- `TRENCH_AVAIL_POINT_PER_FLAG` now uses `INJURY_WEIGHT_TRENCH` from config.R
+- `SECONDARY_AVAIL_POINT_PER_FLAG` now uses `INJURY_WEIGHT_SECONDARY` from config.R
+- `FRONT7_AVAIL_POINT_PER_FLAG` now uses `INJURY_WEIGHT_FRONT7` from config.R
+- Added new config parameters for position multipliers:
+  - `INJURY_POS_MULT_TRENCH = 1.3`
+  - `INJURY_POS_MULT_SKILL = 1.05`
+  - `INJURY_POS_MULT_SECONDARY = 0.95`
+  - `INJURY_POS_MULT_FRONT7 = 0.85`
+  - `INJURY_POS_MULT_OTHER = 0.6`
+- calc_injury_impacts() now uses config parameters with fallback defaults
+
+**New A/B Test for Injury Model (validation/injury_ab_comparison.R)**
+- Compares model performance WITH vs WITHOUT injury adjustments
+- Bootstrap statistical significance testing (1000 samples)
+- Reports Brier score, log-loss, accuracy differences
+- Run: `source("validation/injury_ab_comparison.R")`
+
+**New Test Files Added**
+- tests/testthat/test-sleeper-api.R - Sleeper API integration tests
+- tests/testthat/test-injury-model.R - Injury weight and config validation
+- tests/testthat/test-weather.R - Weather impact parameter tests
+- tests/testthat/test-logging.R - Logging utility tests
+
+**Code Consistency Fixes**
+- Standardized PROB_EPSILON = 1e-9 across all files (was 1e-9, 1e-12, 1e-15)
+- NFLbrier_logloss.R now sources R/utils.R instead of duplicating functions
+- NFLmarket.R now sources R/utils.R instead of duplicating functions
+- All duplicate function definitions converted to conditional fallbacks
+
+**Configuration Centralization (config.R)**
+- Added `MARGIN_PROB_PRIOR_SD = 6.5` (was hardcoded in NFLsimulation.R)
+- Added `PPD_BLEND_WEIGHT = 0.65` (was hardcoded in ppd_blend function)
+- Added `PRESSURE_MISMATCH_PTS = 0.6` (was hardcoded in pressure calculation)
+- NFLsimulation.R now uses config values with fallback defaults
+
+**Documentation Updates**
+- GETTING_STARTED.md updated to v2.6.1 with Sleeper injury mode docs
+- DOCUMENTATION.md updated to v2.6.1 with complete file reference table
+- CLAUDE.md remains authoritative source for agent operations
+
+**Repository Cleanup**
+- Removed stale files from git: .RDataTmp (83MB), .Rhistory, nul, *.rds artifacts
+- Updated .gitignore to prevent re-addition of artifacts
+- All documentation versions updated to 2.6.1
+
+### Test Results
+
+After v2.6.1 fixes:
+- **Integrity checks**: 35/35 passed
+- **Test suite**: All tests pass, 6 skipped (network-dependent)
+- **Sleeper API**: Working, verified Bo Nix (QB) OUT for Denver
+- **Config/code sync**: Injury weights now properly connected
+
+---
+
 ## [2.6.0] - 2026-01-22
 
 ### Playoff Mode Enhancements
