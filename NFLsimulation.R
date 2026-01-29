@@ -3330,25 +3330,25 @@ calc_injury_impacts <- function(df, group_vars = c("team"), season = NULL) {
       pen = base_pen * pos_wt
     ) %>%
     # Apply snap weighting if enabled and available
+    # IMPORTANT: Only apply to CURRENT WEEK data, not historical data
+    # Historical data has group_vars including "season" and/or "week" (thousands of rows)
+    # Current week data has group_vars = c("team") only (~50-100 rows)
     {
-      if (isTRUE(use_snap_weighting) && snap_weight_fn_available && has_player_col) {
-        has_week_col <- "week" %in% names(.)
+      is_historical_data <- any(c("season", "week") %in% group_vars)
+
+      if (isTRUE(use_snap_weighting) && snap_weight_fn_available && has_player_col && !is_historical_data) {
+        # Only apply snap weighting to current week injuries (manageable row count)
+        message(sprintf("  Calculating snap weights for %d players...", nrow(.)))
         dplyr::rowwise(.) %>%
           dplyr::mutate(
             snap_weight = tryCatch({
-              # For historical analysis, use weeks relative to the injury's game week
-              # This ensures snap data reflects what was known AT THAT TIME
-              snap_weeks <- if (has_week_col && !is.na(week) && week > 1) {
-                max(1, week - 4):(week - 1)
-              } else {
-                NULL  # Use default (global WEEK_TO_SIM)
-              }
-              weight_injury_by_snaps(1.0, player, team, season, weeks = snap_weeks)
+              weight_injury_by_snaps(1.0, player, team, season)
             }, error = function(e) 1.0)
           ) %>%
           dplyr::ungroup() %>%
           dplyr::mutate(pen = pen * snap_weight)
       } else {
+        # Skip snap weighting for historical data (performance) or when disabled
         dplyr::mutate(., snap_weight = 1.0)
       }
     } %>%
@@ -5919,6 +5919,12 @@ if (!all(c("wind_mph","temp_f","precip_prob") %in% names(games_ready))) {
     mutate(wind_mph = NA_real_, temp_f = NA_real_, precip_prob = NA_real_)
 }
 
+# Weather coefficients from config (defined outside mutate for efficiency)
+.wind_coef <- if (exists("WIND_COEF_PER_MPH")) WIND_COEF_PER_MPH else -0.04
+.wind_thresh <- if (exists("WIND_THRESHOLD_MPH")) WIND_THRESHOLD_MPH else 12
+.cold_pen_cont <- if (exists("COLD_TEMP_PEN")) COLD_TEMP_PEN * 0.42 else -0.25
+.precip_pen_cont <- if (exists("RAIN_SNOW_PEN")) RAIN_SNOW_PEN * 0.625 else -0.50
+
 # Now join the guaranteed-full env overrides and apply adjustments
 games_ready <- games_ready %>%
   left_join(env_mod_full, by = "game_id", suffix = c("", ".env")) %>%
@@ -5940,13 +5946,6 @@ games_ready <- games_ready %>%
     precip = coalesce(env_precip, FALSE),
 
     # Base weather effects using config parameters
-    # WIND_COEF_PER_MPH: gradual wind effect per mph above threshold
-    # COLD_TEMP_PEN: cold weather penalty (scaled by 0.42 for continuous model)
-    # RAIN_SNOW_PEN: precipitation penalty (scaled by 0.625 for continuous model)
-    .wind_coef = if (exists("WIND_COEF_PER_MPH")) WIND_COEF_PER_MPH else -0.04,
-    .wind_thresh = if (exists("WIND_THRESHOLD_MPH")) WIND_THRESHOLD_MPH else 12,
-    .cold_pen_cont = if (exists("COLD_TEMP_PEN")) COLD_TEMP_PEN * 0.42 else -0.25,
-    .precip_pen_cont = if (exists("RAIN_SNOW_PEN")) RAIN_SNOW_PEN * 0.625 else -0.50,
     env_total_auto =
       ifelse(dome, DOME_BONUS_TOTAL, 0) +
       pmax(coalesce(wind_mph, 0) - .wind_thresh, 0) * .wind_coef +

@@ -4,7 +4,7 @@
 
 A production-ready statistical model for predicting NFL game outcomes using Monte Carlo simulation and data-driven analysis.
 
-**Version**: 2.6.5
+**Version**: 2.6.6
 **R Version Required**: 4.3.0+ (tested on 4.5.1)
 **Status**: Production-Ready
 
@@ -347,12 +347,17 @@ This model is built on publicly available NFL data from the nflverse project. Al
 
 ## Updates & Maintenance
 
-**Current Version**: 2.6.5 (January 2026)
+**Current Version**: 2.6.6 (January 2026)
 
-**Recent fixes (v2.6.5)**:
+**Recent fixes (v2.6.6)**:
+- **CRITICAL**: Fixed `run_week.R` hanging after loading injury data
+- Root cause: Snap weighting was applying rowwise operations to 49,488+ historical records
+- Fix: Only apply snap weighting to current week injuries, not historical data
+- Optimized weather coefficient calculations (moved outside mutate)
+
+**Previous fixes (v2.6.5)**:
 - Fixed hardcoded shrinkage 0.6 ignoring config.R `SHRINKAGE` parameter
 - Improved spline calibration loading: dedicated spline file support, unconditional mgcv load
-- Fixed snap weighting for historical analysis (week context now passed correctly)
 - Centralized weather coefficients to config.R parameters
 - Added `VIG` parameter to config.R
 - Empty table handling in HTML export (graceful degradation instead of crash)

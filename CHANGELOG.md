@@ -2,6 +2,32 @@
 
 All notable changes to the NFL Prediction Model are documented in this file.
 
+## [2.6.6] - 2026-01-29
+
+### Critical Performance Fix
+
+**Snap Weighting Hang Fix (CRITICAL)**
+- Fixed `run_week.R` hanging indefinitely after loading injury data
+- Root cause: Snap weighting was applying `dplyr::rowwise()` to 49,488+ historical injury records
+- Each row called `load_player_snap_percentages()` which made network calls
+- Fix: Only apply snap weighting to CURRENT WEEK injuries, not historical data
+- Historical data (group_vars includes "season" or "week") now skips snap weighting entirely
+- File: NFLsimulation.R:3332-3354
+
+**Weather Coefficient Optimization**
+- Moved weather coefficient calculations outside mutate for efficiency
+- Removed temp columns (`.wind_coef`, `.wind_thresh`, etc.) from dataframe
+- File: NFLsimulation.R:5922-5955
+
+### Technical Details
+
+The v2.6.5 snap weighting fix was technically correct but had catastrophic performance:
+- `calc_injury_impacts()` is called twice: once for historical features (49K rows), once for current week (~50 rows)
+- The rowwise network call combination on 49K rows caused infinite hang
+- Fix distinguishes historical vs current data by checking if group_vars includes "season" or "week"
+
+---
+
 ## [2.6.5] - 2026-01-29
 
 ### Consistency & Correctness Audit
