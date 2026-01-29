@@ -37,7 +37,7 @@ SEASON <- 2025  # or set manually: SEASON <- 2024
 #' @note Regular season: 1-18, Playoffs: 19=Wild Card, 20=Divisional, 21=Conference, 22=Super Bowl
 #' @default 18
 #' @examples 1, 2, 3, ..., 18 (regular season), 19, 20, 21, 22 (playoffs)
-WEEK_TO_SIM <- 21  # <-- **CHANGE THIS TO RUN A DIFFERENT WEEK [19 = WILD CARD, 20 = DIVISIONAL, 21 = CONFERENCE, 22 = SUPER BOWL]**
+WEEK_TO_SIM <- 22  # <-- **CHANGE THIS TO RUN A DIFFERENT WEEK [19 = WILD CARD, 20 = DIVISIONAL, 21 = CONFERENCE, 22 = SUPER BOWL]**
 
 # =============================================================================
 # SIMULATION PARAMETERS
@@ -467,9 +467,17 @@ INJURY_CAP_DEFENSE <- 4.5
 # WEATHER IMPACT
 # =============================================================================
 
-#' @description Wind speed impact on passing game (points/mph)
+#' @description Wind speed impact on passing game (points/mph above threshold)
 #' @default -0.08
 WIND_IMPACT <- -0.08
+
+#' @description Wind coefficient per mph above threshold for continuous weather model
+#' @default -0.04 (half of WIND_IMPACT for gradual effect)
+WIND_COEF_PER_MPH <- -0.04
+
+#' @description Wind threshold in mph (effects apply above this)
+#' @default 12
+WIND_THRESHOLD_MPH <- 12
 
 #' @description Temperature impact on scoring (points/10°F below 40°F)
 #' @default -0.15
@@ -741,6 +749,11 @@ KELLY_FRACTION <- 0.125
 #' @default 0.10 (10%)
 MAX_EDGE <- 0.10
 
+#' @description Standard sportsbook vigorish (vig/juice)
+#' @default 0.10 (10% combined vig on both sides of a bet)
+#' @details Used for converting between fair odds and market odds
+VIG <- 0.10
+
 #' @description Maximum stake as fraction of bankroll
 #' @default 0.02 (2%)
 MAX_STAKE <- 0.02
@@ -979,6 +992,7 @@ list2env(
     SHRINKAGE_CLOSE_GAME_THRESHOLD = SHRINKAGE_CLOSE_GAME_THRESHOLD,
     KELLY_FRACTION = KELLY_FRACTION,
     MAX_EDGE = MAX_EDGE,
+    VIG = VIG,
     MAX_STAKE = MAX_STAKE,
     ISOTONIC_EPSILON = ISOTONIC_EPSILON
   ),

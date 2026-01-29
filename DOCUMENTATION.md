@@ -146,10 +146,11 @@ Data Loading → Team Stats → Adjustments → Simulation → Calibration → O
    - 100,000 trials per game for stable estimates
 
 7. **Probability Calibration** (lines 5501-6500)
-   - Isotonic regression: `make_calibrator()`
+   - **Spline calibration** (default): GAM with smoothing penalty
    - Corrects for model overconfidence/underconfidence
    - Applied to win probabilities
-   - 1.7% Brier score improvement
+   - **6.9% Brier score improvement** (spline, best performer)
+   - Isotonic regression available as fallback (1.7% improvement)
 
 8. **Output Generation** (lines 6501-7400)
    - Prediction summaries (win prob, spread, total)
@@ -389,27 +390,28 @@ Log-Loss:
 
 **Calibration Methods Tested**:
 
-1. **Isotonic Regression** (selected)
+1. **Spline Calibration** (selected, default)
+   - GAM with smoothing penalty
+   - Flexible, handles non-linear patterns
+   - **Brier: 0.215 → 0.200 (-6.9%)** (best performer)
+
+2. **Isotonic Regression** (fallback)
    - Monotonic transformation
    - Fits observed frequencies
    - Brier: 0.215 → 0.211 (-1.7%)
+   - Note: Found to have bugs in v2.6.3; spline is preferred
 
-2. **Platt Scaling**
+3. **Platt Scaling**
    - Logistic regression calibration
    - Less flexible than isotonic
    - Brier: 0.215 → 0.213 (-0.9%)
 
-3. **Beta Calibration**
+4. **Beta Calibration**
    - Beta distribution fitting
    - Good for extreme probabilities
    - Brier: 0.215 → 0.212 (-1.4%)
 
-4. **Spline Calibration**
-   - Penalized spline smoothing
-   - Risk of overfitting
-   - Brier: 0.215 → 0.212 (-1.4%)
-
-**Selection**: Isotonic regression (best Brier improvement)
+**Selection**: Spline calibration (best Brier improvement, robust)
 
 ### ensemble_calibration_implementation.R (680 lines)
 
@@ -711,6 +713,16 @@ Limited: 0.2
 
 **Isotonic Regression** (recommended):
 ```r
+# Spline calibration (default, recommended)
+calibrator <- make_calibrator("spline", p_pred, y_actual)
+p_calibrated <- calibrator(p_pred)
+
+Properties:
+- Smooth (handles non-linear patterns)
+- Flexible via GAM smoothing penalty
+- Reduces Brier score by 6.9% (best performer)
+
+# Isotonic regression (fallback)
 calibrator <- make_calibrator("isotonic", p_pred, y_actual)
 p_calibrated <- calibrator(p_pred)
 

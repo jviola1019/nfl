@@ -2,6 +2,57 @@
 
 All notable changes to the NFL Prediction Model are documented in this file.
 
+## [2.6.5] - 2026-01-29
+
+### Consistency & Correctness Audit
+
+**Hardcoded Shrinkage Fix (CRITICAL)**
+- Fixed NFLmarket.R:2088 using hardcoded `shrinkage = 0.6` instead of config.R `SHRINKAGE`
+- All probability calculations now respect the configured shrinkage value
+- Dynamic shrinkage settings now work as intended
+
+**Spline Calibration Loading Improvements**
+- Restructured spline calibration loading in NFLsimulation.R:5460-5503
+- Now checks for dedicated spline file (`spline_calibration.rds`) before ensemble file
+- mgcv package loaded unconditionally when spline method configured (prevents silent failures)
+- Supports both predict-function objects and direct GAM model objects
+
+**Historical Snap Weighting Fix (CRITICAL)**
+- Fixed `weight_injury_by_snaps()` to accept optional `weeks` parameter
+- For historical analysis, snap weights now use weeks relative to the injury game
+- Previously always used global `WEEK_TO_SIM` (wrong for backtesting)
+- `calc_injury_impacts()` now passes appropriate week context
+
+**Weather Coefficients Centralized**
+- Added `WIND_COEF_PER_MPH` (-0.04) and `WIND_THRESHOLD_MPH` (12) to config.R
+- Weather adjustment code now derives coefficients from config parameters
+- Fallback defaults added to NFLsimulation.R standalone mode
+
+**VIG Parameter Added**
+- Added `VIG <- 0.10` to config.R as canonical vig/juice setting
+- Documented standard 10% combined vig assumption
+
+**Empty Table Graceful Handling**
+- NFLmarket.R `export_moneyline_comparison_html()` no longer crashes on empty data
+- Generates informational HTML placeholder with "No Games Available" message
+- Lists possible causes and allows pipeline to continue
+
+### Documentation Updates
+
+**Calibration Method Clarifications**
+- Updated DOCUMENTATION.md to reflect spline as default calibration method
+- Clarified improvement claims: spline (-6.9% Brier) vs isotonic (-1.7% Brier)
+- Added historical context about isotonic regression bugs found in v2.6.3
+
+### Files Modified
+- `NFLmarket.R` - Shrinkage fix, empty table handling
+- `NFLsimulation.R` - Spline loading, weather coefficients, snap week context
+- `injury_scalp.R` - weeks parameter for snap weighting
+- `config.R` - WIND_COEF_PER_MPH, WIND_THRESHOLD_MPH, VIG parameters
+- `DOCUMENTATION.md` - Calibration method updates
+
+---
+
 ## [2.6.4] - 2026-01-28
 
 ### Critical Bug Fixes

@@ -2414,14 +2414,17 @@ if (file.exists("config.R")) {
   DIVISION_GAME_ADJUST   <- -0.2
   CONFERENCE_GAME_ADJUST <- 0.0
 
-  # Weather parameters (MUST match config.R defaults!)
+  # Weather parameters (fallback defaults for standalone mode)
+  # Note: These are only used when config.R is missing
   DOME_BONUS_TOTAL <- 0.8
-  OUTDOOR_WIND_PEN <- -1.2   # FIX: Was -1.0, now matches config.R
-  COLD_TEMP_PEN    <- -0.6   # FIX: Was -0.5, now matches config.R
+  OUTDOOR_WIND_PEN <- -1.2
+  COLD_TEMP_PEN    <- -0.6
   RAIN_SNOW_PEN    <- -0.8
   WIND_IMPACT      <- -0.08
   COLD_IMPACT      <- -0.15
   PRECIP_IMPACT    <- -1.5
+  WIND_COEF_PER_MPH <- -0.04
+  WIND_THRESHOLD_MPH <- 12
 }
 
 # =============================================================================
@@ -3329,10 +3332,18 @@ calc_injury_impacts <- function(df, group_vars = c("team"), season = NULL) {
     # Apply snap weighting if enabled and available
     {
       if (isTRUE(use_snap_weighting) && snap_weight_fn_available && has_player_col) {
+        has_week_col <- "week" %in% names(.)
         dplyr::rowwise(.) %>%
           dplyr::mutate(
             snap_weight = tryCatch({
-              weight_injury_by_snaps(1.0, player, team, season) # Returns weight factor
+              # For historical analysis, use weeks relative to the injury's game week
+              # This ensures snap data reflects what was known AT THAT TIME
+              snap_weeks <- if (has_week_col && !is.na(week) && week > 1) {
+                max(1, week - 4):(week - 1)
+              } else {
+                NULL  # Use default (global WEEK_TO_SIM)
+              }
+              weight_injury_by_snaps(1.0, player, team, season, weeks = snap_weeks)
             }, error = function(e) 1.0)
           ) %>%
           dplyr::ungroup() %>%
@@ -5455,31 +5466,61 @@ if (file.exists(.calib_path)) {
 .calibration_handled <- FALSE
 
 if (exists("CALIBRATION_METHOD") && tolower(CALIBRATION_METHOD) == "spline") {
-  # Spline calibration: use GAM spline from ensemble artifact (best performer: -6.9% Brier)
-  ensemble_file <- if (exists("ENSEMBLE_CALIBRATION_FILE")) ENSEMBLE_CALIBRATION_FILE else "ensemble_calibration_production.rds"
+  # Spline calibration: use GAM spline (best performer: -6.9% Brier)
   .use_spline <- FALSE
 
   # mgcv is required for predict.gam dispatch on the spline model object
+  # Load unconditionally at start - failing here is better than silent fallback
   if (!requireNamespace("mgcv", quietly = TRUE)) {
     message("mgcv package required for spline calibration - falling back to isotonic")
-  } else if (file.exists(ensemble_file)) {
-    library(mgcv)
-    tryCatch({
-      .ens <- readRDS(ensemble_file)
-      if (!is.null(.ens$models$spline) && !is.null(.ens$models$spline$predict)) {
-        .spline_predict <- .ens$models$spline$predict
-        .use_spline <- TRUE
-        message(sprintf("Loaded SPLINE calibration from '%s'", ensemble_file))
-        if (!is.null(.ens$test_brier)) {
-          message(sprintf("  Ensemble test Brier: %.4f (spline component is best)", .ens$test_brier))
-        }
-      }
-    }, error = function(e) {
-      message(sprintf("Could not load spline calibration: %s - falling back to isotonic", e$message))
-    })
   } else {
-    message(sprintf("Calibration file '%s' not found - falling back to isotonic", ensemble_file))
-    message("  Generate with: source('ensemble_calibration_implementation.R')")
+    library(mgcv)  # Load mgcv unconditionally when spline method is configured
+
+    # Check for dedicated spline file first, then ensemble file
+    spline_file <- if (exists("SPLINE_CALIBRATION_FILE")) SPLINE_CALIBRATION_FILE else "spline_calibration.rds"
+    ensemble_file <- if (exists("ENSEMBLE_CALIBRATION_FILE")) ENSEMBLE_CALIBRATION_FILE else "ensemble_calibration_production.rds"
+
+    # Try dedicated spline file first
+    if (file.exists(spline_file)) {
+      tryCatch({
+        .spline_model <- readRDS(spline_file)
+        if (!is.null(.spline_model$predict)) {
+          .spline_predict <- .spline_model$predict
+          .use_spline <- TRUE
+          message(sprintf("Loaded SPLINE calibration from dedicated file '%s'", spline_file))
+        } else if (inherits(.spline_model, "gam")) {
+          # Direct GAM model object
+          .spline_predict <- function(p) predict(.spline_model, newdata = data.frame(prob = p), type = "response")
+          .use_spline <- TRUE
+          message(sprintf("Loaded SPLINE calibration (GAM object) from '%s'", spline_file))
+        }
+      }, error = function(e) {
+        message(sprintf("Could not load spline from '%s': %s", spline_file, e$message))
+      })
+    }
+
+    # Fall back to ensemble file if dedicated spline not found
+    if (!.use_spline && file.exists(ensemble_file)) {
+      tryCatch({
+        .ens <- readRDS(ensemble_file)
+        if (!is.null(.ens$models$spline) && !is.null(.ens$models$spline$predict)) {
+          .spline_predict <- .ens$models$spline$predict
+          .use_spline <- TRUE
+          message(sprintf("Loaded SPLINE calibration from ensemble file '%s'", ensemble_file))
+          if (!is.null(.ens$test_brier)) {
+            message(sprintf("  Ensemble test Brier: %.4f (spline component is best)", .ens$test_brier))
+          }
+        }
+      }, error = function(e) {
+        message(sprintf("Could not load spline from ensemble: %s - falling back to isotonic", e$message))
+      })
+    }
+
+    if (!.use_spline) {
+      message("No spline calibration file found - falling back to isotonic")
+      message(sprintf("  Expected: '%s' or '%s'", spline_file, ensemble_file))
+      message("  Generate with: source('ensemble_calibration_implementation.R')")
+    }
   }
 
   if (.use_spline) {
@@ -5898,12 +5939,19 @@ games_ready <- games_ready %>%
     cold   = coalesce(env_cold,  FALSE),
     precip = coalesce(env_precip, FALSE),
 
-    # Base weather effects (same as before)
+    # Base weather effects using config parameters
+    # WIND_COEF_PER_MPH: gradual wind effect per mph above threshold
+    # COLD_TEMP_PEN: cold weather penalty (scaled by 0.42 for continuous model)
+    # RAIN_SNOW_PEN: precipitation penalty (scaled by 0.625 for continuous model)
+    .wind_coef = if (exists("WIND_COEF_PER_MPH")) WIND_COEF_PER_MPH else -0.04,
+    .wind_thresh = if (exists("WIND_THRESHOLD_MPH")) WIND_THRESHOLD_MPH else 12,
+    .cold_pen_cont = if (exists("COLD_TEMP_PEN")) COLD_TEMP_PEN * 0.42 else -0.25,
+    .precip_pen_cont = if (exists("RAIN_SNOW_PEN")) RAIN_SNOW_PEN * 0.625 else -0.50,
     env_total_auto =
       ifelse(dome, DOME_BONUS_TOTAL, 0) +
-      pmax(coalesce(wind_mph, 0) - 12, 0) * (-0.04) +
-      ifelse(!dome & !is.na(temp_f) & temp_f <= 35, -0.25, 0) +
-      ifelse(!dome & !is.na(precip_prob) & precip_prob >= 0.5, -0.50, 0),
+      pmax(coalesce(wind_mph, 0) - .wind_thresh, 0) * .wind_coef +
+      ifelse(!dome & !is.na(temp_f) & temp_f <= 35, .cold_pen_cont, 0) +
+      ifelse(!dome & !is.na(precip_prob) & precip_prob >= 0.5, .precip_pen_cont, 0),
 
     env_total_flags =
       ifelse(is.na(wind_mph)    & windy,  OUTDOOR_WIND_PEN * 0.5, 0) +

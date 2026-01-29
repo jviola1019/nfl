@@ -1521,7 +1521,15 @@ calculate_snap_pct_from_plays <- function(plays, team) {
 #' Formula: base_impact * (snap_pct / SNAP_WEIGHT_REFERENCE)
 #' WR1 at 60% snaps with 50% reference: base_impact * 1.2
 #' WR5 at 10% snaps with 50% reference: base_impact * 0.2
-weight_injury_by_snaps <- function(base_impact, player_name, team, season = NULL) {
+#'
+#' @param base_impact Base injury impact value
+#' @param player_name Player name to look up
+#' @param team Team abbreviation
+#' @param season Season year (default: from global SEASON)
+#' @param weeks Optional vector of weeks to use for snap calculation
+#'              For historical analysis, pass explicit weeks (e.g., max(1, game_week - 4):(game_week - 1))
+#'              If NULL, uses global WEEK_TO_SIM to determine weeks
+weight_injury_by_snaps <- function(base_impact, player_name, team, season = NULL, weeks = NULL) {
 
   # Check if snap weighting is enabled
   use_snap_weighting <- get0("USE_SNAP_WEIGHTED_INJURIES", envir = .GlobalEnv, ifnotfound = TRUE)
@@ -1532,8 +1540,9 @@ weight_injury_by_snaps <- function(base_impact, player_name, team, season = NULL
   }
 
   # Get snap percentages for team
+  # Pass explicit weeks if provided (important for historical analysis)
   snap_data <- tryCatch({
-    load_player_snap_percentages(team, season, use_cache = TRUE)
+    load_player_snap_percentages(team, season, weeks = weeks, use_cache = is.null(weeks))
   }, error = function(e) {
     tibble::tibble()
   })

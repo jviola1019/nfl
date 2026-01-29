@@ -2085,10 +2085,10 @@ build_moneyline_comparison_table <- function(market_comparison_result,
       # market to produce more realistic betting recommendations.
       # Default shrinkage = 0.6 (60% market weight, 40% model weight)
       blend_home_prob_shrunk = shrink_probability_toward_market(
-        blend_home_prob, market_home_prob, shrinkage = 0.6
+        blend_home_prob, market_home_prob, shrinkage = SHRINKAGE
       ),
       blend_away_prob_shrunk = shrink_probability_toward_market(
-        blend_away_prob, market_away_prob, shrinkage = 0.6
+        blend_away_prob, market_away_prob, shrinkage = SHRINKAGE
       ),
 
       # Raw probability edge (for display - shows model's raw view)
@@ -2559,16 +2559,50 @@ export_moneyline_comparison_html <- function(comparison_tbl,
   }
 
   if (!nrow(comparison_tbl)) {
-    stop(paste0(
-      "export_moneyline_comparison_html(): COMPARISON TABLE IS EMPTY - cannot generate report.\n",
-      "  The input comparison_tbl has 0 rows.\n",
-      "  This usually means:\n",
-      "    1. build_moneyline_comparison_table() returned empty (join failed)\n",
-      "    2. The market comparison had no evaluated games\n",
-      "    3. All games were filtered out during processing\n",
-      "  Resolution: Check the upstream pipeline - ensure compare_to_market() and\n",
-      "  build_moneyline_comparison_table() produce non-empty results."
-    ), call. = FALSE)
+    # Generate informational HTML instead of crashing
+    if (verbose) {
+      message("export_moneyline_comparison_html(): No games to display - generating placeholder report.")
+    }
+
+    empty_html <- paste0(
+      '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">',
+      '<meta name="viewport" content="width=device-width, initial-scale=1.0">',
+      '<title>NFL Model vs Market - No Games</title>',
+      '<style>',
+      'body { font-family: system-ui, sans-serif; background: #1a1a2e; color: #f0f0f0; ',
+      'display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }',
+      '.container { text-align: center; padding: 2rem; background: rgba(255,255,255,0.05); ',
+      'border-radius: 1rem; max-width: 500px; }',
+      'h1 { color: #667eea; margin-bottom: 1rem; }',
+      'p { line-height: 1.6; opacity: 0.8; }',
+      '.icon { font-size: 4rem; margin-bottom: 1rem; }',
+      '</style></head><body>',
+      '<div class="container">',
+      '<div class="icon">📊</div>',
+      '<h1>No Games Available</h1>',
+      '<p>No games were found for the selected week. This could mean:</p>',
+      '<ul style="text-align: left; opacity: 0.8;">',
+      '<li>The schedule data is not yet available</li>',
+      '<li>Market odds have not been published</li>',
+      '<li>All games were filtered out during processing</li>',
+      '<li>The week number may be invalid</li>',
+      '</ul>',
+      '<p style="margin-top: 1rem; font-size: 0.9rem;">',
+      'Generated: ', format(Sys.time(), "%Y-%m-%d %H:%M:%S %Z"), '</p>',
+      '</div></body></html>'
+    )
+
+    tryCatch({
+      dir.create(dirname(file), recursive = TRUE, showWarnings = FALSE)
+      writeLines(empty_html, file)
+      if (verbose) {
+        message(sprintf("  → Placeholder report saved to: %s", file))
+      }
+      return(invisible(file))
+    }, error = function(e) {
+      warning(sprintf("Could not write placeholder report: %s", e$message), call. = FALSE)
+      return(invisible(NULL))
+    })
   }
 
   # =============================================================================

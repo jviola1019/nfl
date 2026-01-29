@@ -4,7 +4,7 @@
 
 A production-ready statistical model for predicting NFL game outcomes using Monte Carlo simulation and data-driven analysis.
 
-**Version**: 2.6.4
+**Version**: 2.6.5
 **R Version Required**: 4.3.0+ (tested on 4.5.1)
 **Status**: Production-Ready
 
@@ -347,13 +347,20 @@ This model is built on publicly available NFL data from the nflverse project. Al
 
 ## Updates & Maintenance
 
-**Current Version**: 2.6.4 (January 2026)
+**Current Version**: 2.6.5 (January 2026)
 
-**Recent fixes (v2.6)**:
-- Fixed data quality API mismatches in NFLsimulation.R and verify_requirements.R
-- Corrected parameter names: `missing_seasons` (not `seasons_missing`), `fallback_games` (not `games_fallback`)
-- Corrected status values: `"full"` (not `"complete"`), `"unavailable"` (not `"missing"`)
-- Created `tests/testthat/setup.R` for proper test path resolution
+**Recent fixes (v2.6.5)**:
+- Fixed hardcoded shrinkage 0.6 ignoring config.R `SHRINKAGE` parameter
+- Improved spline calibration loading: dedicated spline file support, unconditional mgcv load
+- Fixed snap weighting for historical analysis (week context now passed correctly)
+- Centralized weather coefficients to config.R parameters
+- Added `VIG` parameter to config.R
+- Empty table handling in HTML export (graceful degradation instead of crash)
+
+**Previous fixes (v2.6.4)**:
+- Fixed snap percentage week extraction from nflverse_game_id
+- Added utility function consolidation (clamp, safe_mu, safe_sd)
+- Dynamic regression for early season predictions
 - Created `scripts/verify_repo_integrity.R` with 35 schema+invariant checks
 - Created `scripts/run_matrix.R` to execute all artifacts with PASS/FAIL tracking
 - Fixed `R/date_resolver.R` vectorization bugs
