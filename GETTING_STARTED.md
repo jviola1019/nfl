@@ -2,7 +2,7 @@
 
 A beginner-friendly guide to running NFL game predictions using this statistical model.
 
-**Version**: 2.6.2
+**Version**: 2.6.4
 **R Version Required**: 4.3.0+ (tested on 4.5.1)
 **Last Updated**: January 2026
 
@@ -26,7 +26,7 @@ R -e "install.packages('renv'); renv::restore()"
 
 Or install packages manually:
 ```r
-install.packages(c("tidyverse", "nflreadr", "gt", "glmnet", "zoo", "lubridate", "randtoolbox"))
+install.packages(c("tidyverse", "nflreadr", "gt", "glmnet", "zoo", "lubridate", "randtoolbox", "mgcv"))
 ```
 
 ### 3. Run Weekly Predictions

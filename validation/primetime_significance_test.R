@@ -19,6 +19,7 @@ suppressPackageStartupMessages({
   library(dplyr)
   library(tidyr)
   library(tibble)
+  library(nflreadr)
 })
 
 # Source config
@@ -43,7 +44,7 @@ sched <- tryCatch({
 classify_game_slot <- function(gametime, day_of_week) {
   # Convert gametime to numeric hour
   hour <- as.numeric(substr(gametime, 1, 2))
-  if (is.na(hour)) hour <- 13  # Default to afternoon
+  hour <- ifelse(is.na(hour), 13, hour)  # Default to afternoon
 
   case_when(
     day_of_week == "Thursday" ~ "thursday_night",

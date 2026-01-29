@@ -2,7 +2,7 @@
 
 Comprehensive technical reference for the NFL game prediction system.
 
-**Version**: 2.6.1
+**Version**: 2.6.4
 **R Version**: 4.3.0+ (tested on 4.5.1)
 **Last Updated**: January 2026
 

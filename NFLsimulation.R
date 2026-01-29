@@ -2329,7 +2329,10 @@ pal_total <- function(total) {
   scales::col_numeric("Blues", domain = c(35,55))(total)
 }
 
-clamp <- function(x, lo, hi) pmin(pmax(x, lo), hi)
+# clamp() is defined in R/utils.R - fallback if not sourced
+if (!exists("clamp", mode = "function")) {
+  clamp <- function(x, lo, hi) pmin(pmax(x, lo), hi)
+}
 
 
 # Margin-to-probability conversion -------------------------------------------------
@@ -2397,7 +2400,7 @@ if (file.exists("config.R")) {
   GLMM_BLEND_W <- 0.38
   BLEND_META_MODEL    <- getOption("nfl_sim.blend_model",    default = "glmnet")
   BLEND_ALPHA         <- getOption("nfl_sim.blend_alpha",    default = 0.25)
-  CALIBRATION_METHOD  <- getOption("nfl_sim.calibration",    default = "isotonic")
+  CALIBRATION_METHOD  <- getOption("nfl_sim.calibration",    default = "spline")
   USE_SOS            <- TRUE
   SOS_STRENGTH       <- 0.45
   USE_RECENCY_DECAY  <- TRUE
@@ -2465,7 +2468,38 @@ BETA_PRIOR_STRENGTH <- 6        # Beta prior strength for Bayesian smoothing
 CONFIDENCE_LEVEL    <- 0.95     # Confidence level for prediction intervals
 MIN_SAMPLE_SIZE     <- 500      # Minimum sample for reliable estimates
 REGRESSION_BASE     <- 0.3      # Base regression to mean factor
-REGRESSION_GAMES    <- 6        # Games required to reduce regression (halflife)
+REGRESSION_GAMES    <- 6        # Base games for regression halflife
+
+#' Dynamic Regression Games
+#' Returns adjusted regression games based on season progress.
+#' More regression early season (noisy stats), less late season (stable estimates).
+#' @param week Current week number (1-18)
+#' @return Adjusted regression games value
+get_regression_games <- function(week) {
+  # Week 1-4: Use full REGRESSION_GAMES (more shrinkage to prior)
+  # Week 5-10: Gradually reduce regression
+  # Week 11+: Minimum regression (trust current season data)
+  pmax(3, REGRESSION_GAMES * (1 - 0.3 * pmin(week - 1, 10) / 10))
+}
+
+#' Pace Variance Adjustment
+#' Teams with high play volume have more scoring variance.
+#' @param plays_pg Plays per game
+#' @param league_avg League average plays/game (default 65)
+#' @return Variance multiplier (>1 = more variance)
+pace_variance_adj <- function(plays_pg, league_avg = 65) {
+  1 + 0.05 * (plays_pg - league_avg) / league_avg
+}
+
+#' QB Rushing Threat Adjustment
+#' Mobile QBs add offensive value beyond passing EPA.
+#' @param qb_rush_ypg QB rush yards per game
+#' @param league_avg League average QB rush yards (default 25)
+#' @return Point adjustment (-0.3 to +0.3)
+qb_rush_adj <- function(qb_rush_ypg, league_avg = 25) {
+  # Each 20 yards above/below average = 0.3 point adjustment
+  0.3 * pmin(pmax((qb_rush_ypg - league_avg) / 20, -1), 1)
+}
 
 # Reference sheet for common tuning knobs.  Call `show_tuning_help()` from an
 # interactive session to review the levers and the metrics they typically move.
@@ -5070,8 +5104,8 @@ recent_form_at_sim <- function(cut_season, cut_week, teams,
     }
   ) |>
     dplyr::mutate(
-      # FIX: Adaptive regression to mean (was hardcoded 6, now uses REGRESSION_BASE × exp(-n/REGRESSION_GAMES))
-      regression_weight = BETA_PRIOR_STRENGTH * (1 + REGRESSION_BASE * exp(-n_games / REGRESSION_GAMES)),
+      # FIX: Dynamic regression - more shrinkage early season, less late season
+      regression_weight = BETA_PRIOR_STRENGTH * (1 + REGRESSION_BASE * exp(-n_games / get_regression_games(cut_week))),
       off_mean_raw = (n_games * off_mean_raw + regression_weight * league_off_ppg) / (n_games + regression_weight),
       def_mean_raw = (n_games * def_mean_raw + regression_weight * league_def_ppg) / (n_games + regression_weight),
       off_sd_raw   = pmax(off_sd_raw, 5.5),
@@ -5249,7 +5283,7 @@ week_inputs_and_sim_2w <- function(cut_season, cut_week, n_trials = CALIB_TRIALS
   league_drives_avg_cut <- mean(pace_tbl_cut$off_drives_pg, na.rm = TRUE)
   if (!is.finite(league_drives_avg_cut) || league_drives_avg_cut <= 0) league_drives_avg_cut <- 11.5
 
-  clamp <- function(x, lo, hi) pmin(pmax(x, lo), hi)
+  # clamp() used below is defined globally (R/utils.R or fallback)
 
   # --------- Build game mu/sd like your main slate ---------
   g <- slate |>
@@ -5418,13 +5452,18 @@ if (file.exists(.calib_path)) {
 # Check for spline or ensemble calibration first (spline: -6.9% Brier, best performer)
 .use_ensemble_calibration <- FALSE
 .ensemble_model <- NULL
+.calibration_handled <- FALSE
 
 if (exists("CALIBRATION_METHOD") && tolower(CALIBRATION_METHOD) == "spline") {
   # Spline calibration: use GAM spline from ensemble artifact (best performer: -6.9% Brier)
   ensemble_file <- if (exists("ENSEMBLE_CALIBRATION_FILE")) ENSEMBLE_CALIBRATION_FILE else "ensemble_calibration_production.rds"
   .use_spline <- FALSE
 
-  if (file.exists(ensemble_file)) {
+  # mgcv is required for predict.gam dispatch on the spline model object
+  if (!requireNamespace("mgcv", quietly = TRUE)) {
+    message("mgcv package required for spline calibration - falling back to isotonic")
+  } else if (file.exists(ensemble_file)) {
+    library(mgcv)
     tryCatch({
       .ens <- readRDS(ensemble_file)
       if (!is.null(.ens$models$spline) && !is.null(.ens$models$spline$predict)) {
@@ -5455,6 +5494,8 @@ if (exists("CALIBRATION_METHOD") && tolower(CALIBRATION_METHOD) == "spline") {
       })
     }
     map_iso_nested <- function(p, fold_id = NULL) map_iso(p)
+    .calibration_handled <- TRUE
+    message("Using SPLINE calibration (-6.9% Brier improvement)")
 
     if (exists("update_calibration_quality", mode = "function")) {
       update_calibration_quality(method = "spline", leakage_free = TRUE)
@@ -5491,7 +5532,10 @@ if (exists("CALIBRATION_METHOD") && tolower(CALIBRATION_METHOD) == "spline") {
 }
 
 # If using ensemble calibration, create map_iso functions that use it
-if (.use_ensemble_calibration && !is.null(.ensemble_model)) {
+# Skip if spline already handled calibration
+if (.calibration_handled) {
+  # Spline (or other method) already set map_iso — skip Block 2
+} else if (.use_ensemble_calibration && !is.null(.ensemble_model)) {
   message("Using ENSEMBLE calibration (2.1% Brier improvement)")
 
   # Create ensemble-based calibration function
@@ -6030,8 +6074,13 @@ games_ready <- games_ready |>
 stopifnot(nrow(games_ready) > 0)
 
 # Safety: coerce any NA mu/sd to sane values so sim never drops a game
-safe_mu  <- function(x) ifelse(is.finite(x) & x >= 0, x, 21)
-safe_sd  <- function(x) ifelse(is.finite(x) & x >= 5, x, 7)
+# safe_mu/safe_sd defined in R/utils.R - fallback if not sourced
+if (!exists("safe_mu", mode = "function")) {
+  safe_mu  <- function(x) ifelse(is.finite(x) & x >= 0, x, 21)
+}
+if (!exists("safe_sd", mode = "function")) {
+  safe_sd  <- function(x) ifelse(is.finite(x) & x >= 5, x, 7)
+}
 
 # If any mu is NA after all adjustments, rebuild it from safe inputs
 games_ready <- games_ready %>%
@@ -6176,6 +6225,10 @@ build_final_safe <- function(resolved_list, games_ready) {
         total_ci_hi     = qfun(sims$total, 0.975),
         margin_ci_lo    = qfun(sims$margin, 0.025),
         margin_ci_hi    = qfun(sims$margin, 0.975),
+        # Win probability prediction intervals from MC simulation quantiles
+        margin_q05      = qfun(sims$margin, 0.05),
+        margin_q95      = qfun(sims$margin, 0.95),
+        home_win_pct_raw = mean(sims$margin > 0, na.rm = TRUE),  # Raw MC win rate
         home_win_prob   = prob_info$home_win_prob,
         away_win_prob   = prob_info$away_win_prob,
         tie_prob        = prob_info$tie_prob,
@@ -6198,6 +6251,7 @@ build_final_safe <- function(resolved_list, games_ready) {
       away_ci_lo, away_ci_hi, home_ci_lo, home_ci_hi,
       total_mean, total_sd, total_median, total_ci_lo, total_ci_hi,
       margin_mean, margin_sd, margin_sd_eff, margin_median, margin_ci_lo, margin_ci_hi,
+      margin_q05, margin_q95, home_win_pct_raw,
       home_win_prob, away_win_prob, tie_prob
     )
 

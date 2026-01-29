@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(\"C:/Program Files/R/R-4.5.1/bin/Rscript.exe\" scripts/verify_repo_integrity.R)"
+      "Bash(\"C:/Program Files/R/R-4.5.1/bin/Rscript.exe\" scripts/verify_repo_integrity.R)",
+      "Bash(for f in \"c:\\\\Users\\\\jviol\\\\Downloads\\\\nfl\\\\R\\\\utils.R\" \"c:\\\\Users\\\\jviol\\\\Downloads\\\\nfl\\\\R\\\\data_validation.R\" \"c:\\\\Users\\\\jviol\\\\Downloads\\\\nfl\\\\R\\\\logging.R\" \"c:\\\\Users\\\\jviol\\\\Downloads\\\\nfl\\\\R\\\\playoffs.R\" \"c:\\\\Users\\\\jviol\\\\Downloads\\\\nfl\\\\R\\\\date_resolver.R\" \"c:\\\\Users\\\\jviol\\\\Downloads\\\\nfl\\\\R\\\\sleeper_api.R\")",
+      "Bash(done)"
     ]
   }
 }

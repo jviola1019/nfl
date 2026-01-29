@@ -10,10 +10,10 @@
 
 An NFL game prediction model using Monte Carlo simulation with:
 - Negative Binomial score distributions with Gaussian copula correlation
-- Isotonic regression calibration (nested cross-validation)
+- Spline calibration (GAM with smoothing penalty, -6.9% Brier improvement)
 - 60% market shrinkage for probability estimates
 - 1/8 Kelly staking with edge skepticism
-- Strength-of-schedule and injury adjustments
+- Strength-of-schedule, injury, and coaching change adjustments
 
 ### Primary Entrypoints
 
@@ -35,7 +35,7 @@ When `run_week.R` completes successfully:
 
 - `scripts/verify_repo_integrity.R`: 35/35 checks pass
 - `scripts/run_matrix.R`: 9/9 artifacts pass
-- `testthat::test_dir("tests/testthat")`: ~310 tests pass (some skips OK)
+- `testthat::test_dir("tests/testthat")`: ~575 tests pass (some skips OK)
 - `run_week.R`: Completes without exit code 1
 
 ---
@@ -228,7 +228,7 @@ exclusions: list("renv" = Inf, "run_logs" = Inf)
 ### Core Pipeline (DO NOT DELETE)
 - `run_week.R` - Entry point
 - `config.R` - Configuration
-- `NFLsimulation.R` - Simulation engine (7800+ lines)
+- `NFLsimulation.R` - Simulation engine (8300+ lines)
 - `NFLmarket.R` - Market analysis (3900+ lines)
 - `NFLbrier_logloss.R` - Metrics
 
@@ -238,6 +238,11 @@ exclusions: list("renv" = Inf, "run_logs" = Inf)
 - `R/logging.R` - Structured logging
 - `R/playoffs.R` - Playoff logic
 - `R/date_resolver.R` - Date resolution
+- `R/sleeper_api.R` - Sleeper fantasy API integration
+- `R/red_zone_data.R` - Red zone efficiency metrics
+- `R/coaching_adjustments.R` - Coaching change adjustments
+- `R/simulation_helpers.R` - Simulation utility functions
+- `R/model_diagnostics.R` - Calibration diagnostics
 
 ### Scripts
 - `scripts/verify_repo_integrity.R` - 35-check verification
@@ -267,7 +272,7 @@ Rscript scripts/verify_repo_integrity.R
 # 2. Full artifact matrix (should show 9/9 pass)
 Rscript scripts/run_matrix.R
 
-# 3. Unit tests (310+ tests, some skips OK)
+# 3. Unit tests (575+ tests, some skips OK)
 Rscript -e "testthat::test_dir('tests/testthat')"
 
 # 4. Run weekly simulation (use valid week!)
@@ -287,5 +292,5 @@ Rscript -e "source('run_week.R')"
 
 ---
 
-*Last updated: 2026-01-22*
-*Version: 2.6.1*
+*Last updated: 2026-01-28*
+*Version: 2.6.4*

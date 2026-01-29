@@ -2,6 +2,109 @@
 
 All notable changes to the NFL Prediction Model are documented in this file.
 
+## [2.6.4] - 2026-01-28
+
+### Critical Bug Fixes
+
+**Snap Percentages Week Extraction Fix**
+- Fixed `load_player_snap_percentages()` error: "match() requires vector arguments"
+- Root cause: `nflreadr::load_participation()` returns play-level data without `week` column
+- Fix: Extract week from `nflverse_game_id` pattern (e.g., "2024_05_DAL_NYG" → week 5)
+- File: `injury_scalp.R` lines 1349-1370
+
+### Code Quality Improvements
+
+**Utility Function Consolidation**
+- Added canonical `clamp()`, `safe_mu()`, `safe_sd()` to R/utils.R
+- NFLsimulation.R now uses R/utils.R definitions with fallback guards
+- Removed duplicate `clamp()` redefinition from NFLsimulation.R line 5252
+- Net reduction: ~5 lines of duplicated code
+
+### New Model Improvements
+
+**Dynamic Regression (Early Season)**
+- `REGRESSION_GAMES` is now dynamically computed via `get_regression_games(week)`
+- More shrinkage to prior early season (weeks 1-4), less late season
+- Formula: `pmax(3, REGRESSION_GAMES * (1 - 0.3 * (week-1) / 10))`
+
+**Win Probability Prediction Intervals**
+- Added `margin_q05`, `margin_q95`, `home_win_pct_raw` columns to simulation output
+- Provides uncertainty quantification for betting decisions
+- Based on Monte Carlo simulation quantiles
+
+**Pace Variance Adjustment**
+- New `pace_variance_adj()` function for high-tempo team modeling
+- Teams with more plays per game have more scoring variance
+
+**QB Rushing Threat Adjustment**
+- New `qb_rush_adj()` function for dual-threat QB value
+- Mobile QBs add 0.3 points per 20 rush yards above average
+
+### New Module Files
+
+**R/red_zone_data.R**
+- `load_red_zone_efficiency()` - Loads red zone TD% by team
+- `get_red_zone_adjustment()` - Calculates scoring adjustment from RZ efficiency
+- Red zone TD% is partially independent of general offensive efficiency
+
+**R/coaching_adjustments.R**
+- `get_coaching_adjustment()` - Point adjustment for teams with new head coaches
+- `get_coaching_variance_mult()` - Variance multiplier for new coach uncertainty
+- `has_new_coach()`, `get_new_coach_teams()` - Helper functions
+- Includes 2024-2025 coaching changes data
+
+**R/simulation_helpers.R**
+- `get_regression_games_ext()` - Exportable dynamic regression function
+- `pace_variance_adj_ext()` - Exportable pace adjustment
+- `qb_rush_adj_ext()` - Exportable QB rushing adjustment
+- `margin_to_win_prob()` - Margin to probability conversion
+- `normalize_probs()` - Probability normalization
+
+**R/model_diagnostics.R**
+- `compute_calibration_diagnostics()` - Full calibration analysis
+- `print_calibration_report()` - Formatted console report
+- `compare_calibration_methods()` - Multi-method comparison
+- `brier_skill_score()` - Skill score vs baseline
+- `reliability_diagram_data()` - Plotting data for reliability diagram
+
+### Documentation Updates
+- Updated all docs to version 2.6.4
+- Added new R/ module files to file inventory
+- Synced calibration method references to "spline"
+
+### Test Results
+- All 575 tests pass (0 failures, 15 skips)
+- No regressions from code changes
+
+## [2.6.3] - 2026-01-27
+
+### Critical: Spline Calibration Overwrite Fix
+
+**Spline map_iso Overwrite Bug (CRITICAL)**
+- Block 2 (isotonic fallback) was overwriting spline `map_iso` because it was
+  an independent `if` block, not guarded by the spline/ensemble selection
+- Added `.calibration_handled` flag to prevent Block 2 from executing when
+  spline calibration is already loaded
+- Without this fix, spline calibration was silently replaced by broken isotonic
+
+**mgcv Package Dependency**
+- Added `library(mgcv)` inside spline calibration block in NFLsimulation.R
+- Required for `predict.gam` dispatch on the spline model from the RDS artifact
+- Without this, spline predict() would error or give wrong results
+
+**Primetime Validation Script Fix**
+- Fixed `if (is.na(hour))` scalar condition in vectorized context (line 47)
+- Changed to `ifelse(is.na(hour), 13, hour)` for proper vectorized operation
+- Added `library(nflreadr)` to script dependencies
+
+**Fallback Default Updated**
+- NFLsimulation.R fallback `CALIBRATION_METHOD` changed from "isotonic" to "spline"
+
+**Test Improvements**
+- Added spline calibration component test (`test-calibration.R`)
+- Known isotonic bug in ensemble artifact now properly skipped instead of failing
+- All 575 tests pass (0 failures)
+
 ## [2.6.2] - 2026-01-25
 
 ### Critical Bug Fixes (Brier Score ~0.25 → ~0.211)

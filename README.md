@@ -4,7 +4,7 @@
 
 A production-ready statistical model for predicting NFL game outcomes using Monte Carlo simulation and data-driven analysis.
 
-**Version**: 2.6
+**Version**: 2.6.4
 **R Version Required**: 4.3.0+ (tested on 4.5.1)
 **Status**: Production-Ready
 
@@ -347,9 +347,9 @@ This model is built on publicly available NFL data from the nflverse project. Al
 
 ## Updates & Maintenance
 
-**Current Version**: 2.6 (January 2026)
+**Current Version**: 2.6.4 (January 2026)
 
-**Recent fixes (v2.5)**:
+**Recent fixes (v2.6)**:
 - Fixed data quality API mismatches in NFLsimulation.R and verify_requirements.R
 - Corrected parameter names: `missing_seasons` (not `seasons_missing`), `fallback_games` (not `games_fallback`)
 - Corrected status values: `"full"` (not `"complete"`), `"unavailable"` (not `"missing"`)

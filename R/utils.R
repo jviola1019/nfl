@@ -421,3 +421,47 @@ ensure_unique_join_keys <- function(df, keys, label = "data frame") {
     dplyr::arrange(dplyr::across(dplyr::all_of(keys))) %>%
     dplyr::distinct(dplyr::across(dplyr::all_of(keys)), .keep_all = TRUE)
 }
+
+
+# =============================================================================
+# Numeric Utility Functions (Canonical Definitions)
+# =============================================================================
+
+#' Clamp values to a range
+#'
+#' @param x Numeric vector
+#' @param lo Lower bound (default 0)
+#' @param hi Upper bound (default 1)
+#' @return Clamped numeric vector
+#' @export
+clamp <- function(x, lo = 0, hi = 1) {
+
+pmin(pmax(x, lo), hi)
+}
+
+#' Safe mean value extraction (handles NA/Inf)
+#'
+#' Used for score distribution parameters. Returns default if value is
+#' non-finite or negative.
+#'
+#' @param x Numeric value
+#' @param default Default value if x is invalid (default 21, league avg points)
+#' @return Safe numeric value
+#' @export
+safe_mu <- function(x, default = 21) {
+  ifelse(is.finite(x) & x >= 0, x, default)
+}
+
+#' Safe standard deviation extraction (handles NA/Inf)
+#'
+#' Used for score distribution parameters. Returns default if value is
+#' non-finite or too small.
+#'
+#' @param x Numeric value
+#' @param default Default value if x is invalid (default 7, typical score SD)
+#' @param min_val Minimum acceptable value (default 5)
+#' @return Safe numeric value
+#' @export
+safe_sd <- function(x, default = 7, min_val = 5) {
+  ifelse(is.finite(x) & x >= min_val, x, default)
+}

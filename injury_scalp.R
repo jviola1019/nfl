@@ -1346,6 +1346,28 @@ load_player_snap_percentages <- function(team, season = NULL, weeks = NULL, use_
       weeks <- weeks[weeks > 0]
     }
 
+    # Ensure weeks is an integer vector
+    weeks <- as.integer(weeks)
+
+    # Extract week from game_id if no week column exists
+    # nflreadr::load_participation() returns play-level data without a week column
+    # Game ID pattern: "2024_05_DAL_NYG" -> week = 5
+    if (!"week" %in% names(participation)) {
+      game_id_col <- if ("nflverse_game_id" %in% names(participation)) "nflverse_game_id" else
+                     if ("game_id" %in% names(participation)) "game_id" else
+                     if ("old_game_id" %in% names(participation)) "old_game_id" else NULL
+
+      if (!is.null(game_id_col)) {
+        participation <- participation %>%
+          dplyr::mutate(
+            week = as.integer(sub("^[0-9]{4}_([0-9]{2})_.*$", "\\1", .data[[game_id_col]]))
+          )
+      } else {
+        message("Could not find game_id column to extract week")
+        return(default_result)
+      }
+    }
+
     # Filter and aggregate
     filtered <- participation %>%
       dplyr::filter(
