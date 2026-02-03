@@ -6,7 +6,8 @@
       "Bash(done)",
       "Bash(\"/c/Program Files/R/R-4.5.1/bin/Rscript.exe\" -e \"testthat::test_dir\\(''tests/testthat'', reporter = ''summary''\\)\")",
       "Bash(timeout 180 \"/c/Program Files/R/R-4.5.1/bin/Rscript.exe\":*)",
-      "Bash(timeout 300 \"/c/Program Files/R/R-4.5.1/bin/Rscript.exe\":*)"
+      "Bash(timeout 300 \"/c/Program Files/R/R-4.5.1/bin/Rscript.exe\":*)",
+      "Bash(\"C:/Program Files/R/R-4.5.1/bin/Rscript.exe\" -e \"testthat::test_dir\\(''tests/testthat'', stop_on_failure = FALSE\\)\")"
     ]
   }
 }

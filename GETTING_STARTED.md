@@ -2,7 +2,7 @@
 
 A beginner-friendly guide to running NFL game predictions using this statistical model.
 
-**Version**: 2.6.4
+**Version**: 2.6.7
 **R Version Required**: 4.3.0+ (tested on 4.5.1)
 **Last Updated**: January 2026
 
@@ -132,6 +132,40 @@ You can also configure injury mode in `config.R`:
 # Use renv for reproducible package management
 renv::restore()
 ```
+
+### Script hangs after "Snap-weighted injury impacts enabled"
+
+This can occur when snap participation data is unavailable for the current season.
+
+**Fix**: Verify snap weighting is disabled in `config.R`:
+```r
+USE_SNAP_WEIGHTED_INJURIES <- FALSE  # Should be FALSE
+```
+
+**Why this happens**: The snap weighting feature makes network calls to `nflreadr::load_participation()` which can timeout when data is unavailable for future or current seasons.
+
+**Note**: Disabling snap weighting does NOT affect model accuracy - position-level injury weights remain active and are validated (p < 0.001).
+
+### VS Code R Extension Issues
+
+If the R extension isn't working properly:
+
+1. **Configure R path in settings** (`Ctrl+,`):
+   - Windows: `"r.rterm.windows": "C:\\Program Files\\R\\R-4.5.1\\bin\\R.exe"`
+   - Mac: `"r.rterm.mac": "/usr/local/bin/R"`
+   - Linux: `"r.rterm.linux": "/usr/bin/R"`
+
+2. **Restart R session**: `Ctrl+Shift+P` → "R: Restart R"
+
+3. **Verify R works**: Open terminal and run `R --version`
+
+### RStudio Session Issues
+
+If RStudio is slow or unresponsive:
+
+1. **Restart R session**: `Ctrl+Shift+F10` (Windows/Linux) or `Cmd+Shift+F10` (Mac)
+2. **Clear workspace**: `rm(list = ls())` then restart
+3. **Reinstall packages**: `renv::restore()`
 
 ### Windows: "00LOCK" error with glmnet
 **Symptom**: `installation of package 'glmnet' had non-zero exit status` or `cannot remove prior installation of package 'glmnet'`

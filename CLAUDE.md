@@ -221,6 +221,36 @@ exclusions: list("renv" = Inf, "run_logs" = Inf)
 2. Previous step produced empty results
 3. File write permission issue
 
+### Script Hangs After "Snap-weighted injury impacts enabled"
+
+**Symptom**: Script stops after injury loading, shows "✓ Snap-weighted injury impacts enabled"
+
+**Diagnosis**: Network timeout when loading snap participation data
+
+**Root Cause**:
+- `nflreadr::load_participation()` hangs when data unavailable for current season
+- The function has no timeout protection
+
+**Fix**:
+```r
+# Verify in config.R:
+USE_SNAP_WEIGHTED_INJURIES <- FALSE  # Must be FALSE
+```
+
+**Important**: Disabling snap weighting does NOT affect model accuracy:
+- Position-level injury weights remain active (validated p < 0.001)
+- Snap weighting had no empirical evidence of improving Brier/log-loss
+- The feature was disabled in v2.6.7 as the default
+
+### knitr/xfun GitHub Actions Crash
+
+**Symptom**: GitHub Actions fail with knitr or xfun namespace errors
+
+**Fix**:
+1. Run `renv::snapshot()` to capture xfun dependency
+2. Verify knitr is in DESCRIPTION Imports (not just Suggests)
+3. Push updated renv.lock
+
 ---
 
 ## 6. FILE INVENTORY (Quick Reference)
@@ -293,4 +323,4 @@ Rscript -e "source('run_week.R')"
 ---
 
 *Last updated: 2026-01-29*
-*Version: 2.6.6*
+*Version: 2.6.7*

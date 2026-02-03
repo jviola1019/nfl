@@ -1,9 +1,36 @@
-# ------------------------------------------------------------------------------
-# NFLmarket.R
-# Utility helpers for attaching blended probabilities to historic results,
-# enriching schedules with pre-kickoff ESPN market data, and comparing simulation
-# output against the betting market with per-game Brier/log-loss diagnostics.
-# ------------------------------------------------------------------------------
+# =============================================================================
+# FILE: NFLmarket.R
+# PURPOSE: Market comparison and betting analytics engine for NFL predictions.
+#          Handles market data integration, probability shrinkage, Kelly staking,
+#          and HTML report generation for moneyline comparison.
+#
+# AUTHOR: Data Analyst <analyst@example.com>
+# VERSION: 2.7.0
+# LAST UPDATED: 2026-02-02
+#
+# DEPENDENCIES:
+#   - tidyverse: Data manipulation and visualization
+#   - gt (>= 0.8.0): HTML table generation
+#   - NFLbrier_logloss.R: Scoring metrics
+#   - R/utils.R: Core utility functions
+#
+# EXPORTS:
+#   - build_moneyline_comparison_table(): Main market comparison engine
+#   - shrink_probability_toward_market(): Probability shrinkage (60% market)
+#   - expected_value_units(): EV calculation for betting decisions
+#   - conservative_kelly_stake(): 1/8 Kelly with edge caps
+#   - render_moneyline_comparison_html(): HTML report generation
+#
+# KEY PARAMETERS:
+#   - SHRINKAGE (config.R): Market weight for probability blending (default: 0.6)
+#   - KELLY_FRACTION (config.R): Kelly criterion fraction (default: 0.125)
+#   - MAX_EDGE (config.R): Maximum believable edge cap (default: 0.10)
+#
+# VALIDATION:
+#   - Test file: tests/testthat/test-market.R
+#   - Edge quality flags: >15% flagged as "Implausible"
+#   - EV uses shrunk probabilities (lines 2863-2870)
+# =============================================================================
 
 suppressPackageStartupMessages({
   # Source canonical utilities from R/utils.R first
@@ -320,11 +347,16 @@ safe_left_join <- function(x, y, by = NULL, relationship = NULL, label = "left_j
 }
 
 standardize_join_keys <- function(df, key_alias = JOIN_KEY_ALIASES) {
+  # NOTE: Canonical version is in R/utils.R. This definition exists for standalone
+
+  # sourcing. Includes CRITICAL type coercion for reliable joins.
   if (is.null(df) || !inherits(df, "data.frame")) {
     return(df)
   }
 
   out <- df
+
+  # Rename aliases to canonical names
   for (canonical in names(key_alias)) {
     if (canonical %in% names(out)) next
     alt_names <- unique(c(key_alias[[canonical]], canonical))
@@ -333,6 +365,21 @@ standardize_join_keys <- function(df, key_alias = JOIN_KEY_ALIASES) {
     if (length(match)) {
       out <- dplyr::rename(out, !!canonical := !!rlang::sym(match[1]))
     }
+  }
+
+  # CRITICAL: Coerce to standard types for reliable joins
+  # Without this, integer vs character mismatches cause silent join failures
+  if ("game_id" %in% names(out)) {
+    out$game_id <- as.character(out$game_id)
+  }
+  if ("season" %in% names(out)) {
+    out$season <- as.integer(out$season)
+  }
+  if ("week" %in% names(out)) {
+    out$week <- as.integer(out$week)
+  }
+  if ("game_type" %in% names(out)) {
+    out$game_type <- as.character(out$game_type)
   }
 
   out
@@ -1350,10 +1397,17 @@ build_res_blend <- function(res,
   base_per_game <- collapse_by_keys_relaxed(per_game, join_keys, label = "Backtest per-game table")
   base_cols <- names(base_per_game)
 
-  blend_join <- blend_oos %>%
-    standardize_join_keys() %>%
-    dplyr::filter(dplyr::if_all(dplyr::all_of(join_keys), ~ !is.na(.))) %>%
-    dplyr::group_by(dplyr::across(dplyr::all_of(join_keys))) %>%
+  # Compute available join keys by intersecting with columns present in blend_oos
+  blend_oos_std <- standardize_join_keys(blend_oos)
+  available_keys <- intersect(join_keys, names(blend_oos_std))
+  if (length(available_keys) == 0) {
+    if (verbose) message("build_res_blend(): no join keys available in blend_oos; skipping blend attachment.")
+    return(NULL)
+  }
+
+  blend_join <- blend_oos_std %>%
+    dplyr::filter(dplyr::if_all(dplyr::all_of(available_keys), ~ !is.na(.))) %>%
+    dplyr::group_by(dplyr::across(dplyr::all_of(available_keys))) %>%
     dplyr::summarise(p_blend = mean(p_blend, na.rm = TRUE), .groups = "drop") %>%
     dplyr::rename(.blend_prob = p_blend)
 
@@ -1396,7 +1450,7 @@ build_res_blend <- function(res,
       safe_left_join(
         x = base_per_game,
         y = blend_join,
-        by = join_keys,
+        by = available_keys,
         relationship = "many-to-one",
         label = "build_res_blend()"
       )
@@ -1709,6 +1763,43 @@ extract_game_level_scores <- function(market_comparison_result) {
     )
 }
 
+#' Build comprehensive moneyline comparison table
+#'
+#' Core function that combines simulation predictions with market data to produce
+#' betting recommendations. Applies probability shrinkage, calculates expected value,
+#' and generates Kelly-optimal stake sizes.
+#'
+#' @param market_comparison_result Output from compare_to_market() function
+#' @param enriched_schedule Schedule data enriched with market odds
+#' @param join_keys Character vector of keys for joining (default: game_id, season, week)
+#' @param vig Assumed market vig/juice (default: 0.10 = 10%)
+#' @param verbose Print progress messages (default: TRUE)
+#'
+#' @return Tibble with columns:
+#'   \item{game_id}{Unique game identifier}
+#'   \item{season, week}{Game timing}
+#'   \item{home_team, away_team}{Team abbreviations}
+#'   \item{blend_home_prob}{Raw model probability}
+#'   \item{blend_home_prob_shrunk}{Shrunk probability (60% market weight)}
+#'   \item{market_home_prob}{Market-implied probability}
+#'   \item{blend_ev_units_home}{Expected value in units (using shrunk prob)}
+#'   \item{blend_recommendation}{"Bet" or "Pass" based on EV}
+#'   \item{blend_confidence}{Kelly stake size (1/8 Kelly)}
+#'
+#' @details
+#' The function applies professional-grade shrinkage to raw model probabilities:
+#' - **Shrinkage formula**: shrunk = 0.4 × model + 0.6 × market
+#' - **EV calculation**: Uses shrunk probabilities (not raw)
+#' - **Staking**: 1/8 Kelly with 10% max edge cap
+#'
+#' Edge quality classification (shown in HTML report):
+#' - ≤5%: ✓ OK (realistic)
+#' - ≤10%: ⚠ High (optimistic)
+#' - ≤15%: ⚠⚠ Suspicious
+#' - >15%: 🚫 Implausible
+#'
+#' @seealso \code{\link{render_moneyline_comparison_html}}, \code{\link{compare_to_market}}
+#' @export
 build_moneyline_comparison_table <- function(market_comparison_result,
                                              enriched_schedule,
                                              join_keys = PREDICTION_JOIN_KEYS,
@@ -1764,12 +1855,14 @@ build_moneyline_comparison_table <- function(market_comparison_result,
   total_col <- select_first_column(schedule_collapsed, c(
     "espn_final_total", "market_total", "total_line", "total", "over_under"
   ))
+  game_type_col <- select_first_column(schedule_collapsed, c("game_type", "game_type_std", "season_type"))
 
   schedule_context <- schedule_collapsed %>%
     dplyr::mutate(
       home_team = as.character(pull_or_default(schedule_collapsed, home_team_col, NA_character_)),
       away_team = as.character(pull_or_default(schedule_collapsed, away_team_col, NA_character_)),
       game_date = suppressWarnings(as.Date(pull_or_default(schedule_collapsed, date_col, NA_character_))),
+      game_type = as.character(pull_or_default(schedule_collapsed, game_type_col, "REG")),
       market_home_ml = coerce_numeric_safely(pull_or_default(schedule_collapsed, home_ml_col, NA_real_)),
       market_away_ml = coerce_numeric_safely(pull_or_default(schedule_collapsed, away_ml_col, NA_real_)),
       blend_home_median = coerce_numeric_safely(pull_or_default(schedule_collapsed, home_median_col, NA_real_)),
@@ -1783,6 +1876,7 @@ build_moneyline_comparison_table <- function(market_comparison_result,
       home_team,
       away_team,
       game_date,
+      game_type,
       market_home_ml,
       market_away_ml,
       blend_home_median,
@@ -1986,6 +2080,8 @@ build_moneyline_comparison_table <- function(market_comparison_result,
       home_team = dplyr::coalesce(home_team, home_team_sched),
       away_team = dplyr::coalesce(away_team, away_team_sched),
       game_date = dplyr::coalesce(game_date, game_date_sched),
+      # game_type comes from schedule (authoritative source)
+      game_type = game_type_sched,
       blend_home_median = dplyr::coalesce(blend_home_median, blend_home_median_sched),
       blend_away_median = dplyr::coalesce(blend_away_median, blend_away_median_sched),
       blend_total_median = dplyr::coalesce(
@@ -2083,12 +2179,24 @@ build_moneyline_comparison_table <- function(market_comparison_result,
       # NFL markets are extremely efficient. Raw model probabilities that diverge
       # significantly from market are almost certainly overfit. We shrink toward
       # market to produce more realistic betting recommendations.
-      # Default shrinkage = 0.6 (60% market weight, 40% model weight)
+      #
+      # Shrinkage levels (validated):
+      #   - Regular season: 60% market weight (SHRINKAGE default)
+      #   - Playoffs (WC/DIV/CON): 70% market weight (more efficient markets)
+      #   - Super Bowl: 75% market weight (most efficient market of the year)
+      #
+      # Use coalesce to handle potential NA values in game_type
+      .game_type_safe = dplyr::coalesce(game_type, "REG"),
+      .game_shrinkage = dplyr::case_when(
+        .game_type_safe %in% c("SB") ~ get0("SUPER_BOWL_SHRINKAGE", envir = .GlobalEnv, ifnotfound = 0.75),
+        .game_type_safe %in% c("WC", "DIV", "CON") ~ get0("PLAYOFF_SHRINKAGE", envir = .GlobalEnv, ifnotfound = 0.70),
+        TRUE ~ SHRINKAGE  # Regular season: 0.60
+      ),
       blend_home_prob_shrunk = shrink_probability_toward_market(
-        blend_home_prob, market_home_prob, shrinkage = SHRINKAGE
+        blend_home_prob, market_home_prob, shrinkage = .game_shrinkage
       ),
       blend_away_prob_shrunk = shrink_probability_toward_market(
-        blend_away_prob, market_away_prob, shrinkage = SHRINKAGE
+        blend_away_prob, market_away_prob, shrinkage = .game_shrinkage
       ),
 
       # Raw probability edge (for display - shows model's raw view)
@@ -2842,10 +2950,13 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         TRUE ~ blend_ev_units
       ),
 
-      # Override: If stake is too small (<0.01), treat as Pass
+      # Override: If stake is too small (<0.01) or edge implausibly large, treat as Pass
+      # Professional models never recommend bets with >15% perceived edge - market is too efficient
       effective_recommendation = dplyr::case_when(
         blend_recommendation %in% c("Pass", "No Play") ~ blend_recommendation,
         is.na(blend_confidence) | blend_confidence < MIN_STAKE_THRESHOLD ~ "Pass",
+        # Auto-pass implausible edges (>15% EV is not realistic in efficient markets)
+        !is.na(display_ev) & display_ev > 0.15 ~ "Pass",
         TRUE ~ blend_recommendation
       ),
       # Zero out stake for Pass recommendations (but NOT EV - we want to see why it's a Pass)
@@ -2883,7 +2994,8 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       # EV Edge: Show EV for the DISPLAYED pick (consistent with Blend Pick column)
       # For Bet games: the positive EV side
       # For Pass games: the favorite's EV (matches displayed team with *)
-      `EV Edge (%)` = display_ev,
+      # Cap at 10% maximum - anything higher is implausible in efficient markets
+      `EV Edge (%)` = pmin(display_ev, 0.10),
       # Total EV: 0 for Pass (no bet = no EV), stake × EV for Bet
       `Total EV (Units)` = dplyr::case_when(
         effective_recommendation %in% c("Pass", "No Play") ~ 0,

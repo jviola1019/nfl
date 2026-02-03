@@ -649,7 +649,9 @@ compare_to_market <- function(res,
   else stop("Couldn’t find predictions in `res`.")
 
   preds_src <- standardize_join_keys(preds_src)
-  missing_pred_keys <- setdiff(join_keys, names(preds_src))
+  # Only require the core join keys for predictions (game_type is optional)
+  core_pred_keys <- c("game_id", "season", "week")
+  missing_pred_keys <- setdiff(core_pred_keys, names(preds_src))
   if (length(missing_pred_keys)) {
     stop(sprintf(
       "compare_to_market(): predictions missing join keys: %s",
@@ -659,8 +661,9 @@ compare_to_market <- function(res,
   
   pcol <- .pick_col(preds_src, c("p2_cal","home_p_2w_cal","p2_home_cal","home_p2w_cal"))
   stopifnot(!is.na(pcol))
-  
-  dedupe_join_keys <- join_keys
+
+  # Use core keys for deduplication (game_type is optional and may not be in predictions)
+  dedupe_join_keys <- core_pred_keys
 
   align_join_types <- function(df, template, keys) {
     if (!requireNamespace("vctrs", quietly = TRUE)) {

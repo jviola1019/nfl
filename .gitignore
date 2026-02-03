@@ -52,3 +52,6 @@ r451_compatibility_report.rds
 # - renv.lock (for reproducibility)
 # - .vscode/ (for R extension settings)
 # - .lintr (for linting configuration)
+
+# Archived files (unused/superseded code)
+archive/

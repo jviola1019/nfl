@@ -4,7 +4,7 @@
 
 A production-ready statistical model for predicting NFL game outcomes using Monte Carlo simulation and data-driven analysis.
 
-**Version**: 2.6.6
+**Version**: 2.7.0
 **R Version Required**: 4.3.0+ (tested on 4.5.1)
 **Status**: Production-Ready
 
@@ -14,6 +14,46 @@ A production-ready statistical model for predicting NFL game outcomes using Mont
 
 - **[GETTING_STARTED.md](GETTING_STARTED.md)** - Quick start guide, IDE setup, troubleshooting
 - **[DOCUMENTATION.md](DOCUMENTATION.md)** - Complete technical reference, methodology, validation results
+- **[docs/API.md](docs/API.md)** - Function reference for developers
+- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** - System architecture and design decisions
+
+---
+
+## Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     USER INTERFACE                              │
+│  run_week.R (Entry) │ config.R (Params) │ HTML Report          │
+└───────────────────────────────┬─────────────────────────────────┘
+                                │
+┌───────────────────────────────▼─────────────────────────────────┐
+│                   SIMULATION ENGINE                             │
+│  NFLsimulation.R: Monte Carlo + Gaussian copula                 │
+│  • simulate_game_nb()    • calc_injury_impacts()                │
+│  • score_weeks()         • safe_hourly() (weather)              │
+└───────────────────────────────┬─────────────────────────────────┘
+                                │
+┌───────────────────────────────▼─────────────────────────────────┐
+│                   MARKET ANALYSIS                               │
+│  NFLmarket.R: Market comparison + Kelly staking                 │
+│  • build_moneyline_comparison_table()                           │
+│  • shrink_probability_toward_market() (60% market weight)       │
+│  • conservative_kelly_stake() (1/8 Kelly)                       │
+└───────────────────────────────┬─────────────────────────────────┘
+                                │
+┌───────────────────────────────▼─────────────────────────────────┐
+│                   VALIDATION & METRICS                          │
+│  NFLbrier_logloss.R: Brier = 0.211 (95% CI: 0.205-0.217)       │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Key Statistical Methods:**
+- **Score Distribution**: Negative binomial (captures overdispersion)
+- **Correlation**: Gaussian copula (rho ≈ -0.15)
+- **Calibration**: GAM spline (-6.9% Brier improvement)
+- **Shrinkage**: 60% market weight, 40% model weight
+- **Staking**: 1/8 Kelly with 10% max edge cap
 
 ---
 
@@ -347,12 +387,17 @@ This model is built on publicly available NFL data from the nflverse project. Al
 
 ## Updates & Maintenance
 
-**Current Version**: 2.6.6 (January 2026)
+**Current Version**: 2.6.7 (January 2026)
 
-**Recent fixes (v2.6.6)**:
-- **CRITICAL**: Fixed `run_week.R` hanging after loading injury data
-- Root cause: Snap weighting was applying rowwise operations to 49,488+ historical records
-- Fix: Only apply snap weighting to current week injuries, not historical data
+**Recent fixes (v2.6.7)**:
+- **CRITICAL**: Disabled snap weighting by default (`USE_SNAP_WEIGHTED_INJURIES <- FALSE`)
+- Snap weighting had NO validated Brier/log-loss improvement (position weights remain active)
+- Fixed knitr/xfun dependency chain for GitHub Actions
+- Added IDE setup troubleshooting to GETTING_STARTED.md
+- Added `.kable_safe()` wrapper for graceful knitr fallback
+
+**Previous fixes (v2.6.6)**:
+- Fixed `run_week.R` hanging after loading injury data
 - Optimized weather coefficient calculations (moved outside mutate)
 
 **Previous fixes (v2.6.5)**:

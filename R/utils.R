@@ -344,14 +344,33 @@ select_first_column <- function(df, candidates) {
 }
 
 #' Ensure columns exist with defaults
-#' @param df Data frame
+#' @description Adds missing columns to a data frame with specified default values.
+#'   Handles NULL and non-dataframe inputs gracefully.
+#' @param df Data frame (or NULL, or convertible to tibble)
 #' @param defaults Named list of column -> default value
 #' @return Data frame with all columns present
+#' @examples
+#' \dontrun{
+#'   df <- ensure_columns_with_defaults(df, list(score = 0, team = NA_character_))
+#' }
 ensure_columns_with_defaults <- function(df, defaults) {
-  for (col in names(defaults)) {
-    if (!col %in% names(df)) {
-      df[[col]] <- defaults[[col]]
-    }
+  # Handle NULL input
+
+  if (is.null(df)) {
+    df <- tibble::tibble()
+  }
+  # Handle non-dataframe input
+  if (!inherits(df, "data.frame")) {
+    df <- tibble::as_tibble(df)
+  }
+  # Find missing columns
+  missing <- setdiff(names(defaults), names(df))
+  if (!length(missing)) {
+    return(df)
+  }
+  # Add missing columns with defaults
+  for (col in missing) {
+    df[[col]] <- defaults[[col]]
   }
   df
 }

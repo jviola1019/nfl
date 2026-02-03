@@ -1,11 +1,12 @@
 Package: nflpredict
-Title: NFL Game Prediction Model
-Version: 2.6.1
+Title: NFL Game Prediction Model - Multi-Sport Blueprint
+Version: 2.7.2
 Authors@R: person("Data Analyst", email = "analyst@example.com", role = c("aut", "cre"))
 Description: A comprehensive NFL game prediction model using Monte Carlo simulation,
-    Gaussian copula correlation, isotonic regression calibration, and Kelly staking.
+    Gaussian copula correlation, spline calibration, and Kelly staking.
     Features include strength-of-schedule adjustments, injury impact modeling,
     weather effects, and professional-grade betting analytics.
+    Designed as a blueprint for multi-sport prediction models.
 License: MIT + file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
@@ -22,10 +23,11 @@ Imports:
     glmnet (>= 4.0.0),
     randtoolbox (>= 2.0.0),
     gt (>= 0.8.0),
-    nflreadr (>= 1.3.0)
+    nflreadr (>= 1.3.0),
+    knitr (>= 1.40),
+    xfun (>= 0.40)
 Suggests:
     testthat (>= 3.0.0),
-    knitr,
     rmarkdown
 Config/testthat/edition: 3
 VignetteBuilder: knitr

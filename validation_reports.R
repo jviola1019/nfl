@@ -7,6 +7,16 @@
 #
 # =============================================================================
 
+# Safe knitr::kable wrapper with fallback for when knitr is unavailable
+.kable_safe <- function(x, format = "html", ...) {
+  if (requireNamespace("knitr", quietly = TRUE)) {
+    knitr::kable(x, format = format, ...)
+  } else {
+    # Fallback to simple HTML table
+    sprintf("<pre>%s</pre>", paste(capture.output(print(x)), collapse = "\n"))
+  }
+}
+
 #' Generate comprehensive validation report with phase labels
 #'
 #' @param results Output from run_full_validation()
@@ -343,14 +353,14 @@ save_validation_html <- function(report, output_file) {
   report$metadata$validation_window$end_season,
   report$metadata$test_window$start_season,
   report$metadata$test_window$end_season,
-  knitr::kable(report$hyperparameters, format = "html"),
-  knitr::kable(report$performance, format = "html", digits = 4),
+  .kable_safe(report$hyperparameters, format = "html"),
+  .kable_safe(report$performance, format = "html", digits = 4),
   if (!is.null(report$market_comparison)) {
-    knitr::kable(report$market_comparison, format = "html", digits = 4)
+    .kable_safe(report$market_comparison, format = "html", digits = 4)
   } else {
     "<p><em>Market comparison not available</em></p>"
   },
-  knitr::kable(report$by_season, format = "html", digits = 4)
+  .kable_safe(report$by_season, format = "html", digits = 4)
   )
 
   writeLines(html, output_file)
