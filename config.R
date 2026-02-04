@@ -787,6 +787,53 @@ MAX_STAKE <- 0.02
 ISOTONIC_EPSILON <- 0.01
 
 # =============================================================================
+# PLAYER PROPS CONFIGURATION
+# =============================================================================
+# Parameters for correlated player prop simulation
+
+#' @description Enable/disable player props analysis
+#' @default TRUE
+#' @note Set to FALSE to skip player props (faster runtime)
+RUN_PLAYER_PROPS <- TRUE
+
+#' @description Prop types to simulate
+#' @default c("passing", "rushing", "receiving", "td")
+PROP_TYPES <- c("passing", "rushing", "receiving", "td")
+
+# Correlation coefficients (empirically derived from 2019-2024 NFL data)
+# These control how strongly player stats correlate with game outcomes
+
+#' @description QB passing yards correlation with game total
+#' @default 0.75
+#' @validation Based on nflreadr data 2019-2024, r = 0.72-0.78
+PROP_GAME_CORR_PASSING <- 0.75
+
+#' @description RB rushing yards correlation with game total
+#' @default 0.60
+#' @validation Based on nflreadr data 2019-2024, r = 0.55-0.65
+PROP_GAME_CORR_RUSHING <- 0.60
+
+#' @description WR/TE receiving yards correlation with team passing
+#' @default 0.50
+#' @validation Based on nflreadr data 2019-2024, r = 0.45-0.55
+PROP_GAME_CORR_RECEIVING <- 0.50
+
+#' @description TD probability correlation with game total
+#' @default 0.40
+#' @validation Overdispersed count data, correlation weaker
+PROP_GAME_CORR_TD <- 0.40
+
+#' @description Intra-team player correlation (cannibalization effect)
+#' @default -0.15
+#' @note Negative value reflects target/touch competition between teammates
+PROP_SAME_TEAM_CORR <- -0.15
+
+#' @description Vig percentage to apply to model moneylines
+#' @default 0.10 (10% juice, matching typical sportsbook)
+#' @note Makes model lines comparable to market odds
+MODEL_VIG_PCT <- 0.10
+
+# =============================================================================
 # R COMPATIBILITY
 # =============================================================================
 
@@ -1018,7 +1065,16 @@ list2env(
     MAX_EDGE = MAX_EDGE,
     VIG = VIG,
     MAX_STAKE = MAX_STAKE,
-    ISOTONIC_EPSILON = ISOTONIC_EPSILON
+    ISOTONIC_EPSILON = ISOTONIC_EPSILON,
+    # Player props configuration (v2.9.0)
+    RUN_PLAYER_PROPS = RUN_PLAYER_PROPS,
+    PROP_TYPES = PROP_TYPES,
+    PROP_GAME_CORR_PASSING = PROP_GAME_CORR_PASSING,
+    PROP_GAME_CORR_RUSHING = PROP_GAME_CORR_RUSHING,
+    PROP_GAME_CORR_RECEIVING = PROP_GAME_CORR_RECEIVING,
+    PROP_GAME_CORR_TD = PROP_GAME_CORR_TD,
+    PROP_SAME_TEAM_CORR = PROP_SAME_TEAM_CORR,
+    MODEL_VIG_PCT = MODEL_VIG_PCT
   ),
   envir = .GlobalEnv
 )

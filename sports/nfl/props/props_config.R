@@ -2,8 +2,8 @@
 # FILE: sports/nfl/props/props_config.R
 # PURPOSE: NFL player props configuration and shared utilities
 #
-# VERSION: 2.7.0
-# LAST UPDATED: 2026-02-02
+# VERSION: 2.9.0
+# LAST UPDATED: 2026-02-03
 #
 # DESCRIPTION:
 #   Configuration parameters for NFL player prop predictions.

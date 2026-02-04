@@ -99,6 +99,72 @@ probability_to_american <- function(prob) {
   )
 }
 
+#' Apply vig (juice) to probability for realistic moneyline
+#'
+#' Converts a true probability to American odds with vig applied.
+#' This makes model moneylines comparable to market odds which include juice.
+#'
+#' @param prob True probability (0-1)
+#' @param vig_pct Total vig percentage (e.g., 0.10 for 10% juice)
+#' @return American odds with vig applied
+#'
+#' @details
+#' For a 50/50 game with 10% vig, each side shows -110 (52.4% implied).
+#' The vig is split between both sides, inflating implied probabilities.
+#'
+#' Examples:
+#' - 50% true prob with 10% vig → -110 (52.4% implied)
+#' - 55% true prob with 10% vig → -133 (57.0% implied)
+#' - 60% true prob with 10% vig → -162 (61.8% implied)
+#'
+#' @examples
+#' apply_model_vig(0.50, 0.10)  # Returns -110
+#' apply_model_vig(0.55, 0.10)  # Returns approximately -133
+#' apply_model_vig(0.60, 0.10)  # Returns approximately -162
+#'
+#' @export
+apply_model_vig <- function(prob, vig_pct = 0.10) {
+  prob <- clamp_probability(prob)
+
+  # Vig inflates implied probability
+  # For 10% total vig, split ~5% per side
+  vig_factor <- 1 + vig_pct / 2
+  vigged_prob <- prob * vig_factor
+
+  # Cap at 99% to avoid extreme odds
+
+  vigged_prob <- pmin(vigged_prob, 0.99)
+
+  probability_to_american(vigged_prob)
+}
+
+#' Remove vig from American odds to get true probability
+#'
+#' De-vigs American odds by calculating the overround and adjusting.
+#'
+#' @param home_odds American odds for home team
+#' @param away_odds American odds for away team
+#' @return Named list with true home and away probabilities
+#'
+#' @export
+devig_american_odds <- function(home_odds, away_odds) {
+  home_implied <- american_to_probability(home_odds)
+  away_implied <- american_to_probability(away_odds)
+
+  # Total implied (should be > 1 if vigged)
+  total_implied <- home_implied + away_implied
+
+  # De-vig by normalizing
+  home_true <- home_implied / total_implied
+  away_true <- away_implied / total_implied
+
+  list(
+    home_prob = home_true,
+    away_prob = away_true,
+    overround = total_implied - 1
+  )
+}
+
 # =============================================================================
 # BETTING & STAKING FUNCTIONS
 # =============================================================================

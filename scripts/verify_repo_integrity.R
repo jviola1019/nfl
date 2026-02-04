@@ -57,6 +57,7 @@ required_files <- c(
   "R/logging.R",
   "R/playoffs.R",
   "R/date_resolver.R",
+  "R/correlated_props.R",
   "DESCRIPTION",
   "README.md",
   "CLAUDE.md"
@@ -267,6 +268,134 @@ tryCatch({
 
 }, error = function(e) {
   fail("invariant", "Failed to test R/data_validation.R", conditionMessage(e))
+})
+
+# =============================================================================
+# INVARIANT: Props Configuration Parameters
+# =============================================================================
+
+cat("\n--- Invariant: Props Configuration Parameters ---\n")
+
+tryCatch({
+  # Check props config parameters exist
+  props_params <- c("RUN_PLAYER_PROPS", "PROP_TYPES", "PROP_GAME_CORR_PASSING",
+                    "PROP_GAME_CORR_RUSHING", "PROP_GAME_CORR_RECEIVING",
+                    "PROP_GAME_CORR_TD", "PROP_SAME_TEAM_CORR", "MODEL_VIG_PCT")
+
+  for (param in props_params) {
+    if (exists(param)) {
+      pass("invariant", sprintf("Props Config: %s defined", param))
+    } else {
+      fail("invariant", sprintf("Props Config: %s not defined", param))
+    }
+  }
+
+  # Correlation coefficient range validation (empirical bounds 2019-2024)
+  if (exists("PROP_GAME_CORR_PASSING") && PROP_GAME_CORR_PASSING >= 0.70 && PROP_GAME_CORR_PASSING <= 0.80) {
+    pass("invariant", "PROP_GAME_CORR_PASSING in valid range [0.70, 0.80]")
+  } else if (exists("PROP_GAME_CORR_PASSING")) {
+    fail("invariant", "PROP_GAME_CORR_PASSING out of empirical range")
+  }
+
+  if (exists("MODEL_VIG_PCT") && MODEL_VIG_PCT >= 0.05 && MODEL_VIG_PCT <= 0.15) {
+    pass("invariant", "MODEL_VIG_PCT in valid range [0.05, 0.15]")
+  } else if (exists("MODEL_VIG_PCT")) {
+    fail("invariant", "MODEL_VIG_PCT out of range")
+  }
+
+}, error = function(e) {
+  fail("invariant", "Failed to validate props configuration", conditionMessage(e))
+})
+
+# =============================================================================
+# INVARIANT: Vig Function Contracts
+# =============================================================================
+
+cat("\n--- Invariant: Vig Function Contracts ---\n")
+
+tryCatch({
+  source("R/utils.R")
+
+  # Test apply_model_vig exists and works
+  if (exists("apply_model_vig")) {
+    # 50% with 10% vig should be approximately -110
+    ml_50 <- apply_model_vig(0.50, 0.10)
+    if (!is.na(ml_50) && ml_50 >= -115 && ml_50 <= -105) {
+      pass("invariant", "apply_model_vig: 50% → -110 (correct)")
+    } else {
+      fail("invariant", "apply_model_vig: 50% calculation", sprintf("got %s", ml_50))
+    }
+
+    # Vigged odds should sum to >100% implied probability
+    home_ml <- apply_model_vig(0.55, 0.10)
+    away_ml <- apply_model_vig(0.45, 0.10)
+    home_implied <- american_to_probability(home_ml)
+    away_implied <- american_to_probability(away_ml)
+    total_implied <- home_implied + away_implied
+
+    if (total_implied >= 1.08 && total_implied <= 1.12) {
+      pass("invariant", sprintf("Vigged ML total implied: %.1f%% (correct)", total_implied * 100))
+    } else {
+      fail("invariant", "Vigged ML total implied", sprintf("expected ~110%%, got %.1f%%", total_implied * 100))
+    }
+  } else {
+    fail("invariant", "apply_model_vig function not found")
+  }
+
+  # Test devig_american_odds if exists
+  if (exists("devig_american_odds")) {
+    devigged <- devig_american_odds(-110, -110)
+    if (abs(devigged$home_prob - 0.50) < 0.02 && abs(devigged$away_prob - 0.50) < 0.02) {
+      pass("invariant", "devig_american_odds: -110/-110 → 50%/50% (correct)")
+    } else {
+      fail("invariant", "devig_american_odds calculation error")
+    }
+  } else {
+    fail("invariant", "devig_american_odds function not found")
+  }
+
+}, error = function(e) {
+  fail("invariant", "Failed to test vig functions", conditionMessage(e))
+})
+
+# =============================================================================
+# INVARIANT: Correlated Props Module
+# =============================================================================
+
+cat("\n--- Invariant: Correlated Props Module ---\n")
+
+tryCatch({
+  source("R/correlated_props.R")
+
+  # Check required functions exist
+  props_functions <- c("get_game_correlation", "generate_correlated_variates",
+                       "simulate_correlated_prop", "run_correlated_props")
+
+  for (fn in props_functions) {
+    if (exists(fn)) {
+      pass("invariant", sprintf("Props function: %s exists", fn))
+    } else {
+      fail("invariant", sprintf("Props function: %s not found", fn))
+    }
+  }
+
+  # Test correlation generation (statistical validation)
+  if (exists("generate_correlated_variates")) {
+    set.seed(42)
+    n <- 1000
+    z_ref <- rnorm(n)
+    z_corr <- generate_correlated_variates(n, rho = 0.75, z_reference = z_ref)
+
+    observed_rho <- cor(z_ref, z_corr)
+    if (abs(observed_rho - 0.75) < 0.10) {
+      pass("invariant", sprintf("Gaussian copula correlation: %.3f (target 0.75)", observed_rho))
+    } else {
+      fail("invariant", "Gaussian copula correlation", sprintf("expected ~0.75, got %.3f", observed_rho))
+    }
+  }
+
+}, error = function(e) {
+  fail("invariant", "Failed to test correlated props module", conditionMessage(e))
 })
 
 # =============================================================================

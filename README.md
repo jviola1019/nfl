@@ -4,7 +4,7 @@
 
 A production-ready statistical model for predicting NFL game outcomes using Monte Carlo simulation and data-driven analysis.
 
-**Version**: 2.7.0
+**Version**: 2.9.0
 **R Version Required**: 4.3.0+ (tested on 4.5.1)
 **Status**: Production-Ready
 
@@ -54,6 +54,8 @@ A production-ready statistical model for predicting NFL game outcomes using Mont
 - **Calibration**: GAM spline (-6.9% Brier improvement)
 - **Shrinkage**: 60% market weight, 40% model weight
 - **Staking**: 1/8 Kelly with 10% max edge cap
+- **Player Props**: Correlated with game simulation via Gaussian copula (v2.9.0)
+- **Vigged Lines**: Model moneylines with ~10% juice (market-realistic)
 
 ---
 
@@ -81,11 +83,13 @@ Rscript run_week.R 15        # Week 15, current season
 Rscript run_week.R 15 2024   # Week 15, 2024 season
 ```
 
-The script generates an HTML report with:
-- Game-by-game predictions
-- EV analysis and betting recommendations
-- Market comparison (blend vs Vegas)
-- Stake sizing using Kelly criterion
+The script generates a unified HTML report with:
+- **Game Predictions**: Game-by-game predictions with EV analysis
+- **Player Props** (v2.9.0): Correlated with game simulation
+- **Market Comparison**: Blend vs Vegas odds
+- **Vigged Model Lines**: Realistic ~10% juice moneylines
+- **Stake Sizing**: Kelly criterion recommendations
+- **Tabbed Interface**: Switch between Games and Props sections
 
 **For detailed setup**: See **[GETTING_STARTED.md](GETTING_STARTED.md)** for IDE setup (RStudio + VS Code) and troubleshooting.
 

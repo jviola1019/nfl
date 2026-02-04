@@ -85,12 +85,67 @@ message("This will run Monte Carlo simulations and generate an HTML report.\n")
 tryCatch({
   source("NFLsimulation.R")
 
+  # =============================================================================
+  # CORRELATED PLAYER PROPS (if enabled in config.R)
+  # =============================================================================
+  if (exists("RUN_PLAYER_PROPS") && isTRUE(RUN_PLAYER_PROPS)) {
+    cat("\n")
+    cat("=================================================================\n")
+    cat("  RUNNING CORRELATED PLAYER PROPS\n")
+    cat("=================================================================\n")
+
+    props_path <- file.path(getwd(), "R", "correlated_props.R")
+    if (file.exists(props_path)) {
+      source(props_path)
+
+      # Run correlated props using exported simulation results
+      if (exists("run_correlated_props", mode = "function") &&
+          exists("last_simulation_results") &&
+          length(last_simulation_results) > 0) {
+
+        props_results <- tryCatch({
+          run_correlated_props(
+            game_sim_results = last_simulation_results,
+            schedule_data = if (exists("schedule_for_props")) schedule_for_props else NULL,
+            prop_types = if (exists("PROP_TYPES")) PROP_TYPES else c("passing", "rushing", "receiving", "td"),
+            season = SEASON
+          )
+        }, error = function(e) {
+          message(sprintf("Player props generation failed: %s", e$message))
+          NULL
+        })
+
+        if (!is.null(props_results) && nrow(props_results) > 0) {
+          # Export props results for HTML report
+          assign("props_results", props_results, envir = .GlobalEnv)
+
+          # Show quick summary
+          positive_ev <- props_results %>%
+            dplyr::filter(recommendation != "PASS") %>%
+            nrow()
+
+          cat(sprintf("  Generated %d player props (%d with positive EV)\n",
+                      nrow(props_results), positive_ev))
+        } else {
+          message("No player props were generated (possibly missing player data)")
+        }
+      } else {
+        message("Simulation results not available for props correlation")
+      }
+    } else {
+      message("correlated_props.R not found; skipping player props")
+    }
+  }
+
   cat("\n")
   cat("=================================================================\n")
   cat("  ANALYSIS COMPLETE\n")
   cat("=================================================================\n")
   cat("  Check the run_logs/ folder for output files.\n")
   cat("  HTML report should open automatically if running interactively.\n")
+  if (exists("props_results") && !is.null(props_results)) {
+    cat("  Player props included in analysis.\n")
+  }
   cat("=================================================================\n")
 
 }, error = function(e) {

@@ -2817,7 +2817,9 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     "Blend Home Moneyline (vig)",
     "Blend Away Moneyline (vig)",
     "Market Home Moneyline",
-    "Market Away Moneyline"
+    "Market Away Moneyline",
+    "Blend Home Moneyline",
+    "Blend Away Moneyline"
   )
 
   format_signed_spread <- function(x) {
@@ -2861,7 +2863,7 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     "<h3>Risk Management Applied</h3>",
     "<p>This report uses conservative settings appropriate for efficient markets:</p>",
     "<ul>",
-    "<li><strong>60% Shrinkage</strong> — Probabilities blended toward market (reduces overconfidence)</li>",
+    "<li><strong>60% Shrinkage</strong> — Model probability pulled 60% toward market consensus (e.g., Model: 65% → Shrunk: 59% if market is 55%)</li>",
     "<li><strong>1/8 Kelly</strong> — Fractional staking (accounts for estimation error)</li>",
     "<li><strong>2% Max Stake</strong> — Position size cap per game</li>",
     "</ul>",
@@ -2876,6 +2878,7 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     "<tr><td><strong>Blend Pick</strong></td><td>Model favorite (* = Pass game, no positive EV)</td></tr>",
     "<tr><td><strong>Shrunk Win %</strong></td><td>Market-adjusted probability (used for EV calc)</td></tr>",
     "<tr><td><strong>Prob Edge</strong></td><td>Raw probability advantage before shrinkage (reference only)</td></tr>",
+    "<tr><td><strong>Blend Moneyline</strong></td><td>Model's implied odds for each team (compare to market for value)</td></tr>",
     "</table>",
     "</div>",
 
@@ -2895,6 +2898,17 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     "<span class=\"color-chip coral\"></span> Recommended action ",
     "<span class=\"color-chip muted\"></span> Market wins / No edge ",
     "<span class=\"color-chip gray\"></span> N/A",
+    "</div>",
+
+    "<div class=\"intro-section\">",
+    "<h3>Example Game Interpretation</h3>",
+    "<p>If you see: <strong>EV Edge = 4.2%</strong>, <strong>Edge Quality = ✓ OK</strong>, <strong>Stake = 0.015</strong></p>",
+    "<ul class=\"compact-list\">",
+    "<li>Model finds 4.2% expected return per unit bet</li>",
+    "<li>Edge is in the realistic range (0-5%)</li>",
+    "<li>Recommended stake: 0.015 units (1.5% of 1/8 Kelly)</li>",
+    "</ul>",
+    "<p><strong>* = Pass game</strong>: No positive EV found; the asterisk shows the favorite but recommends not betting.</p>",
     "</div>",
     "</section>"
   )
@@ -2925,6 +2939,19 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       return(result)
     }
     as.numeric(x)
+  }
+
+  # Detect placeholder/future game data with missing market odds
+  # These games should show Pass with clear indication
+  if ("market_home_ml" %in% names(comparison_tbl) && "market_away_ml" %in% names(comparison_tbl)) {
+    missing_odds <- is.na(comparison_tbl$market_home_ml) | is.na(comparison_tbl$market_away_ml)
+    if (any(missing_odds)) {
+      n_missing <- sum(missing_odds)
+      message(sprintf(
+        "ℹ %d game(s) have missing market odds - showing as Pass (No Odds)",
+        n_missing
+      ))
+    }
   }
 
   display_tbl <- comparison_tbl %>%
@@ -3002,14 +3029,16 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         is.na(effective_stake) | is.na(display_ev) ~ NA_real_,
         TRUE ~ effective_stake * display_ev
       ),
-      # Edge Quality: Based on DISPLAYED EV (consistent with displayed value)
+      # Edge Quality: Use CAPPED EV for consistency with displayed value
+      # Incorporate effective_recommendation to show Pass for auto-passed games
       `Edge Quality` = dplyr::case_when(
         is.na(display_ev) ~ "N/A",
-        display_ev <= 0 ~ "Pass",
-        display_ev <= 0.05 ~ "✓ OK",
-        display_ev <= 0.10 ~ "⚠ High",
-        display_ev <= 0.15 ~ "⚠⚠ Suspicious",
-        TRUE ~ "🚫 Implausible"
+        effective_recommendation %in% c("Pass", "No Play") & display_ev > 0.10 ~ "Pass (capped)",
+        effective_recommendation %in% c("Pass", "No Play") ~ "Pass",
+        pmin(display_ev, 0.10) <= 0 ~ "Pass",
+        pmin(display_ev, 0.10) <= 0.05 ~ "✓ OK",
+        pmin(display_ev, 0.10) <= 0.10 ~ "⚠ High",
+        TRUE ~ "⚠ High"
       ),
       # Pick-side probabilities - SHRUNK values (matches EV calculation)
       # This ensures: displayed_prob × decimal_odds - 1 ≈ displayed_EV
@@ -3027,7 +3056,9 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       `Market Home Spread` = market_home_spread,
       `Market Total` = market_total,
       `Market Home Moneyline` = market_home_ml,
-      `Market Away Moneyline` = market_away_ml
+      `Market Away Moneyline` = market_away_ml,
+      `Blend Home Moneyline` = blend_home_ml_vig,
+      `Blend Away Moneyline` = blend_away_ml_vig
     )
 
   # === FINAL TYPE VALIDATION ===
@@ -3109,7 +3140,7 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     )
     gt_tbl <- gt_apply_if_columns(
       gt_tbl,
-      c("Market Home Moneyline", "Market Away Moneyline"),
+      c("Market Home Moneyline", "Market Away Moneyline", "Blend Home Moneyline", "Blend Away Moneyline"),
       gt::fmt,
       fns = function(x) format_moneyline_strings(x)
     )
@@ -3191,7 +3222,7 @@ export_moneyline_comparison_html <- function(comparison_tbl,
 
     gt_tbl <- gt::tab_source_note(
       gt_tbl,
-      source_note = "⚠️ CALIBRATED: 60% shrinkage toward market | 1/8 Kelly staking | Edge skepticism applied | * = Pass game | ✓OK=0-5% | ⚠High=5-10% | ⚠⚠Suspicious=10-15% | 🚫Implausible=>15%"
+      source_note = "⚠️ CALIBRATED: Playoff shrinkage 70-75% | 1/8 Kelly staking | MAX EDGE 10% | * = Pass | ✓ OK = 0-5% | ⚠ High = 5-10%"
     )
     gt_tbl <- gt::tab_options(
       gt_tbl,
@@ -3272,10 +3303,9 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         fn = function(values) {
           palette <- c(
             "Pass" = "#4A4640",
+            "Pass (capped)" = "#92400e",
             "✓ OK" = "#059669",
             "⚠ High" = "#d97706",
-            "⚠⚠ Suspicious" = "#dc2626",
-            "🚫 Implausible" = "#7f1d1d",
             "N/A" = "#374151"
           )
           mapped <- palette[as.character(values)]
@@ -3425,8 +3455,19 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         "  .gt_table tbody tr:hover {transform: none !important;} ",
         "  * {animation: none !important; transition-duration: 0.01ms !important;} ",
         "}\n",
+        # Tab navigation styles
+        ".report-tabs {display: flex; gap: 0.5rem; margin-bottom: 1.5rem; padding: 0.5rem; background: rgba(26, 24, 21, 0.6); border-radius: 16px; justify-content: center;}\n",
+        ".tab-btn {padding: 0.75rem 1.5rem; border: 1px solid rgba(217, 119, 87, 0.3); background: rgba(45, 42, 38, 0.5); color: #C9C5BE; border-radius: 12px; cursor: pointer; font-size: 0.95rem; font-weight: 500; transition: all 0.2s ease;}\n",
+        ".tab-btn:hover {background: rgba(217, 119, 87, 0.15); color: var(--claude-cream);}\n",
+        ".tab-btn.active {background: var(--claude-coral); color: var(--claude-cream); border-color: var(--claude-coral);}\n",
+        ".tab-content {display: none;}\n",
+        ".tab-content.active {display: block;}\n",
+        # Props section styles
+        ".props-section {border-left: 3px solid #10b981;}\n",
+        ".props-table {margin-top: 1.5rem;}\n",
+        ".props-content {margin-top: 2rem;}\n",
         # Responsive adjustments
-        "@media (max-width: 768px) { body {padding-top: 75px;} .gt_table {font-size: 0.88rem;} .gt_table thead th {font-size: 0.7rem; top: 75px;} .report-intro {padding: 1.5rem; margin: 0 0.5rem 2rem;} #table-search {font-size: 0.9rem; padding: 0.85rem 1.25rem;} .filter-btn {font-size: 0.7rem; padding: 0.3rem 0.7rem;} }\n"
+        "@media (max-width: 768px) { body {padding-top: 75px;} .gt_table {font-size: 0.88rem;} .gt_table thead th {font-size: 0.7rem; top: 75px;} .report-intro {padding: 1.5rem; margin: 0 0.5rem 2rem;} #table-search {font-size: 0.9rem; padding: 0.85rem 1.25rem;} .filter-btn {font-size: 0.7rem; padding: 0.3rem 0.7rem;} .report-tabs {flex-direction: column;} .tab-btn {width: 100%;} }\n"
       )
 
       # ColorBends Three.js animated gradient background script
@@ -3527,13 +3568,123 @@ export_moneyline_comparison_html <- function(comparison_tbl,
 
       intro_block <- htmltools::HTML(intro_html)
 
+      # === PLAYER PROPS SECTION (if available) ===
+      props_section <- NULL
+      if (exists("props_results", envir = .GlobalEnv)) {
+        props_data <- get("props_results", envir = .GlobalEnv)
+        if (!is.null(props_data) && nrow(props_data) > 0) {
+          # Build props intro HTML
+          props_intro <- paste0(
+            "<section class=\"report-intro props-section\">",
+            "<h2>Player Props Analysis</h2>",
+            "<p class=\"report-subtitle\">Correlated with game simulation outcomes via Gaussian copula</p>",
+            "<div class=\"intro-section\">",
+            "<h3>Correlation Model</h3>",
+            "<ul class=\"compact-list\">",
+            "<li><strong>QB Passing</strong> \u2194 Game Total: r = 0.75</li>",
+            "<li><strong>RB Rushing</strong> \u2194 Game Total: r = 0.60</li>",
+            "<li><strong>WR/TE Receiving</strong> \u2194 Team Passing: r = 0.50</li>",
+            "<li><strong>TD Probability</strong> \u2194 Game Total: r = 0.40</li>",
+            "</ul>",
+            "<p>Props are simulated using the same game outcomes, ensuring consistent same-game correlation.</p>",
+            "</div>",
+            "</section>"
+          )
+
+          # Format props for display
+          props_display <- props_data %>%
+            dplyr::transmute(
+              Player = player,
+              Position = position,
+              Team = team,
+              Matchup = matchup,
+              `Prop Type` = prop_type,
+              Line = ifelse(is.na(line), "-", as.character(line)),
+              Projection = round(projection, 1),
+              `P(Over)` = sprintf("%.1f%%", p_over * 100),
+              `EV Over` = sprintf("%.1f%%", ev_over * 100),
+              `Edge Quality` = dplyr::case_when(
+                recommendation == "PASS" ~ "Pass",
+                ev_over <= 0.05 ~ "\u2713 OK",
+                TRUE ~ "\u26A0 High"
+              ),
+              Recommendation = recommendation
+            )
+
+          # Create props gt table
+          props_gt <- tryCatch({
+            gt::gt(props_display) %>%
+              gt::tab_header(
+                title = "Player Props Recommendations",
+                subtitle = sprintf("Monte Carlo: %s trials | Correlated with game simulation",
+                                   format(if(exists("N_TRIALS")) N_TRIALS else 50000, big.mark = ","))
+              ) %>%
+              gt::tab_style(
+                style = gt::cell_fill(color = "#22c55e20"),
+                locations = gt::cells_body(
+                  columns = "Recommendation",
+                  rows = Recommendation %in% c("OVER", "UNDER", "BET")
+                )
+              ) %>%
+              gt::tab_source_note(
+                source_note = "Props correlated with game simulation | Normal dist (yards) | Negative Binomial (TDs)"
+              )
+          }, error = function(e) NULL)
+
+          if (!is.null(props_gt)) {
+            props_gt_html <- tryCatch(
+              as.character(gt::as_raw_html(props_gt)),
+              error = function(e) NULL
+            )
+
+            if (!is.null(props_gt_html)) {
+              props_section <- htmltools::tags$div(
+                id = "props-section",
+                class = "props-content",
+                htmltools::HTML(props_intro),
+                htmltools::tags$div(
+                  class = "table-wrapper props-table",
+                  htmltools::HTML(props_gt_html)
+                )
+              )
+            }
+          }
+        }
+      }
+
+      # Tab navigation (if props exist)
+      tab_nav <- NULL
+      if (!is.null(props_section)) {
+        tab_nav <- htmltools::tags$nav(
+          class = "report-tabs",
+          htmltools::tags$button(
+            class = "tab-btn active",
+            `data-tab` = "games",
+            onclick = "switchTab('games')",
+            "Game Predictions"
+          ),
+          htmltools::tags$button(
+            class = "tab-btn",
+            `data-tab` = "props",
+            onclick = "switchTab('props')",
+            "Player Props"
+          )
+        )
+      }
+
       content_wrapper <- htmltools::tags$div(
         class = "page-wrapper",
-        intro_block,
+        tab_nav,
         htmltools::tags$div(
-          class = "table-wrapper",
-          htmltools::HTML(gt_html)
-        )
+          id = "games-section",
+          class = "tab-content active",
+          intro_block,
+          htmltools::tags$div(
+            class = "table-wrapper",
+            htmltools::HTML(gt_html)
+          )
+        ),
+        props_section
       )
 
       # Enhanced script with keyboard shortcuts, quick filters, and accessibility
@@ -3611,6 +3762,22 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         )
       ))
 
+      # Tab switching script (for games/props navigation)
+      tab_script <- htmltools::tags$script(htmltools::HTML(
+        paste0(
+          "function switchTab(tabName){",
+          "  var tabs=document.querySelectorAll('.tab-content');",
+          "  var btns=document.querySelectorAll('.tab-btn');",
+          "  tabs.forEach(function(t){t.classList.remove('active');});",
+          "  btns.forEach(function(b){b.classList.remove('active');});",
+          "  var targetSection=document.getElementById(tabName+'-section');",
+          "  var targetBtn=document.querySelector('[data-tab=\"'+tabName+'\"]');",
+          "  if(targetSection)targetSection.classList.add('active');",
+          "  if(targetBtn)targetBtn.classList.add('active');",
+          "}"
+        )
+      ))
+
       # ColorBends animated gradient canvas container
       colorbends_canvas <- htmltools::tags$div(id = "colorbends-canvas")
       canvas_overlay <- htmltools::tags$div(class = "canvas-overlay")
@@ -3619,7 +3786,7 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         htmltools::tags$head(
           htmltools::tags$meta(charset = "UTF-8"),
           htmltools::tags$meta(name = "viewport", content = "width=device-width, initial-scale=1.0"),
-          htmltools::tags$title("NFL Blend vs Market Analysis"),
+          htmltools::tags$title("NFL Blend vs Market Analysis - Games & Player Props"),
           htmltools::tags$style(css_block_gt)
         ),
         htmltools::tags$body(
@@ -3627,6 +3794,7 @@ export_moneyline_comparison_html <- function(comparison_tbl,
           canvas_overlay,
           search_box,
           content_wrapper,
+          tab_script,
           script_block,
           htmltools::HTML(colorbends_script)
         )

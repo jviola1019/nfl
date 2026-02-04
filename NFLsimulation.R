@@ -6375,6 +6375,11 @@ build_final_safe <- function(resolved_list, games_ready) {
       margin_mean <- mean(sims$margin)
       margin_sd_raw <- stats::sd(sims$margin)
       tie_prob      <- mean(sims$tie)
+      # Zero out tie probability for playoff games (no ties in NFL playoffs)
+      is_playoff_game <- !is.na(g$game_type) && g$game_type %in% c("WC", "DIV", "CON", "SB")
+      if (is_playoff_game) {
+        tie_prob <- 0
+      }
       prob_info     <- margin_probs_from_summary(margin_mean, margin_sd_raw, tie_prob)
 
       tibble::tibble(
@@ -8519,6 +8524,49 @@ if (!is.null(moneyline_report_inputs) && exists("moneyline_report", inherits = T
   }
 } else if (!exists("moneyline_report", inherits = TRUE)) {
   message("moneyline_report() is unavailable; HTML export skipped.")
+}
+
+# =============================================================================
+# EXPORT SIMULATION RESULTS FOR PLAYER PROPS
+# Makes raw simulation data available for correlated player prop generation
+# =============================================================================
+if (exists("resolved_list") && exists("games_ready")) {
+  message("Exporting simulation results for player props...")
+
+  # Build structured simulation results for each game
+  last_simulation_results <- tryCatch({
+    game_sim_results <- list()
+
+    for (i in seq_along(resolved_list)) {
+      g <- games_ready[i, ]
+      sims <- resolved_list[[i]]
+
+      game_sim_results[[g$game_id]] <- list(
+        game_id = g$game_id,
+        home_team = g$home_team,
+        away_team = g$away_team,
+        season = g$season,
+        week = g$week,
+        home = sims$home,       # Vector of simulated home scores
+        away = sims$away,       # Vector of simulated away scores
+        total = sims$home + sims$away,  # Vector of simulated totals
+        margin = sims$margin,   # Vector of margins (home - away)
+        n_trials = length(sims$home)
+      )
+    }
+
+    game_sim_results
+  }, error = function(e) {
+    message(sprintf("Note: Could not export simulation results: %s", e$message))
+    NULL
+  })
+
+  # Export to global environment for use by props module
+  if (!is.null(last_simulation_results)) {
+    assign("last_simulation_results", last_simulation_results, envir = .GlobalEnv)
+    assign("schedule_for_props", games_ready, envir = .GlobalEnv)
+    message(sprintf("  Exported %d game simulation results for player props", length(last_simulation_results)))
+  }
 }
 
 # =============================================================================
