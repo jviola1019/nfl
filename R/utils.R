@@ -126,9 +126,8 @@ probability_to_american <- function(prob) {
 apply_model_vig <- function(prob, vig_pct = 0.10) {
   prob <- clamp_probability(prob)
 
-  # Vig inflates implied probability
-  # For 10% total vig, split ~5% per side
-  vig_factor <- 1 + vig_pct / 2
+  # Vig inflates both sides proportionally (10% vig = 110% total implied)
+  vig_factor <- 1 + vig_pct
   vigged_prob <- prob * vig_factor
 
   # Cap at 99% to avoid extreme odds

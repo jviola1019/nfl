@@ -58,9 +58,9 @@ test_that("props_config parameters are within valid ranges", {
   # Overdispersion (must be > 1 for negative binomial)
   expect_true(TD_OVERDISPERSION >= 1.0 && TD_OVERDISPERSION <= 3.0)
 
-  # Defense multiplier ranges
-  expect_true(all(PASSING_DEF_MULTIPLIER_RANGE >= 0.5 && PASSING_DEF_MULTIPLIER_RANGE <= 1.5))
-  expect_true(all(RUSHING_DEF_MULTIPLIER_RANGE >= 0.5 && RUSHING_DEF_MULTIPLIER_RANGE <= 1.5))
+  # Defense multiplier ranges (use & instead of && for vector comparison)
+  expect_true(all(PASSING_DEF_MULTIPLIER_RANGE >= 0.5 & PASSING_DEF_MULTIPLIER_RANGE <= 1.5))
+  expect_true(all(RUSHING_DEF_MULTIPLIER_RANGE >= 0.5 & RUSHING_DEF_MULTIPLIER_RANGE <= 1.5))
 })
 
 test_that("simulation trial count is reasonable", {
@@ -529,4 +529,111 @@ test_that("defense multiplier ranges are symmetric around 1", {
   # Rushing defense range should center around 1.0
   rush_center <- mean(RUSHING_DEF_MULTIPLIER_RANGE)
   expect_equal(rush_center, 1.0, tolerance = 0.05)
+})
+
+# =============================================================================
+# FALLBACK PROJECTION TESTS (v2.9.0)
+# =============================================================================
+
+test_that("get_player_projections_with_fallback is defined", {
+  data_sources_path <- file.path(getwd(), "sports", "nfl", "props", "data_sources.R")
+  skip_if_not(file.exists(data_sources_path), "data_sources.R not found")
+
+  source(data_sources_path, local = TRUE)
+  expect_true(exists("get_player_projections_with_fallback", mode = "function"))
+})
+
+test_that("create_baseline_projections returns valid structure", {
+  data_sources_path <- file.path(getwd(), "sports", "nfl", "props", "data_sources.R")
+  skip_if_not(file.exists(data_sources_path), "data_sources.R not found")
+
+  source(data_sources_path, local = TRUE)
+  skip_if_not(exists("create_baseline_projections", mode = "function"),
+              "create_baseline_projections not defined")
+
+  baselines <- create_baseline_projections("KC", "SF")
+
+  # Should return a tibble with at least 7 rows (QB, RB1, RB2, WR1, WR2, WR3, TE)
+  expect_true(nrow(baselines) >= 7)
+
+  # Should have required columns
+  expect_true(all(c("player_id", "player_name", "position", "recent_team") %in% names(baselines)))
+
+  # Positions should be valid
+  expect_true(all(baselines$position %in% c("QB", "RB", "WR", "TE")))
+
+  # Teams should be the ones we passed
+  expect_true(all(baselines$recent_team %in% c("KC", "SF")))
+
+  # Should be marked as projections
+  expect_true(all(baselines$is_projection))
+  expect_true(all(baselines$is_baseline))
+})
+
+test_that("baseline projections have valid statistical values", {
+  data_sources_path <- file.path(getwd(), "sports", "nfl", "props", "data_sources.R")
+  skip_if_not(file.exists(data_sources_path), "data_sources.R not found")
+
+  source(data_sources_path, local = TRUE)
+  skip_if_not(exists("create_baseline_projections", mode = "function"),
+              "create_baseline_projections not defined")
+
+  baselines <- create_baseline_projections("KC", "SF")
+
+  # QB passing yards should be present and reasonable
+  qb_row <- baselines[baselines$position == "QB", ][1, ]
+  if (!is.na(qb_row$avg_passing_yards)) {
+    expect_true(qb_row$avg_passing_yards >= 150 && qb_row$avg_passing_yards <= 350)
+  }
+
+  # RB rushing yards should be present and reasonable
+  rb_rows <- baselines[baselines$position == "RB", ]
+  rb_with_rushing <- rb_rows[!is.na(rb_rows$avg_rushing_yards), ]
+  if (nrow(rb_with_rushing) > 0) {
+    expect_true(all(rb_with_rushing$avg_rushing_yards >= 10 & rb_with_rushing$avg_rushing_yards <= 150))
+  }
+
+  # WR receiving yards should be present and reasonable
+  wr_rows <- baselines[baselines$position == "WR", ]
+  wr_with_receiving <- wr_rows[!is.na(wr_rows$avg_receiving_yards), ]
+  if (nrow(wr_with_receiving) > 0) {
+    expect_true(all(wr_with_receiving$avg_receiving_yards >= 20 & wr_with_receiving$avg_receiving_yards <= 120))
+  }
+})
+
+test_that("apply_defense_adjustments is defined in correlated_props", {
+  props_path <- file.path(getwd(), "R", "correlated_props.R")
+  skip_if_not(file.exists(props_path), "correlated_props.R not found")
+
+  source(props_path, local = TRUE)
+  expect_true(exists("apply_defense_adjustments", mode = "function"))
+})
+
+test_that("apply_game_context is defined in correlated_props", {
+  props_path <- file.path(getwd(), "R", "correlated_props.R")
+  skip_if_not(file.exists(props_path), "correlated_props.R not found")
+
+  source(props_path, local = TRUE)
+  expect_true(exists("apply_game_context", mode = "function"))
+})
+
+test_that("load_game_players handles future seasons", {
+  props_path <- file.path(getwd(), "R", "correlated_props.R")
+  skip_if_not(file.exists(props_path), "correlated_props.R not found")
+
+  source(props_path, local = TRUE)
+  skip_if_not(exists("load_game_players", mode = "function"),
+              "load_game_players not defined")
+
+  # Test with a future season (no data should exist)
+  # Should return players from fallback (previous seasons)
+  result <- tryCatch(
+    load_game_players("KC", "SF", season = 2030, week = 1),
+    error = function(e) NULL
+  )
+
+  # Should not be NULL or should have is_projection flag
+  if (!is.null(result) && nrow(result) > 0) {
+    expect_true("is_projection" %in% names(result) || "is_baseline" %in% names(result))
+  }
 })

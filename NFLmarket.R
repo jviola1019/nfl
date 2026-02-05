@@ -3054,7 +3054,14 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       `ML Implied Home %` = ml_implied_home_prob_safe,
       `Blend Median Margin` = blend_median_margin,
       `Market Home Spread` = market_home_spread,
+      `Blend Total` = blend_total_median,
       `Market Total` = market_total,
+      `Total O/U` = dplyr::case_when(
+        is.na(blend_total_median) | is.na(market_total) ~ "N/A",
+        blend_total_median > market_total + 0.5 ~ "OVER",
+        blend_total_median < market_total - 0.5 ~ "UNDER",
+        TRUE ~ "PUSH"
+      ),
       `Market Home Moneyline` = market_home_ml,
       `Market Away Moneyline` = market_away_ml,
       `Blend Home Moneyline` = blend_home_ml_vig,
@@ -3393,7 +3400,7 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         # CSS Variables for theming
         ":root {--claude-coral: #D97757; --claude-coral-light: #E89A7A; --claude-cream: #FAF9F6; --claude-warm-gray: #2D2A26; --claude-dark: #1A1815; --accent-glow: rgba(217, 119, 87, 0.3);}\n",
         # Body with warm gradient and canvas background
-        "body {font-family: 'Inter','Söhne','Source Sans Pro','Helvetica Neue',Arial,sans-serif; background: linear-gradient(135deg, #1A1815 0%, #2D2A26 50%, #1A1815 100%); color: #F5F4F0; margin: 0; padding-top: 85px; min-height: 100vh; overflow-x: hidden;}\n",
+        "body {font-family: 'Inter','Söhne','Source Sans Pro','Helvetica Neue',Arial,sans-serif; background: linear-gradient(135deg, #1A1815 0%, #2D2A26 50%, #1A1815 100%); color: #F5F4F0; margin: 0; padding-top: 110px; min-height: 100vh; overflow-x: hidden;}\n",
         # ColorBends canvas background
         "#colorbends-canvas {position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: -2; pointer-events: none;}\n",
         # Overlay for better text readability over animated background
@@ -3456,7 +3463,7 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         "  * {animation: none !important; transition-duration: 0.01ms !important;} ",
         "}\n",
         # Tab navigation styles
-        ".report-tabs {display: flex; gap: 0.5rem; margin-bottom: 1.5rem; padding: 0.5rem; background: rgba(26, 24, 21, 0.6); border-radius: 16px; justify-content: center;}\n",
+        ".report-tabs {display: flex; gap: 0.5rem; margin-bottom: 1.5rem; margin-top: 0.5rem; padding: 0.5rem; background: rgba(26, 24, 21, 0.6); border-radius: 16px; justify-content: center;}\n",
         ".tab-btn {padding: 0.75rem 1.5rem; border: 1px solid rgba(217, 119, 87, 0.3); background: rgba(45, 42, 38, 0.5); color: #C9C5BE; border-radius: 12px; cursor: pointer; font-size: 0.95rem; font-weight: 500; transition: all 0.2s ease;}\n",
         ".tab-btn:hover {background: rgba(217, 119, 87, 0.15); color: var(--claude-cream);}\n",
         ".tab-btn.active {background: var(--claude-coral); color: var(--claude-cream); border-color: var(--claude-coral);}\n",
@@ -3467,7 +3474,7 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         ".props-table {margin-top: 1.5rem;}\n",
         ".props-content {margin-top: 2rem;}\n",
         # Responsive adjustments
-        "@media (max-width: 768px) { body {padding-top: 75px;} .gt_table {font-size: 0.88rem;} .gt_table thead th {font-size: 0.7rem; top: 75px;} .report-intro {padding: 1.5rem; margin: 0 0.5rem 2rem;} #table-search {font-size: 0.9rem; padding: 0.85rem 1.25rem;} .filter-btn {font-size: 0.7rem; padding: 0.3rem 0.7rem;} .report-tabs {flex-direction: column;} .tab-btn {width: 100%;} }\n"
+        "@media (max-width: 768px) { body {padding-top: 100px;} .gt_table {font-size: 0.88rem;} .gt_table thead th {font-size: 0.7rem; top: 100px;} .report-intro {padding: 1.5rem; margin: 0 0.5rem 2rem;} #table-search {font-size: 0.9rem; padding: 0.85rem 1.25rem;} .filter-btn {font-size: 0.7rem; padding: 0.3rem 0.7rem;} .report-tabs {flex-direction: column;} .tab-btn {width: 100%;} }\n"
       )
 
       # ColorBends Three.js animated gradient background script
@@ -3568,13 +3575,16 @@ export_moneyline_comparison_html <- function(comparison_tbl,
 
       intro_block <- htmltools::HTML(intro_html)
 
-      # === PLAYER PROPS SECTION (if available) ===
+      # === PLAYER PROPS SECTION (always show - with data or informative message) ===
       props_section <- NULL
-      if (exists("props_results", envir = .GlobalEnv)) {
+      props_available <- exists("props_results", envir = .GlobalEnv) &&
+                         !is.null(get("props_results", envir = .GlobalEnv)) &&
+                         nrow(get("props_results", envir = .GlobalEnv)) > 0
+
+      if (props_available) {
         props_data <- get("props_results", envir = .GlobalEnv)
-        if (!is.null(props_data) && nrow(props_data) > 0) {
-          # Build props intro HTML
-          props_intro <- paste0(
+        # Build props intro HTML
+        props_intro <- paste0(
             "<section class=\"report-intro props-section\">",
             "<h2>Player Props Analysis</h2>",
             "<p class=\"report-subtitle\">Correlated with game simulation outcomes via Gaussian copula</p>",
@@ -3640,7 +3650,7 @@ export_moneyline_comparison_html <- function(comparison_tbl,
             if (!is.null(props_gt_html)) {
               props_section <- htmltools::tags$div(
                 id = "props-section",
-                class = "props-content",
+                class = "tab-content props-content",
                 htmltools::HTML(props_intro),
                 htmltools::tags$div(
                   class = "table-wrapper props-table",
@@ -3649,28 +3659,50 @@ export_moneyline_comparison_html <- function(comparison_tbl,
               )
             }
           }
-        }
-      }
-
-      # Tab navigation (if props exist)
-      tab_nav <- NULL
-      if (!is.null(props_section)) {
-        tab_nav <- htmltools::tags$nav(
-          class = "report-tabs",
-          htmltools::tags$button(
-            class = "tab-btn active",
-            `data-tab` = "games",
-            onclick = "switchTab('games')",
-            "Game Predictions"
-          ),
-          htmltools::tags$button(
-            class = "tab-btn",
-            `data-tab` = "props",
-            onclick = "switchTab('props')",
-            "Player Props"
-          )
+      } else {
+        # Show informative message when props not available
+        props_unavailable_html <- paste0(
+          "<section class=\"report-intro props-section\">",
+          "<h2>Player Props Analysis</h2>",
+          "<p class=\"report-subtitle\">Correlated with game simulation outcomes via Gaussian copula</p>",
+          "<div class=\"intro-section\" style=\"background-color: #fff3cd; border: 1px solid #ffc107; border-radius: 8px; padding: 20px; margin: 20px 0;\">",
+          "<h3 style=\"color: #856404;\">Props Not Available for This Week</h3>",
+          "<p style=\"color: #856404;\">Player prop projections could not be generated for this game.</p>",
+          "<p style=\"color: #856404;\"><strong>Possible reasons:</strong></p>",
+          "<ul style=\"color: #856404;\">",
+          "<li>No player statistics available for the current or upcoming season</li>",
+          "<li>Playoff/Super Bowl game with limited historical player data</li>",
+          "<li>RUN_PLAYER_PROPS may be set to FALSE in config.R</li>",
+          "</ul>",
+          "<p style=\"color: #856404; margin-top: 15px;\">",
+          "<em>The game prediction model still provides accurate win probabilities and spreads.</em>",
+          "</p>",
+          "</div>",
+          "</section>"
+        )
+        props_section <- htmltools::tags$div(
+          id = "props-section",
+          class = "tab-content props-content",
+          htmltools::HTML(props_unavailable_html)
         )
       }
+
+      # Tab navigation (always show - props section now always exists)
+      tab_nav <- htmltools::tags$nav(
+        class = "report-tabs",
+        htmltools::tags$button(
+          class = "tab-btn active",
+          `data-tab` = "games",
+          onclick = "switchTab('games')",
+          "Game Predictions"
+        ),
+        htmltools::tags$button(
+          class = "tab-btn",
+          `data-tab` = "props",
+          onclick = "switchTab('props')",
+          if (props_available) "Player Props" else "Player Props (N/A)"
+        )
+      )
 
       content_wrapper <- htmltools::tags$div(
         class = "page-wrapper",

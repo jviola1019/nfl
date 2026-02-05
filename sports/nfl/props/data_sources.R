@@ -67,7 +67,9 @@ load_player_projections <- function(season = NULL, week = NULL, min_games = 3) {
 
   # Load player stats with error handling
   player_stats <- tryCatch({
-    nflreadr::load_player_stats(seasons = seasons_to_load)
+    stats <- nflreadr::load_player_stats(seasons = seasons_to_load)
+    message(sprintf("  nflreadr returned %d rows", if(is.null(stats)) 0 else nrow(stats)))
+    stats
   }, error = function(e) {
     warning("Failed to load player stats from nflreadr: ", e$message)
     return(NULL)
@@ -88,39 +90,62 @@ load_player_projections <- function(season = NULL, week = NULL, min_games = 3) {
     ))
   }
 
+  # Log available columns
+  message(sprintf("  Columns: %s", paste(head(names(player_stats), 15), collapse = ", ")))
+
+  # Check for required columns (be flexible with column names)
+  has_player_id <- any(c("player_id", "playerId", "gsis_id") %in% names(player_stats))
+  has_player_name <- any(c("player_name", "player_display_name", "name") %in% names(player_stats))
+
+  if (!has_player_id || !has_player_name) {
+    warning("Player stats missing player_id or player_name columns")
+    return(tibble::tibble())
+  }
+
+  message(sprintf("  Raw player stats: %d rows, %d unique players",
+                  nrow(player_stats), length(unique(player_stats$player_id))))
+
   # Calculate rolling averages with recency weighting
   # More recent games weighted higher (exponential decay)
-  projections <- player_stats %>%
-    dplyr::filter(!is.na(player_id)) %>%
-    dplyr::arrange(player_id, season, week) %>%
-    dplyr::group_by(player_id, player_name, position) %>%
-    dplyr::summarize(
-      recent_team = dplyr::last(recent_team),
-      games_played = dplyr::n(),
+  projections <- tryCatch({
+    # Use 'team' column from nflreadr (renamed to recent_team for consistency)
+    team_col <- if ("recent_team" %in% names(player_stats)) "recent_team" else "team"
 
-      # Passing stats (QBs)
-      avg_passing_yards = mean(passing_yards, na.rm = TRUE),
-      sd_passing_yards = stats::sd(passing_yards, na.rm = TRUE),
+    player_stats %>%
+      dplyr::filter(!is.na(player_id)) %>%
+      dplyr::arrange(player_id, season, week) %>%
+      dplyr::group_by(player_id, player_name, position) %>%
+      dplyr::summarize(
+        recent_team = dplyr::last(.data[[team_col]]),
+        games_played = dplyr::n(),
 
-      # Rushing stats (RBs, QBs)
-      avg_rushing_yards = mean(rushing_yards, na.rm = TRUE),
-      sd_rushing_yards = stats::sd(rushing_yards, na.rm = TRUE),
+        # Passing stats (QBs)
+        avg_passing_yards = mean(passing_yards, na.rm = TRUE),
+        sd_passing_yards = stats::sd(passing_yards, na.rm = TRUE),
 
-      # Receiving stats (WRs, TEs, RBs)
-      avg_receiving_yards = mean(receiving_yards, na.rm = TRUE),
-      sd_receiving_yards = stats::sd(receiving_yards, na.rm = TRUE),
+        # Rushing stats (RBs, QBs)
+        avg_rushing_yards = mean(rushing_yards, na.rm = TRUE),
+        sd_rushing_yards = stats::sd(rushing_yards, na.rm = TRUE),
 
-      # Touchdowns (all types)
-      avg_touchdowns = mean(
-        dplyr::coalesce(passing_tds, 0L) +
-        dplyr::coalesce(rushing_tds, 0L) +
-        dplyr::coalesce(receiving_tds, 0L),
-        na.rm = TRUE
-      ),
+        # Receiving stats (WRs, TEs, RBs)
+        avg_receiving_yards = mean(receiving_yards, na.rm = TRUE),
+        sd_receiving_yards = stats::sd(receiving_yards, na.rm = TRUE),
 
-      .groups = "drop"
-    ) %>%
-    dplyr::filter(games_played >= min_games)
+        # Touchdowns (all types)
+        avg_touchdowns = mean(
+          dplyr::coalesce(passing_tds, 0L) +
+          dplyr::coalesce(rushing_tds, 0L) +
+          dplyr::coalesce(receiving_tds, 0L),
+          na.rm = TRUE
+        ),
+
+        .groups = "drop"
+      ) %>%
+      dplyr::filter(games_played >= min_games)
+  }, error = function(e) {
+    warning(sprintf("Player stats aggregation failed: %s", e$message))
+    tibble::tibble()
+  })
 
   # Apply outlier capping (cap at 3 SD from mean, don't remove)
   projections <- projections %>%
@@ -131,6 +156,181 @@ load_player_projections <- function(season = NULL, week = NULL, min_games = 3) {
     )
 
   message(sprintf("Loaded projections for %d players", nrow(projections)))
+
+  projections
+}
+
+#' Get Player Projections with Fallback for Future Seasons
+#'
+#' When current season data is unavailable (e.g., future games), uses most recent
+#' available season data and applies team roster matching to project players.
+#' Falls back to league baselines if no historical data exists.
+#'
+#' @param season Target season
+#' @param week Target week
+#' @param home_team Home team abbreviation
+#' @param away_team Away team abbreviation
+#' @param min_games Minimum games for projection (default 3)
+#'
+#' @return Tibble of player projections with fallback indicators
+#'
+#' @examples
+#' \dontrun{
+#'   # Get projections for a future game
+#'   projections <- get_player_projections_with_fallback(2026, 1, "KC", "SF")
+#' }
+#'
+#' @export
+get_player_projections_with_fallback <- function(season, week, home_team, away_team, min_games = 3) {
+
+  # Try current season first
+  current_projections <- tryCatch({
+    load_player_projections(season, week, min_games)
+  }, error = function(e) NULL)
+
+  if (!is.null(current_projections) && nrow(current_projections) > 0) {
+    # Filter to relevant teams
+    team_players <- current_projections %>%
+      dplyr::filter(recent_team %in% c(home_team, away_team)) %>%
+      dplyr::mutate(is_projection = FALSE, is_baseline = FALSE)
+
+    if (nrow(team_players) > 0) {
+      return(team_players)
+    }
+  }
+
+  # Fallback: Use most recent available season
+  message(sprintf("  No %d data available, using fallback projections...", season))
+
+  fallback_seasons <- (season - 1):(season - 3)
+  fallback_seasons <- fallback_seasons[fallback_seasons >= 2019]
+
+  for (fallback_season in fallback_seasons) {
+    fallback_projections <- tryCatch({
+      load_player_projections(fallback_season, week = 18, min_games)
+    }, error = function(e) NULL)
+
+    if (!is.null(fallback_projections) && nrow(fallback_projections) > 0) {
+      # Check available teams
+      available_teams <- if ("recent_team" %in% names(fallback_projections)) {
+        unique(fallback_projections$recent_team)
+      } else {
+        character(0)
+      }
+
+      # Filter to relevant teams and mark as projection
+      team_players <- fallback_projections %>%
+        dplyr::filter(recent_team %in% c(home_team, away_team))
+
+      if (nrow(team_players) > 0) {
+        message(sprintf("  Using %d season data as baseline (%d players)",
+                        fallback_season, nrow(team_players)))
+
+        return(team_players %>%
+          dplyr::mutate(
+            projection_season = as.integer(season),
+            baseline_season = as.integer(fallback_season),
+            is_projection = TRUE,
+            is_baseline = FALSE
+          ))
+      } else {
+        # Log why we couldn't find players
+        message(sprintf("  %d data: %d players loaded, 0 from %s/%s (teams available: %d)",
+                        fallback_season, nrow(fallback_projections),
+                        home_team, away_team, length(available_teams)))
+      }
+    }
+  }
+
+  # Ultimate fallback: Use league baselines from props_config.R
+  message("  Using league baseline projections (no historical data)")
+  return(create_baseline_projections(home_team, away_team))
+}
+
+#' Create Baseline Projections When No Historical Data Available
+#'
+#' Uses league averages from props_config.R for generic position projections.
+#' Creates one "starter" at each key position for each team.
+#'
+#' @param home_team Home team abbreviation
+#' @param away_team Away team abbreviation
+#'
+#' @return Tibble with baseline player projections
+#'
+#' @keywords internal
+create_baseline_projections <- function(home_team, away_team) {
+  # Ensure props config is loaded
+  if (!exists("PASSING_YARDS_BASELINE")) {
+    props_config_path <- file.path(dirname(sys.frame(1)$ofile), "props_config.R")
+    if (file.exists(props_config_path)) {
+      source(props_config_path, local = FALSE)
+    }
+  }
+
+  # Get baseline values (with defaults if not loaded)
+  pass_baseline <- if (exists("PASSING_YARDS_BASELINE")) PASSING_YARDS_BASELINE else 225
+  pass_sd <- if (exists("PASSING_YARDS_SD")) PASSING_YARDS_SD else 65
+  rush_baseline <- if (exists("RUSHING_YARDS_BASELINE")) RUSHING_YARDS_BASELINE else 65
+  rush_sd <- if (exists("RUSHING_YARDS_SD")) RUSHING_YARDS_SD else 35
+  qb_rush_baseline <- if (exists("QB_RUSHING_YARDS_BASELINE")) QB_RUSHING_YARDS_BASELINE else 25
+  qb_rush_sd <- if (exists("QB_RUSHING_YARDS_SD")) QB_RUSHING_YARDS_SD else 20
+  recv_wr_baseline <- if (exists("RECEIVING_YARDS_WR_BASELINE")) RECEIVING_YARDS_WR_BASELINE else 55
+  recv_wr_sd <- if (exists("RECEIVING_YARDS_WR_SD")) RECEIVING_YARDS_WR_SD else 30
+  recv_te_baseline <- if (exists("RECEIVING_YARDS_TE_BASELINE")) RECEIVING_YARDS_TE_BASELINE else 35
+  recv_te_sd <- if (exists("RECEIVING_YARDS_TE_SD")) RECEIVING_YARDS_TE_SD else 25
+
+  # Create projections for each team
+  teams <- c(home_team, away_team)
+
+  projections <- tibble::tibble(
+    player_id = character(),
+    player_name = character(),
+    position = character(),
+    recent_team = character(),
+    games_played = integer(),
+    avg_passing_yards = numeric(),
+    sd_passing_yards = numeric(),
+    avg_rushing_yards = numeric(),
+    sd_rushing_yards = numeric(),
+    avg_receiving_yards = numeric(),
+    sd_receiving_yards = numeric(),
+    avg_touchdowns = numeric(),
+    is_projection = logical(),
+    is_baseline = logical()
+  )
+
+  for (team in teams) {
+    team_proj <- tibble::tibble(
+      player_id = paste0("baseline_", team, "_", c("QB1", "RB1", "RB2", "WR1", "WR2", "WR3", "TE1")),
+      player_name = c(
+        paste0(team, " QB1"),
+        paste0(team, " RB1"),
+        paste0(team, " RB2"),
+        paste0(team, " WR1"),
+        paste0(team, " WR2"),
+        paste0(team, " WR3"),
+        paste0(team, " TE1")
+      ),
+      position = c("QB", "RB", "RB", "WR", "WR", "WR", "TE"),
+      recent_team = team,
+      games_played = 16L,
+      avg_passing_yards = c(pass_baseline, NA, NA, NA, NA, NA, NA),
+      sd_passing_yards = c(pass_sd, NA, NA, NA, NA, NA, NA),
+      avg_rushing_yards = c(qb_rush_baseline, rush_baseline, rush_baseline * 0.5, NA, NA, NA, NA),
+      sd_rushing_yards = c(qb_rush_sd, rush_sd, rush_sd, NA, NA, NA, NA),
+      avg_receiving_yards = c(NA, NA, NA, recv_wr_baseline, recv_wr_baseline * 0.8,
+                              recv_wr_baseline * 0.6, recv_te_baseline),
+      sd_receiving_yards = c(NA, NA, NA, recv_wr_sd, recv_wr_sd, recv_wr_sd, recv_te_sd),
+      avg_touchdowns = c(1.8, 0.6, 0.3, 0.5, 0.4, 0.3, 0.35),
+      is_projection = TRUE,
+      is_baseline = TRUE
+    )
+
+    projections <- dplyr::bind_rows(projections, team_proj)
+  }
+
+  message(sprintf("  Created %d baseline projections for %s vs %s",
+                  nrow(projections), home_team, away_team))
 
   projections
 }

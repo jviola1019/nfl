@@ -7998,6 +7998,30 @@ if (!is.null(fit_deploy)) {
     p_raw[mask] <- as.numeric(
       predict(fit_deploy$cv, newx = X, s = "lambda.min", type = "response")
     )
+
+    # Sanity check: elastic net blend can produce implausible values when inputs
+    # are outside training data distribution. Fall back to simple shrinkage if
+    # the blend result is more than 25pp away from BOTH model and market.
+    shrinkage_default <- if (exists("SHRINKAGE")) SHRINKAGE else 0.60
+    for (i in which(mask)) {
+      p_blend <- p_raw[i]
+      p_mod <- dfX$p_model[i]
+      p_mkt <- dfX$p_mkt[i]
+
+      # Check if blend is implausibly far from both inputs
+      dist_from_model <- abs(p_blend - p_mod)
+      dist_from_market <- abs(p_blend - p_mkt)
+
+      if (dist_from_model > 0.25 && dist_from_market > 0.25) {
+        # Blend is implausible - fall back to simple weighted average
+        p_simple <- shrinkage_default * p_mkt + (1 - shrinkage_default) * p_mod
+        message(sprintf(
+          "⚠️ Implausible blend (%.1f%%) for game %d: model=%.1f%%, market=%.1f%%. Using simple shrinkage: %.1f%%",
+          p_blend * 100, i, p_mod * 100, p_mkt * 100, p_simple * 100
+        ))
+        p_raw[i] <- p_simple
+      }
+    }
   }
 }
 
@@ -8261,13 +8285,49 @@ if (exists("cmp_blend") && !is.null(cmp_blend)) {
 }
 
 
-moneyline_report_inputs <- NULL
+# Only initialize if not already set by upcoming snapshot (preserves current-week data)
+if (!exists("moneyline_report_inputs", inherits = FALSE) || is.null(moneyline_report_inputs)) {
+  moneyline_report_inputs <- NULL
+}
 
 if (exists("cmp_blend") && !is.null(cmp_blend)) {
   join_keys_html <- if (exists("PREDICTION_JOIN_KEYS", inherits = TRUE)) PREDICTION_JOIN_KEYS else c("game_id", "season", "week")
+
+  # Determine seasons needed for backtest from cmp_blend
+  backtest_seasons <- tryCatch({
+    if (!is.null(cmp_blend$comp) && "season" %in% names(cmp_blend$comp)) {
+      unique(cmp_blend$comp$season)
+    } else if (!is.null(cmp_blend$per_game) && "season" %in% names(cmp_blend$per_game)) {
+      unique(cmp_blend$per_game$season)
+    } else {
+      (SEASON - 8):(SEASON - 1)
+    }
+  }, error = function(e) (SEASON - 8):(SEASON - 1))
+
+  # Check if sched has the needed seasons
+  sched_has_seasons <- all(backtest_seasons %in% unique(sched$season))
+
+  # If sched doesn't have backtest seasons, load them
+  sched_for_backtest <- if (!sched_has_seasons && length(backtest_seasons) > 0) {
+    message(sprintf("Loading schedule for backtest seasons: %s",
+                    paste(range(backtest_seasons), collapse = "-")))
+    tryCatch({
+      backtest_sched <- nflreadr::load_schedules(seasons = backtest_seasons)
+      if (exists("standardize_join_keys", mode = "function")) {
+        backtest_sched <- standardize_join_keys(backtest_sched)
+      }
+      backtest_sched
+    }, error = function(e) {
+      message(sprintf("  Could not load backtest schedule: %s", e$message))
+      sched
+    })
+  } else {
+    sched
+  }
+
   report_tbl <- build_moneyline_comparison_table(
     market_comparison_result = cmp_blend,
-    enriched_schedule = sched,
+    enriched_schedule = sched_for_backtest,
     join_keys = join_keys_html,
     vig = 0.10,
     verbose = TRUE

@@ -50,9 +50,15 @@ set_log_file <- function(path) {
 .log_internal <- function(level, level_name, msg, ...) {
   if (level < .nfl_log_level) return(invisible(NULL))
 
-  # Format message
+  # Format message - handle both sprintf-style and concatenation-style
   if (length(list(...)) > 0) {
-    msg <- sprintf(msg, ...)
+    # Check if msg contains format specifiers (%s, %d, %f, etc.)
+    if (grepl("%[sdifgxXoeEaA]", msg)) {
+      msg <- sprintf(msg, ...)
+    } else {
+      # No format specifiers - concatenate arguments
+      msg <- paste(msg, paste(..., collapse = " "))
+    }
   }
 
   # Add timestamp and level

@@ -11,7 +11,7 @@
 An NFL game prediction model using Monte Carlo simulation with:
 - Negative Binomial score distributions with Gaussian copula correlation
 - Spline calibration (GAM with smoothing penalty, -6.9% Brier improvement)
-- 60% market shrinkage for probability estimates
+- 70% market shrinkage for probability estimates (increased from 60% when spline calibration unavailable)
 - 1/8 Kelly staking with edge skepticism
 - Strength-of-schedule, injury, and coaching change adjustments
 - **Player props correlated with game simulation outcomes (v2.9.0)**
@@ -32,6 +32,7 @@ An NFL game prediction model using Monte Carlo simulation with:
 |------|---------|
 | `R/correlated_props.R` | Gaussian copula correlation engine |
 | `sports/nfl/props/props_config.R` | Prop-specific hyperparameters |
+| `sports/nfl/props/data_sources.R` | Player data loading with fallback chain |
 | `sports/nfl/props/*.R` | Position-specific simulations |
 
 **Correlation Model** (empirically validated against 2019-2024 NFL data):
@@ -60,6 +61,21 @@ apply_model_vig(prob, vig_pct = 0.10)  # 50% → -110
 
 # Devig market odds
 devig_american_odds(home_ml, away_ml)  # Returns true probabilities
+
+# Load players with fallback for future seasons
+get_player_projections_with_fallback(season, week, home_team, away_team)
+
+# Run all props for a single game (passing/rushing/receiving/td)
+run_game_props(game_sim, home_team, away_team, season)
+
+# Run props across all games in simulation
+run_correlated_props(game_sim_results, schedule_data, prop_types, season)
+
+# Apply opponent defense adjustments to player projections
+apply_defense_adjustments(players, home_team, away_team, season)
+
+# Apply game context (dome, home field) to player projections
+apply_game_context(players, game)
 ```
 
 ### Hyperparameter Empirical Sources
@@ -79,7 +95,7 @@ devig_american_odds(home_ml, away_ml)  # Returns true probabilities
 
 | Metric | Model | Vegas | Industry Range |
 |--------|-------|-------|----------------|
-| Brier Score | 0.211 | 0.208 | 0.205-0.215 |
+| Brier Score | 0.214 (0.211 w/ spline) | 0.210 | 0.205-0.215 |
 | Log-Loss | 0.54 | 0.52 | 0.52-0.56 |
 | Accuracy | 67.1% | 68% | 65-70% |
 | RMSE | 10.82 pts | 10.5 pts | 10-12 pts |
@@ -174,7 +190,7 @@ Rules:
 
 ```
 Re-run all verification:
-1. Rscript scripts/verify_repo_integrity.R (must show 35/35 pass)
+1. Rscript scripts/verify_repo_integrity.R (must show 55/55 pass)
 2. Rscript scripts/run_matrix.R (must show 9/9 pass)
 3. testthat::test_dir("tests/testthat") (check for regressions)
 4. Verify HTML report generates if run_week.R was changed
@@ -335,6 +351,10 @@ USE_SNAP_WEIGHTED_INJURIES <- FALSE  # Must be FALSE
 - `R/model_diagnostics.R` - Calibration diagnostics
 - `R/correlated_props.R` - Gaussian copula player props (v2.9.0)
 
+### Props Data Sources
+- `sports/nfl/props/data_sources.R` - Player projections with fallback chain
+- `sports/nfl/props/props_config.R` - Prop hyperparameters and baselines
+
 ### Scripts
 - `scripts/verify_repo_integrity.R` - 50+ check verification (expanded v2.9.0)
 - `scripts/verify_requirements.R` - 20-issue audit verification
@@ -383,5 +403,5 @@ Rscript -e "source('run_week.R')"
 
 ---
 
-*Last updated: 2026-02-03*
+*Last updated: 2026-02-05*
 *Version: 2.9.0*

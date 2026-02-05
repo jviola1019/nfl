@@ -90,6 +90,15 @@ tryCatch({
   message("  Skipped: R/sleeper_api.R (optional)")
 })
 
+# Load player props configuration (v2.9.0)
+props_config_path <- file.path(PROJECT_ROOT, "sports", "nfl", "props", "props_config.R")
+if (file.exists(props_config_path)) {
+  source(props_config_path, local = FALSE)
+  message("  Loaded: sports/nfl/props/props_config.R")
+} else {
+  message("  Skipped: sports/nfl/props/props_config.R (not found)")
+}
+
 message("Test setup complete.\n")
 
 # Export project root for tests that need it

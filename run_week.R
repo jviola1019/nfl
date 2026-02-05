@@ -126,6 +126,38 @@ tryCatch({
 
           cat(sprintf("  Generated %d player props (%d with positive EV)\n",
                       nrow(props_results), positive_ev))
+
+          # Regenerate HTML report to include player props
+          if (exists("export_moneyline_comparison_html", mode = "function") &&
+              exists("moneyline_report_inputs") && !is.null(moneyline_report_inputs)) {
+            cat("  Regenerating HTML report with player props...\n")
+            tryCatch({
+              # Rebuild comparison table if needed
+              if (exists("build_moneyline_comparison_table", mode = "function") &&
+                  !is.null(moneyline_report_inputs$comparison)) {
+                report_tbl <- build_moneyline_comparison_table(
+                  market_comparison_result = moneyline_report_inputs$comparison,
+                  enriched_schedule = if (exists("sched")) sched else NULL,
+                  join_keys = if (!is.null(moneyline_report_inputs$join_keys))
+                                moneyline_report_inputs$join_keys else c("game_id", "season", "week"),
+                  vig = 0.10,
+                  verbose = FALSE
+                )
+                if (nrow(report_tbl) > 0) {
+                  export_moneyline_comparison_html(
+                    comparison_tbl = report_tbl,
+                    file = file.path(getwd(), "NFLvsmarket_report.html"),
+                    title = sprintf("NFL Week %d Analysis (Season %d) - With Player Props", WEEK_TO_SIM, SEASON),
+                    verbose = FALSE,
+                    auto_open = FALSE
+                  )
+                  cat("  HTML report updated with player props.\n")
+                }
+              }
+            }, error = function(e) {
+              message(sprintf("  Could not regenerate HTML: %s", e$message))
+            })
+          }
         } else {
           message("No player props were generated (possibly missing player data)")
         }

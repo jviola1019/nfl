@@ -149,26 +149,55 @@ totals_to_zscores <- function(game_totals) {
 #' @param home_team Home team abbreviation
 #' @param away_team Away team abbreviation
 #' @param season Season year
+#' @param week Week number (optional)
 #' @return Tibble with player projections
 #' @keywords internal
-load_game_players <- function(home_team, away_team, season) {
-  # Try to load from data_sources.R
+load_game_players <- function(home_team, away_team, season, week = NULL) {
+  # Source data_sources.R to get fallback function
   data_sources_path <- file.path(getwd(), "sports", "nfl", "props", "data_sources.R")
   if (file.exists(data_sources_path)) {
     source(data_sources_path, local = TRUE)
-    if (exists("load_player_projections", mode = "function")) {
-      projections <- tryCatch(
-        load_player_projections(season),
-        error = function(e) NULL
-      )
-      if (!is.null(projections) && nrow(projections) > 0) {
-        return(projections %>%
-          dplyr::filter(recent_team %in% c(home_team, away_team)))
+  }
+
+  # Use fallback-enabled projection loading (handles future games)
+  if (exists("get_player_projections_with_fallback", mode = "function")) {
+    projections <- tryCatch(
+      get_player_projections_with_fallback(
+        season = season,
+        week = if (!is.null(week)) week else 18,
+        home_team = home_team,
+        away_team = away_team,
+        min_games = 3
+      ),
+      error = function(e) {
+        warning(sprintf("Fallback projection loading failed: %s", e$message))
+        NULL
       }
+    )
+
+    if (!is.null(projections) && nrow(projections) > 0) {
+      message(sprintf("  Loaded %d players for %s @ %s%s",
+                      nrow(projections), away_team, home_team,
+                      if (any(projections$is_projection)) " (using fallback)" else ""))
+      return(projections)
     }
   }
 
-  # Return empty tibble if loading fails
+  # Legacy fallback: Try basic load_player_projections
+  if (exists("load_player_projections", mode = "function")) {
+    projections <- tryCatch(
+      load_player_projections(season),
+      error = function(e) NULL
+    )
+    if (!is.null(projections) && nrow(projections) > 0) {
+      return(projections %>%
+        dplyr::filter(recent_team %in% c(home_team, away_team)) %>%
+        dplyr::mutate(is_projection = FALSE, is_baseline = FALSE))
+    }
+  }
+
+  # Return empty tibble if all loading fails
+  warning(sprintf("No player data available for %s @ %s", away_team, home_team))
   tibble::tibble(
     player_id = character(),
     player_name = character(),
@@ -177,8 +206,178 @@ load_game_players <- function(home_team, away_team, season) {
     avg_passing_yards = numeric(),
     avg_rushing_yards = numeric(),
     avg_receiving_yards = numeric(),
-    avg_touchdowns = numeric()
+    avg_touchdowns = numeric(),
+    is_projection = logical(),
+    is_baseline = logical()
   )
+}
+
+# =============================================================================
+# DEFENSE AND GAME CONTEXT ADJUSTMENTS
+# =============================================================================
+
+#' Load defense rankings for a season
+#'
+#' @param season Season year
+#' @return Tibble with team defense multipliers
+#' @keywords internal
+load_defense_rankings <- function(season) {
+  tryCatch({
+    # Load team stats for defense rankings
+    team_stats <- nflreadr::load_player_stats(seasons = season, stat_type = "defense")
+
+    # Calculate pass/rush/recv defense multipliers based on yards allowed
+    if (!is.null(team_stats) && nrow(team_stats) > 0) {
+      # Aggregate by team
+      defense_stats <- team_stats %>%
+        dplyr::group_by(recent_team) %>%
+        dplyr::summarise(
+          pass_yards_allowed = sum(passing_yards, na.rm = TRUE),
+          rush_yards_allowed = sum(rushing_yards, na.rm = TRUE),
+          .groups = "drop"
+        )
+
+      # Convert to multipliers (league average = 1.0)
+      avg_pass <- mean(defense_stats$pass_yards_allowed, na.rm = TRUE)
+      avg_rush <- mean(defense_stats$rush_yards_allowed, na.rm = TRUE)
+
+      defense_stats %>%
+        dplyr::transmute(
+          team = recent_team,
+          # Higher yards allowed = easier defense = higher multiplier for opponent
+          pass_def_multiplier = dplyr::if_else(
+            avg_pass > 0,
+            pmin(pmax(pass_yards_allowed / avg_pass, 0.80), 1.20),
+            1.0
+          ),
+          rush_def_multiplier = dplyr::if_else(
+            avg_rush > 0,
+            pmin(pmax(rush_yards_allowed / avg_rush, 0.75), 1.25),
+            1.0
+          ),
+          recv_def_multiplier = pass_def_multiplier  # Same as pass for receiving
+        )
+    } else {
+      NULL
+    }
+  }, error = function(e) {
+    message(sprintf("  Defense rankings unavailable: %s", e$message))
+    NULL
+  })
+}
+
+#' Apply defense adjustments to player projections
+#'
+#' Multiplies baseline projections by opponent defense efficiency.
+#' A higher multiplier means the defense allows more yards.
+#'
+#' @param players Tibble of player projections
+#' @param home_team Home team abbreviation
+#' @param away_team Away team abbreviation
+#' @param season Season year
+#' @return Adjusted player projections
+#' @keywords internal
+apply_defense_adjustments <- function(players, home_team, away_team, season) {
+  # Load defense rankings (with fallback to neutral)
+  defense_ranks <- tryCatch({
+    load_defense_rankings(season)
+  }, error = function(e) NULL)
+
+  if (is.null(defense_ranks) || nrow(defense_ranks) == 0) {
+    # Use neutral defense rankings
+    defense_ranks <- tibble::tibble(
+      team = unique(c(home_team, away_team)),
+      pass_def_multiplier = 1.0,
+      rush_def_multiplier = 1.0,
+      recv_def_multiplier = 1.0
+    )
+  }
+
+  # Home team faces away defense, away team faces home defense
+  players %>%
+    dplyr::mutate(
+      opponent = dplyr::if_else(recent_team == home_team, away_team, home_team),
+      pass_def_mult = defense_ranks$pass_def_multiplier[match(opponent, defense_ranks$team)],
+      rush_def_mult = defense_ranks$rush_def_multiplier[match(opponent, defense_ranks$team)],
+      recv_def_mult = defense_ranks$recv_def_multiplier[match(opponent, defense_ranks$team)],
+      # Apply multipliers (default to 1.0 if missing)
+      pass_def_mult = dplyr::coalesce(pass_def_mult, 1.0),
+      rush_def_mult = dplyr::coalesce(rush_def_mult, 1.0),
+      recv_def_mult = dplyr::coalesce(recv_def_mult, 1.0),
+      # Adjust projections
+      avg_passing_yards = dplyr::if_else(
+        !is.na(avg_passing_yards),
+        avg_passing_yards * pass_def_mult,
+        avg_passing_yards
+      ),
+      avg_rushing_yards = dplyr::if_else(
+        !is.na(avg_rushing_yards),
+        avg_rushing_yards * rush_def_mult,
+        avg_rushing_yards
+      ),
+      avg_receiving_yards = dplyr::if_else(
+        !is.na(avg_receiving_yards),
+        avg_receiving_yards * recv_def_mult,
+        avg_receiving_yards
+      )
+    ) %>%
+    dplyr::select(-opponent, -pass_def_mult, -rush_def_mult, -recv_def_mult)
+}
+
+#' Apply game context adjustments (dome, weather, home field)
+#'
+#' @param players Tibble of player projections
+#' @param game Game data with home_team and optional roof column
+#' @return Adjusted player projections
+#' @keywords internal
+apply_game_context <- function(players, game) {
+  is_dome <- if (!is.null(game$roof)) {
+    tolower(game$roof) %in% c("dome", "closed", "retractable")
+  } else {
+    FALSE
+  }
+
+  home_team <- if (!is.null(game$home_team)) game$home_team else NA_character_
+
+  # Get adjustment constants from config or use defaults
+  pass_home_adj <- if (exists("PASSING_YARDS_HOME_ADJ")) PASSING_YARDS_HOME_ADJ else 5
+  rush_home_adj <- if (exists("RUSHING_YARDS_HOME_ADJ")) RUSHING_YARDS_HOME_ADJ else 3
+  recv_home_adj <- if (exists("RECEIVING_YARDS_HOME_ADJ")) RECEIVING_YARDS_HOME_ADJ else 4
+  pass_dome_adj <- if (exists("PASSING_YARDS_DOME_ADJ")) PASSING_YARDS_DOME_ADJ else 12
+  recv_dome_adj <- if (exists("RECEIVING_YARDS_DOME_ADJ")) RECEIVING_YARDS_DOME_ADJ else 8
+
+  players %>%
+    dplyr::mutate(
+      is_home = !is.na(home_team) & recent_team == home_team,
+      # Home field advantage
+      avg_passing_yards = dplyr::if_else(
+        !is.na(avg_passing_yards) & is_home,
+        avg_passing_yards + pass_home_adj,
+        avg_passing_yards
+      ),
+      avg_rushing_yards = dplyr::if_else(
+        !is.na(avg_rushing_yards) & is_home,
+        avg_rushing_yards + rush_home_adj,
+        avg_rushing_yards
+      ),
+      avg_receiving_yards = dplyr::if_else(
+        !is.na(avg_receiving_yards) & is_home,
+        avg_receiving_yards + recv_home_adj,
+        avg_receiving_yards
+      ),
+      # Dome bonus (for indoor games)
+      avg_passing_yards = dplyr::if_else(
+        !is.na(avg_passing_yards) & is_dome,
+        avg_passing_yards + pass_dome_adj,
+        avg_passing_yards
+      ),
+      avg_receiving_yards = dplyr::if_else(
+        !is.na(avg_receiving_yards) & is_dome,
+        avg_receiving_yards + recv_dome_adj,
+        avg_receiving_yards
+      )
+    ) %>%
+    dplyr::select(-is_home)
 }
 
 # =============================================================================
@@ -257,187 +456,273 @@ run_game_props <- function(game_sim, home_team, away_team, season,
     return(tibble::tibble())
   }
 
+  # Apply defense adjustments based on opponent strength (skip if fails)
+  players <- tryCatch({
+    adjusted <- apply_defense_adjustments(players, home_team, away_team, season)
+    if (!is.null(adjusted) && nrow(adjusted) > 0) adjusted else players
+  }, error = function(e) {
+    message(sprintf("  Defense adjustments skipped: %s", e$message))
+    players
+  })
+
+  # Apply game context adjustments (home field, dome)
+  game_context <- list(home_team = home_team, away_team = away_team, roof = NULL)
+  players <- tryCatch({
+    adjusted <- apply_game_context(players, game_context)
+    if (!is.null(adjusted) && nrow(adjusted) > 0) adjusted else players
+  }, error = function(e) {
+    message(sprintf("  Context adjustments skipped: %s", e$message))
+    players
+  })
+
+  # Ensure required columns exist with defaults
+  if (!"avg_passing_yards" %in% names(players)) players$avg_passing_yards <- NA_real_
+  if (!"avg_rushing_yards" %in% names(players)) players$avg_rushing_yards <- NA_real_
+  if (!"avg_receiving_yards" %in% names(players)) players$avg_receiving_yards <- NA_real_
+
   results_list <- list()
 
   # Process each prop type
   for (prop_type in prop_types) {
 
     if (prop_type == "passing") {
-      qbs <- players %>% dplyr::filter(position == "QB", !is.na(avg_passing_yards))
+      qbs <- tryCatch({
+        players %>% dplyr::filter(position == "QB", !is.na(avg_passing_yards))
+      }, error = function(e) tibble::tibble())
 
-      for (i in seq_len(nrow(qbs))) {
-        qb <- qbs[i, ]
-        rho <- get_game_correlation("QB", "passing")
-        baseline_sd <- if (exists("PASSING_YARDS_SD")) PASSING_YARDS_SD else 65
+      if (nrow(qbs) > 0) {
+        for (i in seq_len(nrow(qbs))) {
+          tryCatch({
+            qb <- qbs[i, ]
+            qb_name <- as.character(qb$player_name[1])
+            qb_team <- as.character(qb$recent_team[1])
+            qb_passing <- as.numeric(qb$avg_passing_yards[1])
 
-        sim_values <- simulate_correlated_prop(
-          baseline = qb$avg_passing_yards,
-          sd = baseline_sd,
-          z_game = z_game,
-          rho = rho,
-          n_trials = n_trials,
-          distribution = "normal"
-        )
+            rho <- get_game_correlation("QB", "passing")
+            baseline_sd <- if (exists("PASSING_YARDS_SD")) PASSING_YARDS_SD else 65
 
-        line <- round(qb$avg_passing_yards * 0.95, 0) + 0.5
-        p_over <- mean(sim_values > line)
-        p_under <- mean(sim_values < line)
+            sim_values <- simulate_correlated_prop(
+              baseline = qb_passing,
+              sd = baseline_sd,
+              z_game = z_game,
+              rho = rho,
+              n_trials = n_trials,
+              distribution = "normal"
+            )
 
-        # Calculate EV at -110 odds
-        dec_odds <- 1 + 100/110
-        ev_over <- p_over * (dec_odds - 1) - (1 - p_over)
-        ev_under <- p_under * (dec_odds - 1) - (1 - p_under)
+            line <- round(qb_passing * 0.95, 0) + 0.5
+            p_over <- mean(sim_values > line)
+            p_under <- mean(sim_values < line)
 
-        results_list[[length(results_list) + 1]] <- tibble::tibble(
-          player = qb$player_name,
-          position = "QB",
-          team = qb$recent_team,
-          matchup = paste0(away_team, " @ ", home_team),
-          prop_type = "passing_yards",
-          line = line,
-          projection = round(mean(sim_values), 1),
-          p_over = round(p_over, 4),
-          p_under = round(p_under, 4),
-          ev_over = round(ev_over, 4),
-          ev_under = round(ev_under, 4),
-          recommendation = if (ev_over > 0.02) "OVER" else if (ev_under > 0.02) "UNDER" else "PASS",
-          correlation_with_game = rho
-        )
+            # Calculate EV at -110 odds
+            dec_odds <- 1 + 100/110
+            ev_over <- p_over * (dec_odds - 1) - (1 - p_over)
+            ev_under <- p_under * (dec_odds - 1) - (1 - p_under)
+
+            rec <- if (ev_over > 0.02) "OVER" else if (ev_under > 0.02) "UNDER" else "PASS"
+
+            results_list[[length(results_list) + 1]] <- tibble::tibble(
+              player = qb_name,
+              position = "QB",
+              team = qb_team,
+              matchup = paste0(away_team, " @ ", home_team),
+              prop_type = "passing_yards",
+              line = line,
+              projection = round(mean(sim_values), 1),
+              p_over = round(p_over, 4),
+              p_under = round(p_under, 4),
+              ev_over = round(ev_over, 4),
+              ev_under = round(ev_under, 4),
+              recommendation = rec,
+              correlation_with_game = rho
+            )
+          }, error = function(e) {
+            message(sprintf("    Skipping QB %d: %s", i, e$message))
+          })
+        }
       }
     }
 
     if (prop_type == "rushing") {
-      rushers <- players %>%
-        dplyr::filter(position %in% c("RB", "QB"), !is.na(avg_rushing_yards), avg_rushing_yards > 10)
+      rushers <- tryCatch({
+        players %>%
+          dplyr::filter(position %in% c("RB", "QB"), !is.na(avg_rushing_yards), avg_rushing_yards > 10)
+      }, error = function(e) tibble::tibble())
 
-      for (i in seq_len(nrow(rushers))) {
-        player <- rushers[i, ]
-        rho <- get_game_correlation(player$position, "rushing")
-        baseline_sd <- if (exists("RUSHING_YARDS_SD")) RUSHING_YARDS_SD else 35
+      if (nrow(rushers) > 0) {
+        for (i in seq_len(nrow(rushers))) {
+          tryCatch({
+            player <- rushers[i, ]
+            pl_name <- as.character(player$player_name[1])
+            pl_pos <- as.character(player$position[1])
+            pl_team <- as.character(player$recent_team[1])
+            pl_rushing <- as.numeric(player$avg_rushing_yards[1])
 
-        sim_values <- simulate_correlated_prop(
-          baseline = player$avg_rushing_yards,
-          sd = baseline_sd,
-          z_game = z_game,
-          rho = rho,
-          n_trials = n_trials,
-          distribution = "normal"
-        )
+            rho <- get_game_correlation(pl_pos, "rushing")
+            baseline_sd <- if (exists("RUSHING_YARDS_SD")) RUSHING_YARDS_SD else 35
 
-        line <- round(player$avg_rushing_yards * 0.95, 0) + 0.5
-        p_over <- mean(sim_values > line)
-        p_under <- mean(sim_values < line)
+            sim_values <- simulate_correlated_prop(
+              baseline = pl_rushing,
+              sd = baseline_sd,
+              z_game = z_game,
+              rho = rho,
+              n_trials = n_trials,
+              distribution = "normal"
+            )
 
-        dec_odds <- 1 + 100/110
-        ev_over <- p_over * (dec_odds - 1) - (1 - p_over)
-        ev_under <- p_under * (dec_odds - 1) - (1 - p_under)
+            line <- round(pl_rushing * 0.95, 0) + 0.5
+            p_over <- mean(sim_values > line)
+            p_under <- mean(sim_values < line)
 
-        results_list[[length(results_list) + 1]] <- tibble::tibble(
-          player = player$player_name,
-          position = player$position,
-          team = player$recent_team,
-          matchup = paste0(away_team, " @ ", home_team),
-          prop_type = "rushing_yards",
-          line = line,
-          projection = round(mean(sim_values), 1),
-          p_over = round(p_over, 4),
-          p_under = round(p_under, 4),
-          ev_over = round(ev_over, 4),
-          ev_under = round(ev_under, 4),
-          recommendation = if (ev_over > 0.02) "OVER" else if (ev_under > 0.02) "UNDER" else "PASS",
-          correlation_with_game = rho
-        )
+            dec_odds <- 1 + 100/110
+            ev_over <- p_over * (dec_odds - 1) - (1 - p_over)
+            ev_under <- p_under * (dec_odds - 1) - (1 - p_under)
+
+            rec <- if (ev_over > 0.02) "OVER" else if (ev_under > 0.02) "UNDER" else "PASS"
+
+            results_list[[length(results_list) + 1]] <- tibble::tibble(
+              player = pl_name,
+              position = pl_pos,
+              team = pl_team,
+              matchup = paste0(away_team, " @ ", home_team),
+              prop_type = "rushing_yards",
+              line = line,
+              projection = round(mean(sim_values), 1),
+              p_over = round(p_over, 4),
+              p_under = round(p_under, 4),
+              ev_over = round(ev_over, 4),
+              ev_under = round(ev_under, 4),
+              recommendation = rec,
+              correlation_with_game = rho
+            )
+          }, error = function(e) {
+            message(sprintf("    Skipping rusher %d: %s", i, e$message))
+          })
+        }
       }
     }
 
     if (prop_type == "receiving") {
-      receivers <- players %>%
-        dplyr::filter(position %in% c("WR", "TE", "RB"), !is.na(avg_receiving_yards), avg_receiving_yards > 10)
+      receivers <- tryCatch({
+        players %>%
+          dplyr::filter(position %in% c("WR", "TE", "RB"), !is.na(avg_receiving_yards), avg_receiving_yards > 10)
+      }, error = function(e) tibble::tibble())
 
-      for (i in seq_len(nrow(receivers))) {
-        player <- receivers[i, ]
-        rho <- get_game_correlation(player$position, "receiving")
+      if (nrow(receivers) > 0) {
+        for (i in seq_len(nrow(receivers))) {
+          tryCatch({
+            player <- receivers[i, ]
+            pl_name <- as.character(player$player_name[1])
+            pl_pos <- as.character(player$position[1])
+            pl_team <- as.character(player$recent_team[1])
+            pl_receiving <- as.numeric(player$avg_receiving_yards[1])
 
-        baseline_sd <- switch(player$position,
-          WR = if (exists("RECEIVING_YARDS_WR_SD")) RECEIVING_YARDS_WR_SD else 30,
-          TE = if (exists("RECEIVING_YARDS_TE_SD")) RECEIVING_YARDS_TE_SD else 25,
-          RB = if (exists("RECEIVING_YARDS_RB_SD")) RECEIVING_YARDS_RB_SD else 18,
-          25  # Default
-        )
+            rho <- get_game_correlation(pl_pos, "receiving")
 
-        sim_values <- simulate_correlated_prop(
-          baseline = player$avg_receiving_yards,
-          sd = baseline_sd,
-          z_game = z_game,
-          rho = rho,
-          n_trials = n_trials,
-          distribution = "normal"
-        )
+            baseline_sd <- switch(pl_pos,
+              WR = if (exists("RECEIVING_YARDS_WR_SD")) RECEIVING_YARDS_WR_SD else 30,
+              TE = if (exists("RECEIVING_YARDS_TE_SD")) RECEIVING_YARDS_TE_SD else 25,
+              RB = if (exists("RECEIVING_YARDS_RB_SD")) RECEIVING_YARDS_RB_SD else 18,
+              25  # Default
+            )
 
-        line <- round(player$avg_receiving_yards * 0.95, 0) + 0.5
-        p_over <- mean(sim_values > line)
-        p_under <- mean(sim_values < line)
+            sim_values <- simulate_correlated_prop(
+              baseline = pl_receiving,
+              sd = baseline_sd,
+              z_game = z_game,
+              rho = rho,
+              n_trials = n_trials,
+              distribution = "normal"
+            )
 
-        dec_odds <- 1 + 100/110
-        ev_over <- p_over * (dec_odds - 1) - (1 - p_over)
-        ev_under <- p_under * (dec_odds - 1) - (1 - p_under)
+            line <- round(pl_receiving * 0.95, 0) + 0.5
+            p_over <- mean(sim_values > line)
+            p_under <- mean(sim_values < line)
 
-        results_list[[length(results_list) + 1]] <- tibble::tibble(
-          player = player$player_name,
-          position = player$position,
-          team = player$recent_team,
-          matchup = paste0(away_team, " @ ", home_team),
-          prop_type = "receiving_yards",
-          line = line,
-          projection = round(mean(sim_values), 1),
-          p_over = round(p_over, 4),
-          p_under = round(p_under, 4),
-          ev_over = round(ev_over, 4),
-          ev_under = round(ev_under, 4),
-          recommendation = if (ev_over > 0.02) "OVER" else if (ev_under > 0.02) "UNDER" else "PASS",
-          correlation_with_game = rho
-        )
+            dec_odds <- 1 + 100/110
+            ev_over <- p_over * (dec_odds - 1) - (1 - p_over)
+            ev_under <- p_under * (dec_odds - 1) - (1 - p_under)
+
+            rec <- if (ev_over > 0.02) "OVER" else if (ev_under > 0.02) "UNDER" else "PASS"
+
+            results_list[[length(results_list) + 1]] <- tibble::tibble(
+              player = pl_name,
+              position = pl_pos,
+              team = pl_team,
+              matchup = paste0(away_team, " @ ", home_team),
+              prop_type = "receiving_yards",
+              line = line,
+              projection = round(mean(sim_values), 1),
+              p_over = round(p_over, 4),
+              p_under = round(p_under, 4),
+              ev_over = round(ev_over, 4),
+              ev_under = round(ev_under, 4),
+              recommendation = rec,
+              correlation_with_game = rho
+            )
+          }, error = function(e) {
+            message(sprintf("    Skipping receiver %d: %s", i, e$message))
+          })
+        }
       }
     }
 
     if (prop_type == "td") {
-      skill_players <- players %>%
-        dplyr::filter(position %in% c("QB", "RB", "WR", "TE"), !is.na(avg_touchdowns))
+      skill_players <- tryCatch({
+        players %>%
+          dplyr::filter(position %in% c("QB", "RB", "WR", "TE"), !is.na(avg_touchdowns))
+      }, error = function(e) tibble::tibble())
 
-      for (i in seq_len(nrow(skill_players))) {
-        player <- skill_players[i, ]
-        rho <- get_game_correlation(player$position, "td")
+      if (nrow(skill_players) > 0) {
+        for (i in seq_len(nrow(skill_players))) {
+          tryCatch({
+            player <- skill_players[i, ]
+            pl_name <- as.character(player$player_name[1])
+            pl_pos <- as.character(player$position[1])
+            pl_team <- as.character(player$recent_team[1])
+            pl_td <- as.numeric(player$avg_touchdowns[1])
 
-        sim_values <- simulate_correlated_prop(
-          baseline = player$avg_touchdowns,
-          sd = player$avg_touchdowns * 0.5,  # High variance for TDs
-          z_game = z_game,
-          rho = rho,
-          n_trials = n_trials,
-          distribution = "negbin"
-        )
+            # Ensure baseline is reasonable
+            if (is.na(pl_td) || pl_td <= 0) pl_td <- 0.5
 
-        p_anytime <- mean(sim_values >= 1)
+            rho <- get_game_correlation(pl_pos, "td")
 
-        # EV at typical +100 anytime TD odds
-        dec_odds <- 2.0
-        ev_anytime <- p_anytime * (dec_odds - 1) - (1 - p_anytime)
+            sim_values <- simulate_correlated_prop(
+              baseline = pl_td,
+              sd = pl_td * 0.5,  # High variance for TDs
+              z_game = z_game,
+              rho = rho,
+              n_trials = n_trials,
+              distribution = "negbin"
+            )
 
-        results_list[[length(results_list) + 1]] <- tibble::tibble(
-          player = player$player_name,
-          position = player$position,
-          team = player$recent_team,
-          matchup = paste0(away_team, " @ ", home_team),
-          prop_type = "anytime_td",
-          line = NA_real_,
-          projection = round(mean(sim_values), 3),
-          p_over = round(p_anytime, 4),
-          p_under = round(1 - p_anytime, 4),
-          ev_over = round(ev_anytime, 4),
-          ev_under = NA_real_,
-          recommendation = if (ev_anytime > 0.02) "BET" else "PASS",
-          correlation_with_game = rho
-        )
+            p_anytime <- mean(sim_values >= 1)
+
+            # EV at typical +100 anytime TD odds
+            dec_odds <- 2.0
+            ev_anytime <- p_anytime * (dec_odds - 1) - (1 - p_anytime)
+
+            rec <- if (ev_anytime > 0.02) "BET" else "PASS"
+
+            results_list[[length(results_list) + 1]] <- tibble::tibble(
+              player = pl_name,
+              position = pl_pos,
+              team = pl_team,
+              matchup = paste0(away_team, " @ ", home_team),
+              prop_type = "anytime_td",
+              line = NA_real_,
+              projection = round(mean(sim_values), 3),
+              p_over = round(p_anytime, 4),
+              p_under = round(1 - p_anytime, 4),
+              ev_over = round(ev_anytime, 4),
+              ev_under = NA_real_,
+              recommendation = rec,
+              correlation_with_game = rho
+            )
+          }, error = function(e) {
+            message(sprintf("    Skipping TD player %d: %s", i, e$message))
+          })
+        }
       }
     }
   }

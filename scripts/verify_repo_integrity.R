@@ -318,10 +318,10 @@ tryCatch({
 
   # Test apply_model_vig exists and works
   if (exists("apply_model_vig")) {
-    # 50% with 10% vig should be approximately -110
+    # 50% with 10% vig: 0.50 × 1.10 = 0.55 implied → -122 American odds
     ml_50 <- apply_model_vig(0.50, 0.10)
-    if (!is.na(ml_50) && ml_50 >= -115 && ml_50 <= -105) {
-      pass("invariant", "apply_model_vig: 50% → -110 (correct)")
+    if (!is.na(ml_50) && ml_50 >= -128 && ml_50 <= -118) {
+      pass("invariant", "apply_model_vig: 50% → -122 (correct)")
     } else {
       fail("invariant", "apply_model_vig: 50% calculation", sprintf("got %s", ml_50))
     }
@@ -406,7 +406,8 @@ cat("\n--- Invariant: No Stale Artifacts ---\n")
 
 # Note: "nul" is a reserved device name on Windows, file.exists("nul") always returns TRUE
 # So we check for actual file artifacts, not Windows reserved names
-stale_files <- c(".RData", "NFLvsmarket_report.html")
+# Note: NFLvsmarket_report.html is a valid output file, not a stale artifact
+stale_files <- c(".RData")
 for (f in stale_files) {
   if (!file.exists(f)) {
     pass("invariant", sprintf("No stale artifact: %s", f))

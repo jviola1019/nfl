@@ -110,12 +110,14 @@ test_that("apply_model_vig handles zero and no vig", {
 test_that("devig_american_odds returns correct true probabilities", {
   skip_if_not(exists("devig_american_odds"), "devig_american_odds not loaded")
 
-  # Standard -110/-110 line (10% vig)
+  # Standard -110/-110 line (~4.76% overround)
+  # Math: american_to_probability(-110) = 110/210 = 0.5238
+  # Total implied = 0.5238 + 0.5238 = 1.0476, overround = 0.0476
   result <- devig_american_odds(-110, -110)
 
   expect_equal(result$home_prob, 0.50, tolerance = 0.01)
   expect_equal(result$away_prob, 0.50, tolerance = 0.01)
-  expect_true(abs(result$overround - 0.10) < 0.05)
+  expect_true(abs(result$overround - 0.0476) < 0.02)
 })
 
 test_that("devig_american_odds handles asymmetric lines", {
@@ -156,21 +158,22 @@ test_that("devig_american_odds calculates correct overround", {
 test_that("apply_model_vig produces realistic market-like odds", {
   skip_if_not(exists("apply_model_vig"), "apply_model_vig not loaded")
 
-  # Real-world scenarios
+  # Real-world scenarios with 10% vig (110% total implied)
+  # Formula: vigged_prob = true_prob × 1.10
 
-  # ~55% favorite: should be around -130/-133
+  # 55% favorite: 0.55 × 1.10 = 60.5% implied → -153 American odds
   home_ml <- apply_model_vig(0.55, 0.10)
-  expect_true(home_ml >= -145 && home_ml <= -120)
+  expect_true(home_ml >= -165 && home_ml <= -145)
 
-  # ~65% favorite: should be around -200/-210
+  # 65% favorite: 0.65 × 1.10 = 71.5% implied → -251 American odds
   home_ml_big <- apply_model_vig(0.65, 0.10)
-  expect_true(home_ml_big >= -230 && home_ml_big <= -170)
+  expect_true(home_ml_big >= -270 && home_ml_big <= -235)
 
-  # Pick 'em with vig: -110/-110
+  # Pick 'em with vig: 0.50 × 1.10 = 55% implied → -122 American odds
   home_ml_even <- apply_model_vig(0.50, 0.10)
   away_ml_even <- apply_model_vig(0.50, 0.10)
   expect_equal(home_ml_even, away_ml_even)
-  expect_true(abs(home_ml_even - (-110)) < 10)
+  expect_true(abs(home_ml_even - (-122)) < 10)
 })
 
 test_that("vigged odds are more extreme than fair odds", {

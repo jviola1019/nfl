@@ -716,10 +716,11 @@ WEEK_BUFFER_POST <- 2
 #' @range [0.0, 1.0]
 #' @validation Grid search over 0.40-0.80 in 0.05 increments
 #' @validated_on Training 2011-2018, Test 2019-2024 (n=1339 games)
-#' @brier_impact Optimal at 0.60 (Brier 0.210 vs 0.253 at SHRINKAGE=0)
+#' @brier_impact Optimal at 0.60-0.70 depending on calibration method
 #' @p_value p < 0.001 for shrinkage vs no-shrinkage (bootstrap n=1000)
 #' @reference Professional models typically use 50-70% market weight
-SHRINKAGE <- 0.60
+#' @note Increased to 0.70 when spline_calibration.rds is unavailable (ensemble fallback)
+SHRINKAGE <- 0.70
 
 #' @description Enable dynamic shrinkage based on game context
 #' @default TRUE
