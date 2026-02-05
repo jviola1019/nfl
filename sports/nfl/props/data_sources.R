@@ -86,7 +86,8 @@ load_player_projections <- function(season = NULL, week = NULL, min_games = 3) {
       avg_passing_yards = numeric(),
       avg_rushing_yards = numeric(),
       avg_receiving_yards = numeric(),
-      avg_touchdowns = numeric()
+      avg_touchdowns = numeric(),
+      avg_scoring_tds = numeric()
     ))
   }
 
@@ -131,7 +132,13 @@ load_player_projections <- function(season = NULL, week = NULL, min_games = 3) {
         avg_receiving_yards = mean(receiving_yards, na.rm = TRUE),
         sd_receiving_yards = stats::sd(receiving_yards, na.rm = TRUE),
 
-        # Touchdowns (all types)
+        # Scoring touchdowns (rushing + receiving only - for anytime TD props)
+        avg_scoring_tds = mean(
+          dplyr::coalesce(rushing_tds, 0L) +
+          dplyr::coalesce(receiving_tds, 0L),
+          na.rm = TRUE
+        ),
+        # Total touchdowns (including passing - for reference)
         avg_touchdowns = mean(
           dplyr::coalesce(passing_tds, 0L) +
           dplyr::coalesce(rushing_tds, 0L) +
@@ -155,7 +162,24 @@ load_player_projections <- function(season = NULL, week = NULL, min_games = 3) {
       avg_receiving_yards = pmin(avg_receiving_yards, 200)
     )
 
-  message(sprintf("Loaded projections for %d players", nrow(projections)))
+  # Select starters: rank by games_played within position/team
+  projections <- projections %>%
+    dplyr::group_by(recent_team, position) %>%
+    dplyr::mutate(
+      rank_in_pos = dplyr::row_number(dplyr::desc(games_played))
+    ) %>%
+    dplyr::ungroup() %>%
+    dplyr::filter(
+      # Keep only top N per position per team
+      (position == "QB" & rank_in_pos <= 1) |
+      (position == "RB" & rank_in_pos <= 2) |
+      (position == "WR" & rank_in_pos <= 3) |
+      (position == "TE" & rank_in_pos <= 1) |
+      (!position %in% c("QB", "RB", "WR", "TE"))
+    ) %>%
+    dplyr::select(-rank_in_pos)
+
+  message(sprintf("Loaded projections for %d players (roster-filtered)", nrow(projections)))
 
   projections
 }
@@ -295,6 +319,7 @@ create_baseline_projections <- function(home_team, away_team) {
     avg_receiving_yards = numeric(),
     sd_receiving_yards = numeric(),
     avg_touchdowns = numeric(),
+    avg_scoring_tds = numeric(),
     is_projection = logical(),
     is_baseline = logical()
   )
@@ -322,6 +347,7 @@ create_baseline_projections <- function(home_team, away_team) {
                               recv_wr_baseline * 0.6, recv_te_baseline),
       sd_receiving_yards = c(NA, NA, NA, recv_wr_sd, recv_wr_sd, recv_wr_sd, recv_te_sd),
       avg_touchdowns = c(1.8, 0.6, 0.3, 0.5, 0.4, 0.3, 0.35),
+      avg_scoring_tds = c(0.15, 0.6, 0.3, 0.5, 0.4, 0.3, 0.35),
       is_projection = TRUE,
       is_baseline = TRUE
     )

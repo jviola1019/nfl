@@ -2,6 +2,34 @@
 
 All notable changes to the NFL Prediction Model are documented in this file.
 
+## [2.9.1] - 2026-02-05
+
+### Critical Math Fixes (Player Props)
+
+- **Roster Exclusivity**: Enforce 1 QB, 2 RB, 3 WR, 1 TE per team (was loading ALL historical players)
+- **TD Type Separation**: New `avg_scoring_tds` column (rush+recv only) for anytime TD props; QBs no longer inflated by passing TDs
+- **CV-Scaled SD**: Standard deviations now scale proportionally to baseline (CV=0.29 passing, 0.40 rushing, 0.35 receiving) instead of fixed constants
+- **Median-Based Lines**: Prop lines now use simulation median instead of arbitrary 95% of baseline
+- **EV Tier System**: Added REVIEW/MODEL ERROR classification for edges >20%; tiered edge quality (OK/Caution/High/MODEL ERROR)
+
+### Game-Level Math Fixes
+
+- **Hybrid Win Probability**: 80% simulation counts + 20% Normal approximation (was 100% Normal CDF)
+- **Blend Beat Market Labels**: TBD games now show "Higher EV" / "Lower EV" instead of misleading "Yes"/"No"
+- **Pass Reason Column**: New column showing why EV was overridden to Pass (edge too large, stake below minimum)
+
+### HTML Design Fixes
+
+- **Professional Prop Names**: "Passing Yards" instead of "passing_yards"
+- **Props Tab Readability**: Explicit light text color on dark background for props table
+- **Table Width**: No horizontal scrolling (100% width constraint)
+- **Recommendation Visibility**: Increased cell highlight opacity from 8% to 25%; red highlight for REVIEW
+- **Edge Quality**: Removed emoji, uses text-only labels (OK, Caution, High, MODEL ERROR)
+
+### Verification
+
+- Added 4 new integrity checks: roster exclusivity, TD type separation, SD scaling, EV tier system
+
 ## [2.9.0] - 2026-02-03
 
 ### Major: Unified Game + Player Props with Gaussian Copula Correlation

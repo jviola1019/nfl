@@ -2992,8 +2992,14 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         effective_recommendation %in% c("Pass", "No Play") ~ 0,
         is.na(blend_confidence) ~ NA_real_,
         TRUE ~ blend_confidence
+      ),
+      # Show reason when EV is overridden to Pass
+      pass_reason = dplyr::case_when(
+        effective_recommendation == blend_recommendation ~ "",
+        !is.na(display_ev) & display_ev > 0.15 ~ "Edge too large (>15%)",
+        is.na(blend_confidence) | blend_confidence < MIN_STAKE_THRESHOLD ~ "Stake below minimum",
+        TRUE ~ ""
       )
-      # NOTE: We no longer zero out EV - users want to see negative EV to understand why it's Pass
     ) %>%
     dplyr::transmute(
       Season = season,
@@ -3007,8 +3013,12 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         TRUE ~ blend_pick
       ),
       `Blend Recommendation` = effective_recommendation,
+      `Pass Reason` = pass_reason,
       `Blend Beat Market?` = dplyr::case_when(
         is.na(blend_beats_market) | effective_recommendation %in% c("Pass", "No Play") ~ "N/A",
+        is.na(actual_winner) | actual_winner == "TBD" ~ dplyr::if_else(
+          blend_beats_market, "Higher EV", "Lower EV"
+        ),
         blend_beats_market ~ "Yes",
         TRUE ~ "No"
       ),
@@ -3410,7 +3420,8 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         ".search-container {position: fixed; top: 0; left: 0; right: 0; z-index: 1000; background: rgba(26, 24, 21, 0.85); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border-bottom: 1px solid rgba(217, 119, 87, 0.3); padding: 1.25rem 0; box-shadow: 0 4px 30px rgba(0, 0, 0, 0.3);}\n",
         ".search-inner {max-width: 1400px; margin: 0 auto; padding: 0 1.5rem;}\n",
         ".page-wrapper {max-width: 1400px; margin: 0 auto; padding: 1rem 1.5rem 4rem; position: relative; z-index: 1;}\n",
-        ".table-wrapper {overflow-x: auto; border-radius: 24px; box-shadow: 0 25px 80px rgba(0, 0, 0, 0.4);}\n",
+        ".table-wrapper {overflow-x: auto; border-radius: 24px; box-shadow: 0 25px 80px rgba(0, 0, 0, 0.4); width: 100%; max-width: 100%;}\n",
+        ".gt_table {width: 100% !important; table-layout: auto;}\n",
         # Report intro with glass morphism
         ".report-intro {max-width: 1000px; margin: 0 auto 2.5rem; background: rgba(45, 42, 38, 0.8); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); padding: 2rem 2.25rem; border-radius: 24px; border: 1px solid rgba(217, 119, 87, 0.25); box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.08);}\n",
         ".report-intro h2 {margin: 0 0 1rem; font-size: 1.5rem; color: var(--claude-cream); letter-spacing: -0.01em; font-weight: 600;}\n",
@@ -3474,6 +3485,8 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         ".props-section {border-left: 3px solid #10b981;}\n",
         ".props-table {margin-top: 1.5rem;}\n",
         ".props-content {margin-top: 2rem;}\n",
+        ".props-content .gt_table tbody td {color: #F5F4F0 !important; font-size: 0.92rem;}\n",
+        ".props-content .gt_table thead th {color: #FAF9F6 !important;}\n",
         # Responsive adjustments
         "@media (max-width: 768px) { body {padding-top: 100px;} .gt_table {font-size: 0.88rem;} .gt_table thead th {font-size: 0.7rem; top: 100px;} .report-intro {padding: 1.5rem; margin: 0 0.5rem 2rem;} #table-search {font-size: 0.9rem; padding: 0.85rem 1.25rem;} .filter-btn {font-size: 0.7rem; padding: 0.3rem 0.7rem;} .report-tabs {flex-direction: column;} .tab-btn {width: 100%;} }\n"
       )
@@ -3617,15 +3630,24 @@ export_moneyline_comparison_html <- function(comparison_tbl,
               Position = position,
               Team = team,
               Matchup = matchup,
-              `Prop Type` = prop_type,
+              `Prop Type` = dplyr::case_when(
+                prop_type == "passing_yards" ~ "Passing Yards",
+                prop_type == "rushing_yards" ~ "Rushing Yards",
+                prop_type == "receiving_yards" ~ "Receiving Yards",
+                prop_type == "anytime_td" ~ "Anytime TD",
+                TRUE ~ gsub("_", " ", stringr::str_to_title(prop_type))
+              ),
               Line = ifelse(is.na(line), "-", as.character(line)),
               Projection = round(projection, 1),
               `P(Over)` = sprintf("%.1f%%", p_over * 100),
               `EV Over` = sprintf("%.1f%%", ev_over * 100),
               `Edge Quality` = dplyr::case_when(
                 recommendation == "PASS" ~ "Pass",
-                ev_over <= 0.05 ~ "\u2713 OK",
-                TRUE ~ "\u26A0 High"
+                recommendation == "REVIEW" ~ "MODEL ERROR",
+                pmax(ev_over, ev_under, na.rm = TRUE) <= 0.05 ~ "OK",
+                pmax(ev_over, ev_under, na.rm = TRUE) <= 0.10 ~ "Caution",
+                pmax(ev_over, ev_under, na.rm = TRUE) <= 0.20 ~ "High",
+                TRUE ~ "MODEL ERROR"
               ),
               Recommendation = recommendation
             )
@@ -3639,10 +3661,17 @@ export_moneyline_comparison_html <- function(comparison_tbl,
                                    format(if(exists("N_TRIALS")) N_TRIALS else 50000, big.mark = ","))
               ) %>%
               gt::tab_style(
-                style = gt::cell_fill(color = "#22c55e20"),
+                style = gt::cell_fill(color = "#22c55e40"),
                 locations = gt::cells_body(
                   columns = "Recommendation",
                   rows = Recommendation %in% c("OVER", "UNDER", "BET")
+                )
+              ) %>%
+              gt::tab_style(
+                style = gt::cell_fill(color = "#ef444440"),
+                locations = gt::cells_body(
+                  columns = "Recommendation",
+                  rows = Recommendation == "REVIEW"
                 )
               ) %>%
               gt::tab_source_note(

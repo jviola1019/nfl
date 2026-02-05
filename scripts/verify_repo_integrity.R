@@ -394,6 +394,41 @@ tryCatch({
     }
   }
 
+  # Check roster exclusivity logic exists in data_sources.R
+  ds_path <- "sports/nfl/props/data_sources.R"
+  if (file.exists(ds_path)) {
+    ds_code <- readLines(ds_path)
+    ds_text <- paste(ds_code, collapse = "\n")
+
+    if (grepl("rank_in_pos", ds_text)) {
+      pass("invariant", "Roster exclusivity: rank_in_pos filter present")
+    } else {
+      fail("invariant", "Roster exclusivity: rank_in_pos filter missing from data_sources.R")
+    }
+
+    if (grepl("avg_scoring_tds", ds_text)) {
+      pass("invariant", "TD type separation: avg_scoring_tds column present")
+    } else {
+      fail("invariant", "TD type separation: avg_scoring_tds column missing from data_sources.R")
+    }
+  }
+
+  # Check SD scaling (no fixed SD without baseline scaling)
+  props_code <- readLines("R/correlated_props.R")
+  props_text <- paste(props_code, collapse = "\n")
+
+  if (!grepl("PASSING_YARDS_SD\\b", props_text) || grepl("qb_passing \\* 0\\.29", props_text)) {
+    pass("invariant", "SD scaling: passing SD scaled to baseline")
+  } else {
+    fail("invariant", "SD scaling: fixed PASSING_YARDS_SD used without baseline scaling")
+  }
+
+  if (grepl("MODEL ERROR", props_text)) {
+    pass("invariant", "EV tiers: MODEL ERROR classification present")
+  } else {
+    fail("invariant", "EV tiers: MODEL ERROR classification missing")
+  }
+
 }, error = function(e) {
   fail("invariant", "Failed to test correlated props module", conditionMessage(e))
 })

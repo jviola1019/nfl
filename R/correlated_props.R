@@ -497,7 +497,8 @@ run_game_props <- function(game_sim, home_team, away_team, season,
             qb_passing <- as.numeric(qb$avg_passing_yards[1])
 
             rho <- get_game_correlation("QB", "passing")
-            baseline_sd <- if (exists("PASSING_YARDS_SD")) PASSING_YARDS_SD else 65
+            # Scale SD proportionally to baseline (CV ~0.29 from NFL data)
+            baseline_sd <- max(qb_passing * 0.29, 15)
 
             sim_values <- simulate_correlated_prop(
               baseline = qb_passing,
@@ -508,7 +509,8 @@ run_game_props <- function(game_sim, home_team, away_team, season,
               distribution = "normal"
             )
 
-            line <- round(qb_passing * 0.95, 0) + 0.5
+            # Use simulation median as the line (more robust than arbitrary 95%)
+            line <- round(median(sim_values), 0) + 0.5
             p_over <- mean(sim_values > line)
             p_under <- mean(sim_values < line)
 
@@ -517,7 +519,8 @@ run_game_props <- function(game_sim, home_team, away_team, season,
             ev_over <- p_over * (dec_odds - 1) - (1 - p_over)
             ev_under <- p_under * (dec_odds - 1) - (1 - p_under)
 
-            rec <- if (ev_over > 0.02) "OVER" else if (ev_under > 0.02) "UNDER" else "PASS"
+            # Recommendation with model error detection
+            rec <- if (abs(ev_over) > 0.20 || abs(ev_under) > 0.20) "REVIEW" else if (ev_over > 0.02) "OVER" else if (ev_under > 0.02) "UNDER" else "PASS"
 
             results_list[[length(results_list) + 1]] <- tibble::tibble(
               player = qb_name,
@@ -557,7 +560,8 @@ run_game_props <- function(game_sim, home_team, away_team, season,
             pl_rushing <- as.numeric(player$avg_rushing_yards[1])
 
             rho <- get_game_correlation(pl_pos, "rushing")
-            baseline_sd <- if (exists("RUSHING_YARDS_SD")) RUSHING_YARDS_SD else 35
+            # Scale SD proportionally to baseline (CV ~0.40 for rushing)
+            baseline_sd <- max(pl_rushing * 0.40, 10)
 
             sim_values <- simulate_correlated_prop(
               baseline = pl_rushing,
@@ -568,7 +572,7 @@ run_game_props <- function(game_sim, home_team, away_team, season,
               distribution = "normal"
             )
 
-            line <- round(pl_rushing * 0.95, 0) + 0.5
+            line <- round(median(sim_values), 0) + 0.5
             p_over <- mean(sim_values > line)
             p_under <- mean(sim_values < line)
 
@@ -576,7 +580,7 @@ run_game_props <- function(game_sim, home_team, away_team, season,
             ev_over <- p_over * (dec_odds - 1) - (1 - p_over)
             ev_under <- p_under * (dec_odds - 1) - (1 - p_under)
 
-            rec <- if (ev_over > 0.02) "OVER" else if (ev_under > 0.02) "UNDER" else "PASS"
+            rec <- if (abs(ev_over) > 0.20 || abs(ev_under) > 0.20) "REVIEW" else if (ev_over > 0.02) "OVER" else if (ev_under > 0.02) "UNDER" else "PASS"
 
             results_list[[length(results_list) + 1]] <- tibble::tibble(
               player = pl_name,
@@ -617,12 +621,8 @@ run_game_props <- function(game_sim, home_team, away_team, season,
 
             rho <- get_game_correlation(pl_pos, "receiving")
 
-            baseline_sd <- switch(pl_pos,
-              WR = if (exists("RECEIVING_YARDS_WR_SD")) RECEIVING_YARDS_WR_SD else 30,
-              TE = if (exists("RECEIVING_YARDS_TE_SD")) RECEIVING_YARDS_TE_SD else 25,
-              RB = if (exists("RECEIVING_YARDS_RB_SD")) RECEIVING_YARDS_RB_SD else 18,
-              25  # Default
-            )
+            # Scale SD proportionally to baseline (CV ~0.35 for receiving)
+            baseline_sd <- max(pl_receiving * 0.35, 8)
 
             sim_values <- simulate_correlated_prop(
               baseline = pl_receiving,
@@ -633,7 +633,7 @@ run_game_props <- function(game_sim, home_team, away_team, season,
               distribution = "normal"
             )
 
-            line <- round(pl_receiving * 0.95, 0) + 0.5
+            line <- round(median(sim_values), 0) + 0.5
             p_over <- mean(sim_values > line)
             p_under <- mean(sim_values < line)
 
@@ -641,7 +641,7 @@ run_game_props <- function(game_sim, home_team, away_team, season,
             ev_over <- p_over * (dec_odds - 1) - (1 - p_over)
             ev_under <- p_under * (dec_odds - 1) - (1 - p_under)
 
-            rec <- if (ev_over > 0.02) "OVER" else if (ev_under > 0.02) "UNDER" else "PASS"
+            rec <- if (abs(ev_over) > 0.20 || abs(ev_under) > 0.20) "REVIEW" else if (ev_over > 0.02) "OVER" else if (ev_under > 0.02) "UNDER" else "PASS"
 
             results_list[[length(results_list) + 1]] <- tibble::tibble(
               player = pl_name,
@@ -678,10 +678,23 @@ run_game_props <- function(game_sim, home_team, away_team, season,
             pl_name <- as.character(player$player_name[1])
             pl_pos <- as.character(player$position[1])
             pl_team <- as.character(player$recent_team[1])
-            pl_td <- as.numeric(player$avg_touchdowns[1])
+            # Use scoring TDs (rush+recv) for anytime TD, fall back to avg_touchdowns
+            pl_td <- if ("avg_scoring_tds" %in% names(player) && !is.na(player$avg_scoring_tds[1])) {
+              as.numeric(player$avg_scoring_tds[1])
+            } else {
+              as.numeric(player$avg_touchdowns[1])
+            }
 
-            # Ensure baseline is reasonable
-            if (is.na(pl_td) || pl_td <= 0) pl_td <- 0.5
+            # Position-specific defaults for scoring TDs
+            if (is.na(pl_td) || pl_td <= 0) {
+              pl_td <- switch(pl_pos,
+                QB = 0.15,   # ~15% of games QB rushes for TD
+                RB = 0.40,   # ~40% of games RB scores
+                WR = 0.30,   # ~30% of games WR scores
+                TE = 0.20,   # ~20% of games TE scores
+                0.25
+              )
+            }
 
             rho <- get_game_correlation(pl_pos, "td")
 
@@ -700,7 +713,7 @@ run_game_props <- function(game_sim, home_team, away_team, season,
             dec_odds <- 2.0
             ev_anytime <- p_anytime * (dec_odds - 1) - (1 - p_anytime)
 
-            rec <- if (ev_anytime > 0.02) "BET" else "PASS"
+            rec <- if (abs(ev_anytime) > 0.20) "REVIEW" else if (ev_anytime > 0.02) "BET" else "PASS"
 
             results_list[[length(results_list) + 1]] <- tibble::tibble(
               player = pl_name,
@@ -839,9 +852,11 @@ run_correlated_props <- function(game_sim_results, schedule_data = NULL,
         edge_quality = dplyr::case_when(
           is.na(ev_over) ~ "N/A",
           recommendation == "PASS" ~ "Pass",
-          pmax(ev_over, ev_under, na.rm = TRUE) <= 0.05 ~ "\u2713 OK",
-          pmax(ev_over, ev_under, na.rm = TRUE) <= 0.10 ~ "\u26A0 High",
-          TRUE ~ "\u26A0 High"
+          recommendation == "REVIEW" ~ "MODEL ERROR",
+          pmax(ev_over, ev_under, na.rm = TRUE) <= 0.05 ~ "OK",
+          pmax(ev_over, ev_under, na.rm = TRUE) <= 0.10 ~ "Caution",
+          pmax(ev_over, ev_under, na.rm = TRUE) <= 0.20 ~ "High",
+          TRUE ~ "MODEL ERROR"
         )
       )
 

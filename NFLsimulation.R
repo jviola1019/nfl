@@ -6393,6 +6393,21 @@ build_final_safe <- function(resolved_list, games_ready) {
       }
       prob_info     <- margin_probs_from_summary(margin_mean, margin_sd_raw, tie_prob)
 
+      # Hybrid win probability: 80% simulation counts + 20% Normal approx
+      # Preserves regularization benefits while grounding in actual sim results
+      home_win_sim <- mean(sims$margin > 0, na.rm = TRUE)
+      away_win_sim <- mean(sims$margin < 0, na.rm = TRUE)
+      sim_decided <- home_win_sim + away_win_sim
+      if (sim_decided > 0) {
+        home_p_2w_sim <- home_win_sim / sim_decided
+        home_p_2w_hybrid <- 0.80 * home_p_2w_sim + 0.20 * prob_info$home_p_2w
+        two_way_mass <- 1 - tie_prob
+        prob_info$home_p_2w <- home_p_2w_hybrid
+        prob_info$away_p_2w <- 1 - home_p_2w_hybrid
+        prob_info$home_win_prob <- home_p_2w_hybrid * two_way_mass
+        prob_info$away_win_prob <- (1 - home_p_2w_hybrid) * two_way_mass
+      }
+
       tibble::tibble(
         season  = g$season,
         week    = g$week,
