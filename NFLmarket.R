@@ -2649,7 +2649,8 @@ export_moneyline_comparison_html <- function(comparison_tbl,
                                              verbose = TRUE,
                                              auto_open = TRUE,
                                              season = NULL,
-                                             week = NULL) {
+                                             week = NULL,
+                                             props_data = NULL) {
   if (missing(file) || is.null(file) || !length(file) || all(is.na(file)) || !nzchar(file[[1L]])) {
     file <- file.path(getwd(), "NFLvsmarket_report.html")
     if (verbose) {
@@ -3577,12 +3578,20 @@ export_moneyline_comparison_html <- function(comparison_tbl,
 
       # === PLAYER PROPS SECTION (always show - with data or informative message) ===
       props_section <- NULL
-      props_available <- exists("props_results", envir = .GlobalEnv) &&
-                         !is.null(get("props_results", envir = .GlobalEnv)) &&
-                         nrow(get("props_results", envir = .GlobalEnv)) > 0
+      # Prefer explicit props_data parameter, fall back to .GlobalEnv
+      props_data_local <- if (!is.null(props_data)) {
+        props_data
+      } else if (exists("props_results", envir = .GlobalEnv)) {
+        get("props_results", envir = .GlobalEnv)
+      } else {
+        NULL
+      }
+      props_available <- !is.null(props_data_local) &&
+                         is.data.frame(props_data_local) &&
+                         nrow(props_data_local) > 0
 
       if (props_available) {
-        props_data <- get("props_results", envir = .GlobalEnv)
+        props_data <- props_data_local
         # Build props intro HTML
         props_intro <- paste0(
             "<section class=\"report-intro props-section\">",

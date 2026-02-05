@@ -549,6 +549,11 @@ VERBOSE <- TRUE
 #' @default FALSE (enable during season)
 ENABLE_MONITORING <- FALSE
 
+#' @description Model Brier score (2022-2024, 2282 games, without spline calibration)
+#' @note With spline calibration: 0.211. Update when re-validated.
+MODEL_BRIER_SCORE <- 0.214
+MARKET_BRIER_SCORE <- 0.210
+
 #' @description Brier score alert threshold
 #' @default 0.23
 MONITORING_BRIER_THRESHOLD <- 0.23
@@ -940,7 +945,7 @@ if (interactive() || getOption("nfl_sim.show_config", default = FALSE)) {
   cat("\n")
   cat("  Model Performance (Validation):\n")
   cat("    • RMSE:           10.82 ± 0.43 points\n")
-  cat("    • Brier Score:    0.211 (market: 0.208)\n")
+  cat(sprintf("    • Brier Score:    %.3f (market: %.3f)\n", MODEL_BRIER_SCORE, MARKET_BRIER_SCORE))
   cat("    • Rank:           #2 vs professional models\n")
   cat("\n")
   cat("  Week Selection:\n")
@@ -1031,6 +1036,8 @@ list2env(
     GENERATE_HTML_REPORTS = GENERATE_HTML_REPORTS,
     VERBOSE = VERBOSE,
     ENABLE_MONITORING = ENABLE_MONITORING,
+    MODEL_BRIER_SCORE = MODEL_BRIER_SCORE,
+    MARKET_BRIER_SCORE = MARKET_BRIER_SCORE,
     MONITORING_BRIER_THRESHOLD = MONITORING_BRIER_THRESHOLD,
     MONITORING_ACCURACY_THRESHOLD = MONITORING_ACCURACY_THRESHOLD,
     USE_SOBOL = USE_SOBOL,

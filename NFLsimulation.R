@@ -27,7 +27,7 @@
 #
 # VALIDATION:
 #   - Test file: tests/testthat/test-simulation.R
-#   - Brier Score: 0.211 (95% CI: 0.205-0.217)
+#   - Brier Score: 0.214 (0.211 w/ spline; 95% CI: 0.205-0.217)
 #   - Methodology: K-fold cross-validation, chronological splits
 #
 # STATISTICAL METHODOLOGY:
@@ -4814,7 +4814,7 @@ momentum_metrics <- sched %>%
     home_pts = home_score, away_pts = away_score,
     home_margin = home_score - away_score
   ) %>%
-  dplyr::select(-any_of("location")) %>%  # Remove any existing location column before pivot
+  dplyr::select(-dplyr::any_of("location")) %>%  # Remove any existing location column before pivot
   tidyr::pivot_longer(
     cols = c(home_team, away_team),
     names_to = "location",
@@ -4857,7 +4857,7 @@ division_performance <- sched %>%
     home_team, away_team,
     home_margin = home_score - away_score
   ) %>%
-  dplyr::select(-any_of("location")) %>%  # Remove any existing location column before pivot
+  dplyr::select(-dplyr::any_of("location")) %>%  # Remove any existing location column before pivot
   tidyr::pivot_longer(
     cols = c(home_team, away_team),
     names_to = "location",
@@ -4889,7 +4889,7 @@ post_bye_performance <- sched %>%
   ) %>%
   dplyr::ungroup() %>%
   dplyr::filter(home_had_bye | away_had_bye) %>%
-  dplyr::select(-any_of("location")) %>%  # Remove any existing location column before pivot
+  dplyr::select(-dplyr::any_of("location")) %>%  # Remove any existing location column before pivot
   tidyr::pivot_longer(
     cols = c(home_team, away_team),
     names_to = "location",
@@ -6354,7 +6354,18 @@ resolved_list <- Map(function(sim_df, ot_hp) {
 
 overall_tie_rate <- sum(vapply(resolved_list, function(tb) sum(tb$tie), integer(1))) /
   (N_TRIALS * length(resolved_list))
-message(sprintf("Final tie rate: %.3f%% | alpha_1pt=%.3f", 100*overall_tie_rate, alpha_1pt))
+
+# Check if all games are playoff games (ties not possible in NFL playoffs)
+all_playoff <- all(vapply(seq_len(nrow(games_ready)), function(i) {
+  g <- games_ready[i, ]
+  !is.na(g$game_type) && g$game_type %in% c("WC", "DIV", "CON", "SB")
+}, logical(1)))
+
+if (all_playoff) {
+  message(sprintf("Final tie rate: 0.000%% (playoff - ties not possible) | alpha_1pt=%.3f", alpha_1pt))
+} else {
+  message(sprintf("Final tie rate: %.3f%% | alpha_1pt=%.3f", 100*overall_tie_rate, alpha_1pt))
+}
 
 # Per-game resolver: convert a portion of regulation ties into OT results
 
@@ -7969,7 +7980,7 @@ stopifnot("home_p_2w_mkt" %in% names(final))
 # Create model probability alias for blend prediction
 # CRITICAL FIX: Use RAW uncalibrated probability, not already-calibrated home_p_2w_cal
 # Calibration will be applied ONCE via map_blend() below (line ~7611)
-# Using home_p_2w_cal here would cause DOUBLE calibration (Brier ~0.25 instead of 0.211)
+# Using home_p_2w_cal here would cause DOUBLE calibration (Brier ~0.25 instead of 0.214)
 final <- final %>%
   dplyr::mutate(
     home_p_2w_model = .clp(home_p_2w_raw)
@@ -8375,7 +8386,7 @@ if (!is.null(primary_report_tbl) && nrow(primary_report_tbl)) {
       comparison_tbl = export_tbl,
       title = report_title,
       verbose = TRUE,
-      auto_open = TRUE,
+      auto_open = FALSE,
       season = SEASON,
       week = WEEK_TO_SIM
     )

@@ -223,43 +223,41 @@ load_game_players <- function(home_team, away_team, season, week = NULL) {
 #' @keywords internal
 load_defense_rankings <- function(season) {
   tryCatch({
-    # Load team stats for defense rankings
-    team_stats <- nflreadr::load_player_stats(seasons = season, stat_type = "defense")
+    # Load play-by-play data for defense rankings (PBP-based approach)
+    pbp <- nflreadr::load_pbp(seasons = season)
 
-    # Calculate pass/rush/recv defense multipliers based on yards allowed
-    if (!is.null(team_stats) && nrow(team_stats) > 0) {
-      # Aggregate by team
-      defense_stats <- team_stats %>%
-        dplyr::group_by(recent_team) %>%
-        dplyr::summarise(
-          pass_yards_allowed = sum(passing_yards, na.rm = TRUE),
-          rush_yards_allowed = sum(rushing_yards, na.rm = TRUE),
-          .groups = "drop"
-        )
+    if (is.null(pbp) || nrow(pbp) == 0) return(NULL)
 
-      # Convert to multipliers (league average = 1.0)
-      avg_pass <- mean(defense_stats$pass_yards_allowed, na.rm = TRUE)
-      avg_rush <- mean(defense_stats$rush_yards_allowed, na.rm = TRUE)
+    # Aggregate defensive yards allowed by team
+    defense_stats <- pbp %>%
+      dplyr::filter(!is.na(.data$defteam), !is.na(.data$play_type)) %>%
+      dplyr::group_by(.data$defteam) %>%
+      dplyr::summarize(
+        pass_yards_allowed = sum(.data$passing_yards, na.rm = TRUE),
+        rush_yards_allowed = sum(.data$rushing_yards, na.rm = TRUE),
+        .groups = "drop"
+      )
 
-      defense_stats %>%
-        dplyr::transmute(
-          team = recent_team,
-          # Higher yards allowed = easier defense = higher multiplier for opponent
-          pass_def_multiplier = dplyr::if_else(
-            avg_pass > 0,
-            pmin(pmax(pass_yards_allowed / avg_pass, 0.80), 1.20),
-            1.0
-          ),
-          rush_def_multiplier = dplyr::if_else(
-            avg_rush > 0,
-            pmin(pmax(rush_yards_allowed / avg_rush, 0.75), 1.25),
-            1.0
-          ),
-          recv_def_multiplier = pass_def_multiplier  # Same as pass for receiving
-        )
-    } else {
-      NULL
-    }
+    # Convert to multipliers (league average = 1.0)
+    avg_pass <- mean(defense_stats$pass_yards_allowed, na.rm = TRUE)
+    avg_rush <- mean(defense_stats$rush_yards_allowed, na.rm = TRUE)
+
+    defense_stats %>%
+      dplyr::transmute(
+        team = .data$defteam,
+        # Higher yards allowed = easier defense = higher multiplier for opponent
+        pass_def_multiplier = dplyr::if_else(
+          avg_pass > 0,
+          pmin(pmax(.data$pass_yards_allowed / avg_pass, 0.80), 1.20),
+          1.0
+        ),
+        rush_def_multiplier = dplyr::if_else(
+          avg_rush > 0,
+          pmin(pmax(.data$rush_yards_allowed / avg_rush, 0.75), 1.25),
+          1.0
+        ),
+        recv_def_multiplier = .data$pass_def_multiplier  # Same as pass for receiving
+      )
   }, error = function(e) {
     message(sprintf("  Defense rankings unavailable: %s", e$message))
     NULL

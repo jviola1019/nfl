@@ -149,9 +149,11 @@ tryCatch({
                     file = file.path(getwd(), "NFLvsmarket_report.html"),
                     title = sprintf("NFL Week %d Analysis (Season %d) - With Player Props", WEEK_TO_SIM, SEASON),
                     verbose = FALSE,
-                    auto_open = FALSE
+                    auto_open = TRUE,
+                    props_data = props_results
                   )
                   cat("  HTML report updated with player props.\n")
+                  .props_html_opened <- TRUE
                 }
               }
             }, error = function(e) {
@@ -167,6 +169,12 @@ tryCatch({
     } else {
       message("correlated_props.R not found; skipping player props")
     }
+  }
+
+  # Open browser if props didn't trigger auto_open (fallback for no-props case)
+  html_path <- file.path(getwd(), "NFLvsmarket_report.html")
+  if (!exists(".props_html_opened") && file.exists(html_path)) {
+    tryCatch(utils::browseURL(html_path), error = function(e) NULL)
   }
 
   cat("\n")
