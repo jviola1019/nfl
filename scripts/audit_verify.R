@@ -1,13 +1,21 @@
 # =============================================================================
 # FILE: scripts/audit_verify.R
-# PURPOSE: Verify v2.9.3 audit requirements
-# VERSION: 2.9.3
+# PURPOSE: Verify v2.9.4 audit requirements
+# VERSION: 2.9.4
 # CREATED: 2026-02-05
-# UPDATED: 2026-02-05
+# UPDATED: 2026-02-06
 #
 # DESCRIPTION:
 #   Comprehensive audit verification for player props and team-level outputs.
-#   Ensures all fixes from the v2.9.2 and v2.9.3 audits are working correctly.
+#   Ensures all fixes from the v2.9.2, v2.9.3, and v2.9.4 audits are working.
+#
+# v2.9.4 FIXES VERIFIED:
+#   - G2: Devigged probabilities sum to 1
+#   - G3: Devig column label updated
+#   - G4: ML roundtrip consistency (prob -> ML -> prob)
+#   - G7: TBD Beat Market = N/A
+#   - G8: Margin coherence with shrunk probability
+#   - P5: Correlation matrix PSD
 #
 # v2.9.3 FIXES VERIFIED:
 #   - A1: Game table ML derived from shrunk probabilities

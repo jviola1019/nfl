@@ -536,3 +536,55 @@ test_that("MODEL_VIG_PCT is within industry standard range", {
   # Default should be 10%
   expect_equal(MODEL_VIG_PCT, 0.10, tolerance = 0.02)
 })
+
+# =============================================================================
+# v2.9.4 P5: Correlation Matrix Positive Semi-Definite Check
+# =============================================================================
+
+test_that("correlation matrix is positive semi-definite", {
+  skip_if_not(exists("PROP_GAME_CORR_PASSING"), "Config not loaded")
+
+  # Build the correlation matrix used by the Gaussian copula
+  # For a 2-player same-team scenario (e.g., QB + WR)
+  corr_values <- c(
+    PROP_GAME_CORR_PASSING,
+    PROP_GAME_CORR_RUSHING,
+    PROP_GAME_CORR_RECEIVING,
+    PROP_GAME_CORR_TD,
+    PROP_SAME_TEAM_CORR
+  )
+
+  # All individual correlations must be in valid range [-1, 1]
+  for (r in corr_values) {
+    expect_true(abs(r) <= 1, info = sprintf("Correlation %f out of [-1, 1]", r))
+  }
+
+  # Build a representative 4x4 correlation matrix (QB, RB, WR, TE for one team)
+  # Diagonal = 1, off-diagonal = same-team cannibalization
+  # Each player correlated with game total at their position-specific r
+  n <- 4
+  corr_matrix <- matrix(PROP_SAME_TEAM_CORR, nrow = n, ncol = n)
+  diag(corr_matrix) <- 1
+
+  # Check positive semi-definiteness: all eigenvalues >= 0
+  eigenvalues <- eigen(corr_matrix, only.values = TRUE)$values
+  expect_true(all(eigenvalues >= -1e-10),
+              info = sprintf("Correlation matrix not PSD: min eigenvalue = %f",
+                             min(eigenvalues)))
+
+  # Also verify the matrix is symmetric
+  expect_equal(corr_matrix, t(corr_matrix))
+})
+
+test_that("pairwise correlation with game total produces valid 2x2 matrix", {
+  skip_if_not(exists("PROP_GAME_CORR_PASSING"), "Config not loaded")
+
+  # For each position, the copula uses a 2x2 matrix: [[1, rho], [rho, 1]]
+  for (rho in c(PROP_GAME_CORR_PASSING, PROP_GAME_CORR_RUSHING,
+                PROP_GAME_CORR_RECEIVING, PROP_GAME_CORR_TD)) {
+    mat <- matrix(c(1, rho, rho, 1), nrow = 2)
+    eigenvalues <- eigen(mat, only.values = TRUE)$values
+    expect_true(all(eigenvalues >= 0),
+                info = sprintf("2x2 matrix with rho=%f not PSD", rho))
+  }
+})

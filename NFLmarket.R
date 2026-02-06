@@ -2138,7 +2138,8 @@ build_moneyline_comparison_table <- function(market_comparison_result,
         NA_real_,
         blend_home_median - blend_away_median
       ),
-      blend_median_margin = harmonize_home_margin(blend_median_margin, blend_home_prob),
+      # Note: harmonize_home_margin moved to AFTER shrunk probability computation (v2.9.4 G8 fix)
+      # Raw margin kept here for internal spread calculations
       blend_spread_equiv = dplyr::if_else(
         is.na(blend_median_margin),
         NA_real_,
@@ -2194,6 +2195,10 @@ build_moneyline_comparison_table <- function(market_comparison_result,
       blend_away_prob_shrunk = shrink_probability_toward_market(
         blend_away_prob, market_away_prob, shrinkage = .game_shrinkage
       ),
+
+      # v2.9.4 G8 fix: Harmonize margin with SHRUNK probability for display coherence
+      # sign(margin) must agree with sign(shrunk_prob - 0.5) to avoid contradictions
+      blend_median_margin = harmonize_home_margin(blend_median_margin, blend_home_prob_shrunk),
 
       # Model MLs derived from SHRUNK probabilities for consistency with displayed probabilities
       # (v2.9.3 fix: ensures ML and displayed probability match)
@@ -3017,11 +3022,10 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       ),
       `Blend Recommendation` = effective_recommendation,
       `Pass Reason` = pass_reason,
+      # v2.9.4 G7 fix: TBD games must show N/A (outcome unknown → can't evaluate)
       `Blend Beat Market?` = dplyr::case_when(
         is.na(blend_beats_market) | effective_recommendation %in% c("Pass", "No Play") ~ "N/A",
-        is.na(actual_winner) | actual_winner == "TBD" ~ dplyr::if_else(
-          blend_beats_market, "Higher EV", "Lower EV"
-        ),
+        is.na(actual_winner) | actual_winner == "TBD" ~ "N/A",
         blend_beats_market ~ "Yes",
         TRUE ~ "No"
       ),
@@ -3030,6 +3034,8 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         NA_character_,
         blend_beats_market_basis
       ),
+      # v2.9.4 G6: Show raw Kelly for auditability (before pass override)
+      `Raw Kelly (%)` = blend_confidence,
       # Stake: 0 for Pass, actual value for Bet
       `Blend Stake (Units)` = effective_stake,
       # EV Edge: Show EV for the DISPLAYED pick (consistent with Blend Pick column)
@@ -3057,14 +3063,14 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       # Pick-side probabilities - SHRUNK values (matches EV calculation)
       # This ensures: displayed_prob × decimal_odds - 1 ≈ displayed_EV
       `Blend Pick Win % (Shrunk)` = blend_prob_pick_shrunk_safe,
-      `Market Pick Win % (Fair)` = market_prob_pick_safe,
+      `Market Pick Win % (Devig)` = market_prob_pick_safe,
       # Prob Edge on Pick: shrunk blend - market probability difference
       `Prob Edge on Pick (pp)` = dplyr::case_when(
         is.na(blend_prob_pick_shrunk_safe) | is.na(market_prob_pick_safe) ~ NA_real_,
         TRUE ~ blend_prob_pick_shrunk_safe - market_prob_pick_safe
       ),
       `Blend Home Win % (Shrunk)` = blend_home_prob_shrunk_safe,
-      `Market Home Win % (Fair)` = market_home_prob_safe,
+      `Market Home Win % (Devig)` = market_home_prob_safe,
       `ML Implied Home %` = ml_implied_home_prob_safe,
       `Blend Median Margin` = blend_median_margin,
       `Market Home Spread` = market_home_spread,
@@ -3084,8 +3090,8 @@ export_moneyline_comparison_html <- function(comparison_tbl,
 
   # === FINAL TYPE VALIDATION ===
   # Verify all probability columns are numeric (fail early if contaminated)
-  prob_cols <- c("Blend Pick Win % (Shrunk)", "Market Pick Win % (Fair)", "Prob Edge on Pick (pp)",
-                 "Blend Home Win % (Shrunk)", "Market Home Win % (Fair)", "ML Implied Home %")
+  prob_cols <- c("Blend Pick Win % (Shrunk)", "Market Pick Win % (Devig)", "Prob Edge on Pick (pp)",
+                 "Blend Home Win % (Shrunk)", "Market Home Win % (Devig)", "ML Implied Home %")
   for (col in prob_cols) {
     if (col %in% names(display_tbl)) {
       if (!is.numeric(display_tbl[[col]])) {
@@ -3126,8 +3132,8 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     )
     gt_tbl <- gt_apply_if_columns(
       gt_tbl,
-      c("Blend Home Win % (Shrunk)", "Market Home Win % (Fair)", "ML Implied Home %",
-        "Blend Pick Win % (Shrunk)", "Market Pick Win % (Fair)"),
+      c("Blend Home Win % (Shrunk)", "Market Home Win % (Devig)", "ML Implied Home %",
+        "Blend Pick Win % (Shrunk)", "Market Pick Win % (Devig)"),
       gt::fmt_percent,
       decimals = 1
     )
@@ -3206,10 +3212,10 @@ export_moneyline_comparison_html <- function(comparison_tbl,
 
     # Apply color coding for all metric columns
     # Home win probabilities (blue scale, expanded domain to handle edge cases)
-    gt_tbl <- apply_color(gt_tbl, c("Blend Home Win % (Shrunk)", "Market Home Win % (Fair)", "ML Implied Home %"),
+    gt_tbl <- apply_color(gt_tbl, c("Blend Home Win % (Shrunk)", "Market Home Win % (Devig)", "ML Implied Home %"),
       c("#1e3a8a", "#2563eb", "#3b82f6", "#60a5fa", "#93c5fd"), c(0, 1))
     # Pick win probabilities (same blue scale)
-    gt_tbl <- apply_color(gt_tbl, c("Blend Pick Win % (Shrunk)", "Market Pick Win % (Fair)"),
+    gt_tbl <- apply_color(gt_tbl, c("Blend Pick Win % (Shrunk)", "Market Pick Win % (Devig)"),
       c("#1e3a8a", "#2563eb", "#3b82f6", "#60a5fa", "#93c5fd"), c(0, 1))
     # Total EV (expanded domain to avoid clipping warnings)
     gt_tbl <- apply_color(gt_tbl, "Total EV (Units)",
@@ -3972,8 +3978,8 @@ export_moneyline_comparison_html <- function(comparison_tbl,
 
     # Format probability columns (updated column names with Shrunk suffix)
     for (pcol in c("EV Edge (%)", "Prob Edge on Pick (pp)", "Blend Home Win % (Shrunk)",
-                   "Market Home Win % (Fair)", "ML Implied Home %",
-                   "Blend Pick Win % (Shrunk)", "Market Pick Win % (Fair)")) {
+                   "Market Home Win % (Devig)", "ML Implied Home %",
+                   "Blend Pick Win % (Shrunk)", "Market Pick Win % (Devig)")) {
       formatted_tbl <- safe_percent(formatted_tbl, pcol)
     }
 
