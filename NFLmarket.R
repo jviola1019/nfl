@@ -2882,7 +2882,7 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     "<div class=\"intro-section\">",
     "<h3>Key Columns</h3>",
     "<table class=\"metrics-table\">",
-    "<tr><td><strong>EV Edge (%)</strong></td><td>Expected return per unit: (Shrunk Prob × Decimal Odds) - 1</td></tr>",
+    "<tr><td><strong>EV Edge (Raw)</strong></td><td>Expected return per unit for the displayed pick: (Shrunk Prob × Decimal Odds) - 1</td></tr><tr><td><strong>EV Edge (Displayed, Capped)</strong></td><td>Display-only cap of EV Edge (Raw) at 10% for readability; governance uses raw EV.</td></tr>",
     "<tr><td><strong>Total EV</strong></td><td>Expected profit: Stake × EV Edge</td></tr>",
     "<tr><td><strong>Blend Pick</strong></td><td>Model favorite (* = Pass game, no positive EV)</td></tr>",
     "<tr><td><strong>Shrunk Win %</strong></td><td>Market-adjusted probability (used for EV calc)</td></tr>",
@@ -2934,8 +2934,7 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     intro_html <- paste0(intro_html, quality_badge_html)
   }
 
-  # FIX: Override recommendation to Pass if stake < 0.01 to avoid "Bet X" with 0.000 stake
-  # BUT: Keep showing the actual EV value so users understand WHY it's a Pass
+  # Governance constants for ordered stake decisions
   MIN_STAKE_THRESHOLD <- 0.01
 
   # === TYPE GUARDS: Ensure probability columns are numeric ===
@@ -2986,27 +2985,38 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         TRUE ~ blend_ev_units
       ),
 
-      # Override: If stake is too small (<0.01) or edge implausibly large, treat as Pass
-      # Professional models never recommend bets with >15% perceived edge - market is too efficient
+      missing_market_odds = is.na(market_home_ml) | is.na(market_away_ml) |
+        market_home_ml == 0 | market_away_ml == 0,
+
+      governance = purrr::pmap(
+        list(
+          ev = display_ev,
+          prob = blend_prob_pick_shrunk,
+          odds = market_moneyline,
+          is_placeholder_odds = missing_market_odds
+        ),
+        ~ apply_bet_governance(
+          ev = ..1,
+          prob = ..2,
+          odds = ..3,
+          min_stake = MIN_STAKE_THRESHOLD,
+          kelly_fraction = 0.125,
+          max_stake = 0.02,
+          is_placeholder_odds = ..4
+        )
+      ),
+      governance_recommendation = purrr::map_chr(governance, ~ .x$recommendation[[1]]),
+      governance_raw_kelly = purrr::map_dbl(governance, ~ .x$raw_kelly_pct[[1]]),
+      governance_capped_stake = purrr::map_dbl(governance, ~ .x$capped_stake_pct[[1]]),
+      governance_final_stake = purrr::map_dbl(governance, ~ .x$final_stake_pct[[1]]),
+      pass_reason = purrr::map_chr(governance, ~ .x$pass_reason[[1]]),
       effective_recommendation = dplyr::case_when(
-        blend_recommendation %in% c("Pass", "No Play") ~ blend_recommendation,
-        is.na(blend_confidence) | blend_confidence < MIN_STAKE_THRESHOLD ~ "Pass",
-        # Auto-pass implausible edges (>15% EV is not realistic in efficient markets)
-        !is.na(display_ev) & display_ev > 0.15 ~ "Pass",
-        TRUE ~ blend_recommendation
+        blend_recommendation == "No Play" ~ "No Play",
+        TRUE ~ governance_recommendation
       ),
-      # Zero out stake for Pass recommendations (but NOT EV - we want to see why it's a Pass)
       effective_stake = dplyr::case_when(
-        effective_recommendation %in% c("Pass", "No Play") ~ 0,
-        is.na(blend_confidence) ~ NA_real_,
-        TRUE ~ blend_confidence
-      ),
-      # Show reason when EV is overridden to Pass
-      pass_reason = dplyr::case_when(
-        effective_recommendation == blend_recommendation ~ "",
-        !is.na(display_ev) & display_ev > 0.15 ~ "Edge too large (>15%)",
-        is.na(blend_confidence) | blend_confidence < MIN_STAKE_THRESHOLD ~ "Stake below minimum",
-        TRUE ~ ""
+        effective_recommendation == "No Play" ~ 0,
+        TRUE ~ governance_final_stake
       )
     ) %>%
     dplyr::transmute(
@@ -3034,26 +3044,21 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         NA_character_,
         blend_beats_market_basis
       ),
-      # v2.9.4 G6: Show raw Kelly for auditability (before pass override)
-      `Raw Kelly (%)` = blend_confidence,
-      # Stake: 0 for Pass, actual value for Bet
+      `Raw Kelly (%)` = governance_raw_kelly,
+      `Capped Stake (%)` = governance_capped_stake,
+      `Final Stake (%)` = governance_final_stake,
       `Blend Stake (Units)` = effective_stake,
-      # EV Edge: Show EV for the DISPLAYED pick (consistent with Blend Pick column)
-      # For Bet games: the positive EV side
-      # For Pass games: the favorite's EV (matches displayed team with *)
-      # Cap at 10% maximum - anything higher is implausible in efficient markets
-      `EV Edge (%)` = pmin(display_ev, 0.10),
+      `EV Edge (Raw)` = display_ev,
+      `EV Edge (Displayed, Capped)` = pmin(display_ev, 0.10),
       # Total EV: 0 for Pass (no bet = no EV), stake × EV for Bet
       `Total EV (Units)` = dplyr::case_when(
         effective_recommendation %in% c("Pass", "No Play") ~ 0,
         is.na(effective_stake) | is.na(display_ev) ~ NA_real_,
         TRUE ~ effective_stake * display_ev
       ),
-      # Edge Quality: Use CAPPED EV for consistency with displayed value
-      # Incorporate effective_recommendation to show Pass for auto-passed games
+      # Edge Quality: driven by displayed (capped) EV only for visual flagging
       `Edge Quality` = dplyr::case_when(
         is.na(display_ev) ~ "N/A",
-        effective_recommendation %in% c("Pass", "No Play") & display_ev > 0.10 ~ "Pass (capped)",
         effective_recommendation %in% c("Pass", "No Play") ~ "Pass",
         pmin(display_ev, 0.10) <= 0 ~ "Pass",
         pmin(display_ev, 0.10) <= 0.05 ~ "✓ OK",
@@ -3126,7 +3131,7 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     gt_tbl <- gt::gt(display_tbl)
     gt_tbl <- gt_apply_if_columns(
       gt_tbl,
-      c("EV Edge (%)", "Prob Edge on Pick (pp)"),
+      c("EV Edge (Raw)", "EV Edge (Displayed, Capped)", "Prob Edge on Pick (pp)"),
       gt::fmt_percent,
       decimals = 2
     )
@@ -3221,7 +3226,7 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     gt_tbl <- apply_color(gt_tbl, "Total EV (Units)",
       c("#991B1B", "#dc2626", "#1f2937", "#15803d", "#166534"), c(-0.10, 0.10))
     # EV Edge (expanded domain to avoid clipping warnings)
-    gt_tbl <- apply_color(gt_tbl, "EV Edge (%)",
+    gt_tbl <- apply_color(gt_tbl, "EV Edge (Displayed, Capped)",
       c("#991B1B", "#dc2626", "#1f2937", "#15803d", "#166534"), c(-0.25, 0.25))
     # Prob Edge on Pick (expanded domain)
     gt_tbl <- apply_color(gt_tbl, "Prob Edge on Pick (pp)",
@@ -3977,7 +3982,7 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     }
 
     # Format probability columns (updated column names with Shrunk suffix)
-    for (pcol in c("EV Edge (%)", "Prob Edge on Pick (pp)", "Blend Home Win % (Shrunk)",
+    for (pcol in c("EV Edge (Raw)", "EV Edge (Displayed, Capped)", "Prob Edge on Pick (pp)", "Blend Home Win % (Shrunk)",
                    "Market Home Win % (Devig)", "ML Implied Home %",
                    "Blend Pick Win % (Shrunk)", "Market Pick Win % (Devig)")) {
       formatted_tbl <- safe_percent(formatted_tbl, pcol)
