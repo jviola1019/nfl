@@ -235,10 +235,22 @@ See [DOCUMENTATION.md](DOCUMENTATION.md) for complete validation methodology.
 - No predictions: Check `WEEK_TO_SIM` and `SEASON` in config.R
 - Tests fail with path errors: Ensure `tests/testthat/setup.R` exists
 
-**Verify Repository Integrity**:
+**One-command audit verification (CI entrypoint)**:
 ```bash
-Rscript scripts/verify_repo_integrity.R  # Should show 35/35 passed
-Rscript scripts/run_matrix.R             # Should show 9/9 passed
+./scripts/audit_verify.sh
+```
+
+This runs, in order:
+- Schema + invariant tests (`scripts/verify_repo_integrity.R`)
+- Analytical calibration tests (`tests/testthat/test-calibration.R`)
+- Report structural checks (`scripts/audit_verify.R`)
+
+The shell wrapper fails fast (`set -euo pipefail`) and prints a machine-readable summary line:
+`AUDIT_VERIFY_SUMMARY={"schema_invariant":"PASS|FAIL","analytical_calibration":"PASS|FAIL","report_structural":"PASS|FAIL","overall":"PASS|FAIL"}`
+
+**Additional integrity checks**:
+```bash
+Rscript scripts/run_matrix.R  # Should show 9/9 passed
 ```
 
 ---
@@ -273,6 +285,8 @@ Rscript scripts/run_matrix.R             # Should show 9/9 passed
 |------|---------|
 | `scripts/verify_repo_integrity.R` | Schema + invariant verification (35 checks) |
 | `scripts/verify_requirements.R` | Package dependency validation |
+| `scripts/audit_verify.R` | R implementation for audit structural checks |
+| `scripts/audit_verify.sh` | CI shell entrypoint: fail-fast audit verification + summary |
 | `scripts/run_matrix.R` | Execute all artifacts, record PASS/FAIL |
 
 ### Test Suite (`tests/testthat/`)
