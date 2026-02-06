@@ -883,9 +883,67 @@ skill_avail_pen    # Skill position injury penalty
 trench_avail_pen   # Trench position injury penalty
 ```
 
+### Moneyline Naming Rules (Fair vs Vigged)
+
+- `blend_home_prob_shrunk`: canonical shrunk home win probability used for betting math.
+- `blend_home_ml`: fair model home moneyline computed only from shrunk probability.
+- `blend_home_ml_vig`: vigged model home moneyline computed only from `blend_home_ml`.
+- Display column `Blend Home ML (Fair, from Shrunk Prob)` maps to `blend_home_ml`.
+- Display column `Blend Home ML (Vigged, +X%)` maps to `blend_home_ml_vig`.
+
+Hard rule: probability coherence checks must use fair quantities only (`blend_home_prob_shrunk` ↔ `blend_home_ml`) and must never use vigged moneylines.
+
 ---
 
 ## Mathematical Formulas
+
+### Moneyline Conversion (Exact Forms)
+
+Probability to American moneyline:
+
+```
+ML_fair(p) =
+  -round(100 * p / (1 - p))      if p >= 0.5
+   round(100 * (1 - p) / p)      if p < 0.5
+```
+
+In this codebase, fair home model moneyline is:
+
+```
+blend_home_ml = probability_to_american(blend_home_prob_shrunk)
+```
+
+American moneyline to implied probability:
+
+```
+P_implied(ML) =
+  (-ML) / ((-ML) + 100)          if ML < 0
+   100 / (ML + 100)              if ML > 0
+```
+
+Roundtrip consistency target:
+
+```
+american_to_probability(probability_to_american(p)) ≈ p
+```
+
+### Vigged Model Moneyline (Derived from Fair ML)
+
+Vig is applied to moneyline price, not to probability coherence checks:
+
+```
+ML_vigged(ML_fair, v) =
+  -round(abs(ML_fair) * (1 + v))   if ML_fair < 0
+   round(ML_fair / (1 + v))        if ML_fair > 0
+```
+
+In this codebase:
+
+```
+blend_home_ml_vig = apply_moneyline_vig(blend_home_ml, vig)
+```
+
+`blend_home_ml_vig` is for display/comparison only and is intentionally excluded from fair-probability coherence validation.
 
 ### Brier Score
 
