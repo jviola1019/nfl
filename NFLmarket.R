@@ -43,6 +43,19 @@ suppressPackageStartupMessages({
     }
   })
   source("NFLbrier_logloss.R")
+  # Source props policy helpers if available
+  local({
+    props_config_path <- if (file.exists("sports/nfl/props/props_config.R")) {
+      "sports/nfl/props/props_config.R"
+    } else {
+      file.path(getwd(), "sports", "nfl", "props", "props_config.R")
+    }
+    if (file.exists(props_config_path)) {
+      tryCatch(source(props_config_path), error = function(e) {
+        message(sprintf("Note: Could not source props_config.R: %s", conditionMessage(e)))
+      })
+    }
+  })
   library(tidyverse)
 })
 
@@ -3809,13 +3822,6 @@ export_moneyline_comparison_html <- function(comparison_tbl,
                 locations = gt::cells_body(
                   columns = "Recommendation",
                   rows = Recommendation %in% c("OVER", "UNDER", "BET")
-                )
-              ) %>%
-              gt::tab_style(
-                style = gt::cell_fill(color = "#ef444440"),
-                locations = gt::cells_body(
-                  columns = "Recommendation",
-                  rows = Recommendation == "REVIEW"
                 )
               ) %>%
               gt::tab_source_note(

@@ -153,6 +153,75 @@ PROP_DISTRIBUTION_TD <- "negbin"       # TDs have overdispersion
 PROP_DISTRIBUTION_COUNT <- "poisson"   # Receptions/completions
 
 # =============================================================================
+# EDGE CLASSIFICATION / RECOMMENDATION POLICY
+# =============================================================================
+
+# Single source of truth for edge-quality bins
+PROP_EDGE_BIN_OK_MAX <- 0.05
+PROP_EDGE_BIN_HIGH_MAX <- 0.10
+
+# Recommendation thresholds
+PROP_MIN_BET_EDGE <- 0.02
+
+#' Validate prop row for model/runtime failures
+#'
+#' @param p_over Probability of over outcome
+#' @param p_under Probability of under outcome
+#' @param over_odds Market over odds
+#' @param under_odds Market under odds (NA allowed for one-sided markets like anytime TD)
+#' @param is_two_sided Whether both over/under odds are required
+#' @return Logical scalar
+is_prop_model_error <- function(p_over, p_under, over_odds, under_odds, is_two_sided = TRUE) {
+  probs_valid <- is.finite(p_over) && is.finite(p_under) &&
+    p_over >= 0 && p_over <= 1 && p_under >= 0 && p_under <= 1 &&
+    abs((p_over + p_under) - 1) <= 0.02
+
+  odds_valid <- is.finite(over_odds) && (!is_two_sided || is.finite(under_odds))
+
+  !(probs_valid && odds_valid)
+}
+
+#' Assign recommendation under unified prop policy
+#'
+#' @param ev_over EV for over side
+#' @param ev_under EV for under side (NA for one-sided props)
+#' @param model_error Logical indicating invalid inputs/runtime issue
+#' @return Recommendation label
+get_prop_recommendation <- function(ev_over, ev_under = NA_real_, model_error = FALSE) {
+  if (isTRUE(model_error) || !is.finite(ev_over) || (!is.na(ev_under) && !is.finite(ev_under))) {
+    return("MODEL ERROR")
+  }
+
+  edge_abs <- suppressWarnings(max(abs(c(ev_over, ev_under)), na.rm = TRUE))
+  if (!is.finite(edge_abs)) edge_abs <- abs(ev_over)
+
+  if (edge_abs > PROP_EDGE_BIN_HIGH_MAX) {
+    return("PASS")
+  }
+
+  if (is.finite(ev_over) && ev_over > PROP_MIN_BET_EDGE) return("OVER")
+  if (is.finite(ev_under) && ev_under > PROP_MIN_BET_EDGE) return("UNDER")
+  "PASS"
+}
+
+#' Classify edge quality under unified bins
+#'
+#' @param ev_over EV for over side
+#' @param ev_under EV for under side (NA for one-sided props)
+#' @param recommendation Recommendation label
+#' @return Edge quality display label
+classify_prop_edge_quality <- function(ev_over, ev_under = NA_real_, recommendation = NA_character_) {
+  if (identical(recommendation, "MODEL ERROR")) return("MODEL ERROR")
+
+  edge_abs <- suppressWarnings(max(abs(c(ev_over, ev_under)), na.rm = TRUE))
+  if (!is.finite(edge_abs)) return("MODEL ERROR")
+
+  if (edge_abs <= PROP_EDGE_BIN_OK_MAX) return("OK")
+  if (edge_abs <= PROP_EDGE_BIN_HIGH_MAX) return("High")
+  "Review"
+}
+
+# =============================================================================
 # UTILITY FUNCTIONS
 # =============================================================================
 
