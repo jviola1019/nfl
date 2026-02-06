@@ -308,3 +308,7 @@ invisible(list(
   all_pass = fail_count == 0,
   results = audit_results
 ))
+
+if (!interactive() && fail_count > 0) {
+  quit(status = 1)
+}
