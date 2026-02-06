@@ -132,6 +132,36 @@ test_that("G4: probability_to_american -> american_to_probability roundtrip is c
   }
 })
 
+test_that("G4: american_to_probability(probability_to_american(p)) ~= p", {
+  test_probs <- seq(0.05, 0.95, by = 0.05)
+
+  for (p in test_probs) {
+    p_back <- american_to_probability(probability_to_american(p))
+    expect_equal(
+      p_back,
+      p,
+      tolerance = 0.02,
+      label = sprintf("Roundtrip identity at p=%.2f", p)
+    )
+  }
+})
+
+test_that("G4: implied fair home ML probability matches shrunk home probability", {
+  shrunk_home_probs <- c(0.32, 0.45, 0.50, 0.58, 0.67, 0.81)
+
+  for (p_shrunk in shrunk_home_probs) {
+    fair_home_ml <- probability_to_american(p_shrunk)
+    implied_fair_home_prob <- american_to_probability(fair_home_ml)
+
+    expect_equal(
+      implied_fair_home_prob,
+      p_shrunk,
+      tolerance = 0.02,
+      label = sprintf("Fair ML implied probability at shrunk home p=%.2f", p_shrunk)
+    )
+  }
+})
+
 test_that("G4: roundtrip works for underdog probabilities", {
   test_probs <- c(0.20, 0.25, 0.30, 0.35)
 

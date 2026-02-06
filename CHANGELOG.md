@@ -8,6 +8,7 @@ All notable changes to the NFL Prediction Model are documented in this file.
 
 **A1: Game Table Fixes**
 - **ML ↔ Probability Consistency**: `blend_home_ml` now derived from shrunk probability (was using raw probability, causing 37.6% vs 62% display inconsistency)
+- **Explicit Fair vs Vigged Home ML Columns**: Added `Blend Home ML (Fair, from Shrunk Prob)` and `Blend Home ML (Vigged, +X%)`; fair ML is `probability_to_american(blend_home_prob_shrunk)` and vigged ML is derived from fair ML only
 - **Pass Reason Already Documented**: Verified `pass_reason` column exists (shows "Stake below minimum" or "Edge too large")
 
 **A2: Player Props Fixes**
