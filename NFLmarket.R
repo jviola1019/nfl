@@ -2651,6 +2651,92 @@ build_moneyline_comparison_table <- function(market_comparison_result,
   combined
 }
 
+
+
+moneyline_report_schema_contract <- function() {
+  tibble::tribble(
+    ~column, ~type, ~meaning,
+    "Season", "numeric", "Season identifier for the game.",
+    "Week", "numeric", "Week identifier for the game.",
+    "Date", "Date", "Game date.",
+    "Matchup", "character", "Away @ Home matchup string.",
+    "Winner", "character", "Observed winner or TBD.",
+    "Blend Pick", "character", "Model-selected side for display.",
+    "Blend Recommendation", "character", "Bet/Pass recommendation.",
+    "Pass Reason", "character", "Reason recommendation was forced to pass.",
+    "Blend Beat Market?", "character", "Outcome of blend pick vs market benchmark.",
+    "Blend Beat Market Basis", "character", "Basis used to judge blend vs market.",
+    "Raw Kelly (%)", "numeric", "Uncapped Kelly fraction for audit.",
+    "Blend Stake (Units)", "numeric", "Final capped stake in bankroll units.",
+    "EV Edge (%)", "numeric", "Expected value edge for displayed pick.",
+    "Total EV (Units)", "numeric", "Stake-weighted expected value.",
+    "Edge Quality", "character", "Edge quality tier label.",
+    "Blend Pick Win % (Shrunk)", "numeric", "Shrunk blend probability for picked side.",
+    "Market Pick Win % (Devig)", "numeric", "Market fair probability for picked side.",
+    "Prob Edge on Pick (pp)", "numeric", "Blend minus market probability gap.",
+    "Blend Home Win % (Shrunk)", "numeric", "Shrunk blend home win probability.",
+    "Market Home Win % (Fair, Devig=proportional)", "numeric", "Devigged market home win probability using proportional method.",
+    "ML Implied Home % (Raw)", "numeric", "Raw implied home win probability from moneyline odds.",
+    "Blend Median Margin", "numeric", "Blend median expected home margin.",
+    "Market Home Spread", "numeric", "Market home spread line.",
+    "Blend Total", "numeric", "Blend median total points.",
+    "Market Total", "numeric", "Market total points line.",
+    "Total O/U", "character", "Over/Under lean from blend vs market total.",
+    "Market Home Moneyline", "numeric", "Market home moneyline.",
+    "Market Away Moneyline", "numeric", "Market away moneyline.",
+    "Blend Home Moneyline", "numeric", "Blend home moneyline after vig adjustment.",
+    "Blend Away Moneyline", "numeric", "Blend away moneyline after vig adjustment."
+  )
+}
+
+validate_moneyline_report_schema <- function(tbl, strict = TRUE) {
+  schema <- moneyline_report_schema_contract()
+  expected_cols <- schema$column
+
+  missing_cols <- setdiff(expected_cols, names(tbl))
+  if (length(missing_cols)) {
+    stop(sprintf(
+      "Moneyline report schema violation: missing columns: %s",
+      paste(missing_cols, collapse = ", ")
+    ), call. = FALSE)
+  }
+
+  if (isTRUE(strict)) {
+    unexpected_cols <- setdiff(names(tbl), expected_cols)
+    if (length(unexpected_cols)) {
+      stop(sprintf(
+        "Moneyline report schema violation: unexpected columns: %s",
+        paste(unexpected_cols, collapse = ", ")
+      ), call. = FALSE)
+    }
+  }
+
+  for (i in seq_len(nrow(schema))) {
+    col_name <- schema$column[[i]]
+    expected_type <- schema$type[[i]]
+    values <- tbl[[col_name]]
+
+    type_ok <- switch(
+      expected_type,
+      numeric = is.numeric(values),
+      character = is.character(values),
+      Date = inherits(values, "Date"),
+      logical = is.logical(values),
+      FALSE
+    )
+
+    if (!isTRUE(type_ok)) {
+      actual_type <- paste(class(values), collapse = "/")
+      stop(sprintf(
+        "Moneyline report schema violation: column '%s' expected type '%s' but got '%s'.",
+        col_name, expected_type, actual_type
+      ), call. = FALSE)
+    }
+  }
+
+  invisible(tbl)
+}
+
 export_moneyline_comparison_html <- function(comparison_tbl,
                                              file = NULL,
                                              title = "Blend vs Market Moneylines",

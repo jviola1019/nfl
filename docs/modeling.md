@@ -4,6 +4,12 @@ This document is the comprehensive mathematical reference for the NFL prediction
 
 ---
 
+## Report Rendering Authority
+
+HTML/report rendering is intentionally centralized in `NFLmarket.R` (`moneyline_report()` and `export_moneyline_comparison_html()`). `NFLsimulation.R` is limited to simulation/backtest generation and preparing report inputs; it does not own a separate HTML export path.
+
+---
+
 ## 1. Shrinkage
 
 Market shrinkage blends the raw model probability toward the market-implied probability to account for NFL market efficiency.
