@@ -8380,49 +8380,12 @@ if (exists("cmp_blend") && !is.null(cmp_blend)) {
   }
 }
 
-if (!is.null(primary_report_tbl) && nrow(primary_report_tbl)) {
-  export_tbl <- primary_report_tbl
-  skip_export <- FALSE
-
-  if (exists("SEASON", inherits = TRUE) && exists("WEEK_TO_SIM", inherits = TRUE) &&
-      all(c("season", "week") %in% names(export_tbl))) {
-    filtered_export <- dplyr::filter(export_tbl, .data$season == SEASON, .data$week == WEEK_TO_SIM)
-    if (nrow(filtered_export)) {
-      export_tbl <- filtered_export
-    } else {
-      message("Moneyline comparison HTML skipped because no rows matched the current season/week filter.")
-      skip_export <- TRUE
-    }
-  }
-
-  # v2.9.2: Skip initial HTML export if props will be generated (run_week.R will regenerate with props)
-  props_will_run <- exists("RUN_PLAYER_PROPS", inherits = TRUE) &&
-                    isTRUE(RUN_PLAYER_PROPS) &&
-                    file.exists(file.path(getwd(), "R", "correlated_props.R"))
-
-  if (props_will_run) {
-    message("ℹ HTML export deferred - will include player props (RUN_PLAYER_PROPS = TRUE)")
-    skip_export <- TRUE
-  }
-
-  if (!skip_export && nrow(export_tbl)) {
-    report_title <- sprintf("Blend vs Market Moneylines - Week %s, %s", WEEK_TO_SIM, SEASON)
-    report_path <- export_moneyline_comparison_html(
-      comparison_tbl = export_tbl,
-      title = report_title,
-      verbose = TRUE,
-      auto_open = FALSE,
-      season = SEASON,
-      week = WEEK_TO_SIM
-    )
-  } else if (!skip_export) {
-    message("Moneyline comparison HTML skipped because the filtered table was empty.")
-  }
+# HTML rendering authority is centralized in NFLmarket.R::moneyline_report().
+if (is.null(primary_report_tbl) || !nrow(primary_report_tbl)) {
+  message("Moneyline comparison preview table unavailable; final moneyline_report() call may skip HTML output.")
 } else {
-  message("Moneyline comparison HTML skipped because no report table was available.")
+  message("Moneyline comparison preview prepared; deferring HTML export to moneyline_report().")
 }
-
-
 
 # ============================== INTERACTIVE SLATE TABLE (reactable) =============================
 pretty_df <- final |>
