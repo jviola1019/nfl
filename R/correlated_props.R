@@ -561,7 +561,8 @@ run_game_props <- function(game_sim, home_team, away_team, season,
             ev_under <- p_under * (dec_under - 1) - (1 - p_under)
 
             # Recommendation with model error detection
-            rec <- if (abs(ev_over) > 0.20 || abs(ev_under) > 0.20) "REVIEW" else if (ev_over > 0.02) "OVER" else if (ev_under > 0.02) "UNDER" else "PASS"
+            model_error <- is_prop_model_error(p_over, p_under, over_odds, under_odds, is_two_sided = TRUE)
+            rec <- get_prop_recommendation(ev_over, ev_under, model_error = model_error)
 
             results_list[[length(results_list) + 1]] <- tibble::tibble(
               player = qb_name,
@@ -642,7 +643,8 @@ run_game_props <- function(game_sim, home_team, away_team, season,
             ev_over <- p_over * (dec_over - 1) - (1 - p_over)
             ev_under <- p_under * (dec_under - 1) - (1 - p_under)
 
-            rec <- if (abs(ev_over) > 0.20 || abs(ev_under) > 0.20) "REVIEW" else if (ev_over > 0.02) "OVER" else if (ev_under > 0.02) "UNDER" else "PASS"
+            model_error <- is_prop_model_error(p_over, p_under, over_odds, under_odds, is_two_sided = TRUE)
+            rec <- get_prop_recommendation(ev_over, ev_under, model_error = model_error)
 
             results_list[[length(results_list) + 1]] <- tibble::tibble(
               player = pl_name,
@@ -724,7 +726,8 @@ run_game_props <- function(game_sim, home_team, away_team, season,
             ev_over <- p_over * (dec_over - 1) - (1 - p_over)
             ev_under <- p_under * (dec_under - 1) - (1 - p_under)
 
-            rec <- if (abs(ev_over) > 0.20 || abs(ev_under) > 0.20) "REVIEW" else if (ev_over > 0.02) "OVER" else if (ev_under > 0.02) "UNDER" else "PASS"
+            model_error <- is_prop_model_error(p_over, p_under, over_odds, under_odds, is_two_sided = TRUE)
+            rec <- get_prop_recommendation(ev_over, ev_under, model_error = model_error)
 
             results_list[[length(results_list) + 1]] <- tibble::tibble(
               player = pl_name,
@@ -819,7 +822,8 @@ run_game_props <- function(game_sim, home_team, away_team, season,
             dec_odds <- if (anytime_odds >= 0) 1 + anytime_odds/100 else 1 + 100/abs(anytime_odds)
             ev_anytime <- p_anytime * (dec_odds - 1) - (1 - p_anytime)
 
-            rec <- if (abs(ev_anytime) > 0.20) "REVIEW" else if (ev_anytime > 0.02) "BET" else "PASS"
+            model_error <- is_prop_model_error(p_anytime, 1 - p_anytime, anytime_odds, NA_real_, is_two_sided = FALSE)
+            rec <- if (isTRUE(model_error)) "MODEL ERROR" else if (abs(ev_anytime) > PROP_EDGE_BIN_HIGH_MAX) "PASS" else if (ev_anytime > PROP_MIN_BET_EDGE) "BET" else "PASS"
 
             results_list[[length(results_list) + 1]] <- tibble::tibble(
               player = pl_name,
@@ -959,27 +963,15 @@ run_correlated_props <- function(game_sim_results, schedule_data = NULL,
     # For TD props, ev_over contains the ev_anytime value (set at line 836)
     results <- results %>%
       dplyr::mutate(
-        # Get the relevant EV for classification (ev_over for both yard props and TDs)
         .ev_for_quality = dplyr::coalesce(pmax(ev_over, ev_under, na.rm = TRUE), ev_over),
         edge_quality = dplyr::case_when(
-          # Handle missing EV
-          is.na(.ev_for_quality) ~ "N/A",
-          # Pass recommendations get Pass quality
           recommendation == "PASS" ~ "Pass",
-          # TD props: use higher thresholds (long odds = higher natural EV variance)
-          prop_type == "anytime_td" & abs(.ev_for_quality) <= 0.10 ~ "OK",
-          prop_type == "anytime_td" & abs(.ev_for_quality) <= 0.25 ~ "Caution",
-          prop_type == "anytime_td" & abs(.ev_for_quality) <= 0.50 ~ "High",
-          prop_type == "anytime_td" ~ "Review",  # Very high EV for TD
-          # Yard props: standard thresholds
-          abs(.ev_for_quality) <= 0.05 ~ "OK",
-          abs(.ev_for_quality) <= 0.10 ~ "Caution",
-          abs(.ev_for_quality) <= 0.20 ~ "High",
-          TRUE ~ "Review"  # Changed from MODEL ERROR - flag for review, not error
+          TRUE ~ classify_prop_edge_quality(ev_over, ev_under, recommendation)
         ),
         # Document why positive EV can still show PASS (2% minimum edge threshold)
         edge_note = dplyr::case_when(
-          recommendation == "PASS" & !is.na(.ev_for_quality) & .ev_for_quality > 0 & .ev_for_quality <= 0.02 ~ "Edge < 2%",
+          recommendation == "PASS" & !is.na(.ev_for_quality) & .ev_for_quality > 0 & .ev_for_quality <= PROP_MIN_BET_EDGE ~ "Edge < 2%",
+          recommendation == "PASS" & !is.na(.ev_for_quality) & .ev_for_quality > PROP_EDGE_BIN_HIGH_MAX ~ "Blocked (>10%)",
           recommendation == "PASS" & !is.na(.ev_for_quality) & .ev_for_quality <= 0 ~ "Negative EV",
           TRUE ~ ""
         )
