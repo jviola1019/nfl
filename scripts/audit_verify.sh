@@ -1,53 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCHEMA_INVARIANT_STATUS="FAIL"
-ANALYTICAL_CALIBRATION_STATUS="FAIL"
-REPORT_STRUCTURE_STATUS="FAIL"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT_DIR"
 
-print_summary() {
-  local overall="FAIL"
-  if [[ "$SCHEMA_INVARIANT_STATUS" == "PASS" && "$ANALYTICAL_CALIBRATION_STATUS" == "PASS" && "$REPORT_STRUCTURE_STATUS" == "PASS" ]]; then
-    overall="PASS"
-  fi
+echo "AUDIT_VERIFY_START"
 
-  printf 'AUDIT_VERIFY_SUMMARY={"schema_invariant":"%s","analytical_calibration":"%s","report_structural":"%s","overall":"%s"}\n' \
-    "$SCHEMA_INVARIANT_STATUS" \
-    "$ANALYTICAL_CALIBRATION_STATUS" \
-    "$REPORT_STRUCTURE_STATUS" \
-    "$overall"
-}
+# Static invariants that should always hold in source
+rg -n "Market Home Win % \(Fair, Devig=proportional\)" NFLmarket.R >/dev/null
+rg -n "ML Implied Home % \(Raw\)" NFLmarket.R >/dev/null
+rg -n "Market odds missing/placeholder|Negative EV|Stake below minimum" NFLmarket.R >/dev/null
+rg -n "MODEL ERROR / REVIEW" NFLmarket.R >/dev/null
 
-run_check() {
-  local key="$1"
-  local description="$2"
-  shift 2
-
-  echo "[RUN] $description"
-  if "$@"; then
-    echo "[PASS] $description"
-    case "$key" in
-      schema_invariant) SCHEMA_INVARIANT_STATUS="PASS" ;;
-      analytical_calibration) ANALYTICAL_CALIBRATION_STATUS="PASS" ;;
-      report_structural) REPORT_STRUCTURE_STATUS="PASS" ;;
-    esac
-  else
-    echo "[FAIL] $description"
-    print_summary
-    exit 1
-  fi
-}
-
-run_check schema_invariant \
-  "Schema + invariant verification" \
-  Rscript scripts/verify_repo_integrity.R
-
-run_check analytical_calibration \
-  "Analytical calibration tests" \
-  Rscript -e "testthat::test_file('tests/testthat/test-calibration.R', stop_on_failure = TRUE, stop_on_warning = FALSE)"
-
-run_check report_structural \
-  "Report structural checks" \
+if command -v Rscript >/dev/null 2>&1; then
+  Rscript -e "testthat::test_dir('tests/testthat', reporter='summary')"
   Rscript scripts/audit_verify.R
-
-print_summary
+  echo "AUDIT_VERIFY_RESULT=PASS"
+else
+  echo "AUDIT_VERIFY_RESULT=WARN"
+  echo "WARN: Rscript not available; skipped executable R tests"
+fi

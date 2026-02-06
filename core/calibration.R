@@ -248,3 +248,147 @@ shrink_probability <- function(model_prob, reference_prob, shrinkage = 0.5) {
   shrunk <- (1 - shrinkage) * model_prob + shrinkage * reference_prob
   clamp_probability(shrunk)
 }
+
+#' Compute calibration metrics for binary outcomes
+#'
+#' @param probs Predicted probabilities
+#' @param outcomes Binary outcomes (0/1)
+#' @param n_bins Number of bins for ECE
+#' @return Named list with brier, log_loss, ece, and n
+#' @export
+calibration_metrics <- function(probs, outcomes, n_bins = 10) {
+  probs <- clamp_probability(as.numeric(probs))
+  outcomes <- as.numeric(outcomes)
+  valid <- !is.na(probs) & !is.na(outcomes)
+
+  if (!any(valid)) {
+    return(list(brier = NA_real_, log_loss = NA_real_, ece = NA_real_, n = 0L))
+  }
+
+  probs <- probs[valid]
+  outcomes <- outcomes[valid]
+
+  list(
+    brier = mean((probs - outcomes)^2),
+    log_loss = -mean(outcomes * log(probs) + (1 - outcomes) * log(1 - probs)),
+    ece = expected_calibration_error(probs, outcomes, n_bins = n_bins),
+    n = length(probs)
+  )
+}
+
+#' Create expanding-window, time-aware cross-validation folds
+#'
+#' @param data Data frame sorted by time column (or sortable)
+#' @param time_col Column name for event time
+#' @param n_folds Number of folds
+#' @param min_train_size Minimum train rows per fold
+#' @param min_test_size Minimum test rows per fold
+#' @return List of folds with train_idx, test_idx, and cutoff metadata
+#' @export
+create_time_aware_folds <- function(data,
+                                    time_col,
+                                    n_folds = 5,
+                                    min_train_size = 200,
+                                    min_test_size = 50) {
+  if (!time_col %in% names(data)) stop("time_col missing from data")
+
+  ord <- order(data[[time_col]], na.last = NA)
+  if (length(ord) < (min_train_size + min_test_size)) {
+    stop("Not enough rows for requested temporal folds")
+  }
+
+  n <- length(ord)
+  test_block <- floor((n - min_train_size) / n_folds)
+  test_block <- max(test_block, min_test_size)
+
+  folds <- list()
+  fold_id <- 1L
+  start_test <- min_train_size + 1L
+
+  while (start_test <= (n - min_test_size + 1L) && fold_id <= n_folds) {
+    end_test <- min(start_test + test_block - 1L, n)
+    train_pos <- seq_len(start_test - 1L)
+    test_pos <- seq.int(start_test, end_test)
+
+    train_idx <- ord[train_pos]
+    test_idx <- ord[test_pos]
+
+    folds[[fold_id]] <- list(
+      fold_id = fold_id,
+      train_idx = train_idx,
+      test_idx = test_idx,
+      train_max_time = max(data[[time_col]][train_idx], na.rm = TRUE),
+      test_min_time = min(data[[time_col]][test_idx], na.rm = TRUE)
+    )
+
+    fold_id <- fold_id + 1L
+    start_test <- end_test + 1L
+  }
+
+  if (!length(folds)) stop("Unable to create valid temporal folds")
+  folds
+}
+
+#' Assert temporal leakage guards for one fold
+#'
+#' @param train_df Training partition
+#' @param test_df Testing partition
+#' @param time_col Event time column
+#' @param info_time_cols Optional columns that must not exceed train cutoff
+#' @return TRUE (invisible) if assertions pass
+#' @export
+assert_temporal_leakage_guards <- function(train_df,
+                                           test_df,
+                                           time_col,
+                                           info_time_cols = character()) {
+  train_max <- max(train_df[[time_col]], na.rm = TRUE)
+  test_min <- min(test_df[[time_col]], na.rm = TRUE)
+
+  if (!(train_max < test_min)) {
+    stop("Leakage guard failed: training window overlaps testing window")
+  }
+
+  for (col in info_time_cols) {
+    if (!col %in% names(train_df)) next
+    if (any(train_df[[col]] > train_max, na.rm = TRUE)) {
+      stop(sprintf("Leakage guard failed: '%s' contains future info in train split", col))
+    }
+  }
+
+  invisible(TRUE)
+}
+
+#' Ensure default calibration method is not materially worse than alternatives
+#'
+#' @param summary_df Summary metrics by method
+#' @param default_method Method expected to be production default
+#' @param tolerance Named numeric vector for tolerated metric degradation
+#' @return TRUE (invisible) if default method passes all tolerances
+#' @export
+assert_default_calibration_performance <- function(
+    summary_df,
+    default_method,
+    tolerance = c(brier = 0.002, log_loss = 0.005, ece = 0.01)) {
+  if (!default_method %in% summary_df$method) {
+    stop(sprintf("Default method '%s' not present in summary", default_method))
+  }
+
+  metric_names <- intersect(names(tolerance), names(summary_df))
+  default_row <- summary_df[summary_df$method == default_method, , drop = FALSE]
+
+  for (metric in metric_names) {
+    best <- min(summary_df[[metric]], na.rm = TRUE)
+    allowed <- best + tolerance[[metric]]
+    if (default_row[[metric]][1] > allowed) {
+      stop(sprintf(
+        "Default method '%s' underperforms on %s (%.6f > %.6f allowed)",
+        default_method,
+        metric,
+        default_row[[metric]][1],
+        allowed
+      ))
+    }
+  }
+
+  invisible(TRUE)
+}

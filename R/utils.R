@@ -244,6 +244,60 @@ conservative_kelly_stake <- function(prob, odds,
   stake
 }
 
+#' Apply ordered betting governance rules
+#' @param ev Expected value in units for the displayed side
+#' @param prob Win probability for the displayed side
+#' @param odds American odds for the displayed side
+#' @param min_stake Minimum allowed stake (bankroll fraction)
+#' @param kelly_fraction Fractional Kelly multiplier
+#' @param max_stake Maximum stake cap (bankroll fraction)
+#' @param is_placeholder_odds Optional logical flag for placeholder odds rows
+#' @return Tibble with governance decision, reasons, and stake audit columns
+apply_bet_governance <- function(ev,
+                                 prob,
+                                 odds,
+                                 min_stake = 0.01,
+                                 kelly_fraction = 0.125,
+                                 max_stake = 0.02,
+                                 is_placeholder_odds = FALSE) {
+  prob <- clamp_probability(prob)
+  odds <- suppressWarnings(as.numeric(odds))
+  ev <- suppressWarnings(as.numeric(ev))
+
+  dec <- american_to_decimal(odds)
+  b <- dec - 1
+  raw_kelly <- (prob * b - (1 - prob)) / b
+  invalid_raw <- is.na(prob) | is.na(dec) | !is.finite(dec) | b <= 0 | abs(b) < 1e-6
+  raw_kelly[invalid_raw] <- NA_real_
+
+  capped_stake <- raw_kelly * kelly_fraction
+  capped_stake <- pmax(0, pmin(capped_stake, max_stake))
+  capped_stake[is.na(capped_stake) | !is.finite(capped_stake)] <- NA_real_
+
+  missing_or_placeholder <- is.na(odds) | !is.finite(odds) | odds == 0 | isTRUE(is_placeholder_odds)
+  if (length(missing_or_placeholder) == 1L && length(ev) > 1L) {
+    missing_or_placeholder <- rep(missing_or_placeholder, length(ev))
+  }
+
+  pass_reason <- dplyr::case_when(
+    missing_or_placeholder ~ "Market odds missing/placeholder",
+    !is.na(ev) & ev <= 0 ~ "Negative EV",
+    is.na(capped_stake) | capped_stake < min_stake ~ "Stake below minimum",
+    TRUE ~ ""
+  )
+
+  final_stake <- dplyr::if_else(pass_reason == "", capped_stake, 0)
+  recommendation <- dplyr::if_else(pass_reason == "", "Bet", "Pass")
+
+  tibble::tibble(
+    recommendation = recommendation,
+    raw_kelly_pct = raw_kelly,
+    capped_stake_pct = capped_stake,
+    final_stake_pct = final_stake,
+    pass_reason = pass_reason
+  )
+}
+
 # =============================================================================
 # VALIDATION METRICS
 # =============================================================================

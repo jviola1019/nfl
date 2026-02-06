@@ -72,7 +72,17 @@ cd nfl
 R -e "install.packages('renv'); renv::restore()"
 ```
 
+### Audit Verification (CI-friendly)
+
+```bash
+./scripts/audit_verify.sh
+```
+
+This fail-fast wrapper validates report schema/governance guards and, when `Rscript` is available, runs full testthat + audit verification.
+
+
 ### Run Weekly Analysis
+
 
 ```bash
 # Run for current week (uses config.R defaults)
@@ -84,6 +94,7 @@ Rscript run_week.R 15 2024   # Week 15, 2024 season
 ```
 
 The script generates a unified HTML report with:
+- **Report Authority**: `NFLmarket.R::moneyline_report()` is the sole HTML rendering/export path; `NFLsimulation.R` only prepares inputs.
 - **Game Predictions**: Game-by-game predictions with EV analysis
 - **Player Props** (v2.9.0): Correlated with game simulation
 - **Market Comparison**: Blend vs Vegas odds
@@ -255,8 +266,8 @@ Rscript scripts/run_matrix.R  # Should show 9/9 passed
 ### Core Engine (7,800+ lines each)
 | File | Purpose |
 |------|---------|
-| `NFLsimulation.R` | Monte Carlo simulation engine (~7,800 lines) |
-| `NFLmarket.R` | Market comparison and HTML report generation (~3,900 lines) |
+| `NFLsimulation.R` | Monte Carlo simulation engine (~7,800 lines); computes probabilities and report inputs only |
+| `NFLmarket.R` | Market comparison + **sole HTML/report authority** (`moneyline_report`, `export_moneyline_comparison_html`) |
 | `NFLbrier_logloss.R` | Brier score, log loss, calibration metrics (~1,150 lines) |
 | `injury_scalp.R` | Injury data loading with fallback sources |
 
