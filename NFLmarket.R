@@ -2823,6 +2823,8 @@ export_moneyline_comparison_html <- function(comparison_tbl,
   }
 
   moneyline_cols <- c(
+    "Blend Home ML (Fair, from Shrunk Prob)",
+    "Blend Home ML (Vigged, +X%)",
     "Blend Home Moneyline (vig)",
     "Blend Away Moneyline (vig)",
     "Market Home Moneyline",
@@ -2887,7 +2889,8 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     "<tr><td><strong>Blend Pick</strong></td><td>Model favorite (* = Pass game, no positive EV)</td></tr>",
     "<tr><td><strong>Shrunk Win %</strong></td><td>Market-adjusted probability (used for EV calc)</td></tr>",
     "<tr><td><strong>Prob Edge</strong></td><td>Raw probability advantage before shrinkage (reference only)</td></tr>",
-    "<tr><td><strong>Blend Moneyline</strong></td><td>Model's implied odds for each team (compare to market for value)</td></tr>",
+    "<tr><td><strong>Blend Home ML (Fair, from Shrunk Prob)</strong></td><td>Computed exactly as probability_to_american(blend_home_prob_shrunk)</td></tr>",
+    "<tr><td><strong>Blend Home ML (Vigged, +X%)</strong></td><td>Computed from fair ML using apply_moneyline_vig(fair_ml, vig); excluded from probability coherence checks</td></tr>",
     "</table>",
     "</div>",
 
@@ -3084,6 +3087,8 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       ),
       `Market Home Moneyline` = market_home_ml,
       `Market Away Moneyline` = market_away_ml,
+      `Blend Home ML (Fair, from Shrunk Prob)` = blend_home_ml,
+      `Blend Home ML (Vigged, +X%)` = blend_home_ml_vig,
       `Blend Home Moneyline` = blend_home_ml_vig,
       `Blend Away Moneyline` = blend_away_ml_vig
     )
@@ -3167,7 +3172,11 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     )
     gt_tbl <- gt_apply_if_columns(
       gt_tbl,
-      c("Market Home Moneyline", "Market Away Moneyline", "Blend Home Moneyline", "Blend Away Moneyline"),
+      c(
+        "Market Home Moneyline", "Market Away Moneyline",
+        "Blend Home ML (Fair, from Shrunk Prob)", "Blend Home ML (Vigged, +X%)",
+        "Blend Home Moneyline", "Blend Away Moneyline"
+      ),
       gt::fmt,
       fns = function(x) format_moneyline_strings(x)
     )
