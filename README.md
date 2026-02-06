@@ -72,7 +72,17 @@ cd nfl
 R -e "install.packages('renv'); renv::restore()"
 ```
 
+### Audit Verification (CI-friendly)
+
+```bash
+./scripts/audit_verify.sh
+```
+
+This fail-fast wrapper validates report schema/governance guards and, when `Rscript` is available, runs full testthat + audit verification.
+
+
 ### Run Weekly Analysis
+
 
 ```bash
 # Run for current week (uses config.R defaults)
@@ -84,6 +94,7 @@ Rscript run_week.R 15 2024   # Week 15, 2024 season
 ```
 
 The script generates a unified HTML report with:
+- **Report Authority**: `NFLmarket.R::moneyline_report()` is the sole HTML rendering/export path; `NFLsimulation.R` only prepares inputs.
 - **Game Predictions**: Game-by-game predictions with EV analysis
 - **Player Props** (v2.9.0): Correlated with game simulation
 - **Market Comparison**: Blend vs Vegas odds
@@ -224,10 +235,22 @@ See [DOCUMENTATION.md](DOCUMENTATION.md) for complete validation methodology.
 - No predictions: Check `WEEK_TO_SIM` and `SEASON` in config.R
 - Tests fail with path errors: Ensure `tests/testthat/setup.R` exists
 
-**Verify Repository Integrity**:
+**One-command audit verification (CI entrypoint)**:
 ```bash
-Rscript scripts/verify_repo_integrity.R  # Should show 35/35 passed
-Rscript scripts/run_matrix.R             # Should show 9/9 passed
+./scripts/audit_verify.sh
+```
+
+This runs, in order:
+- Schema + invariant tests (`scripts/verify_repo_integrity.R`)
+- Analytical calibration tests (`tests/testthat/test-calibration.R`)
+- Report structural checks (`scripts/audit_verify.R`)
+
+The shell wrapper fails fast (`set -euo pipefail`) and prints a machine-readable summary line:
+`AUDIT_VERIFY_SUMMARY={"schema_invariant":"PASS|FAIL","analytical_calibration":"PASS|FAIL","report_structural":"PASS|FAIL","overall":"PASS|FAIL"}`
+
+**Additional integrity checks**:
+```bash
+Rscript scripts/run_matrix.R  # Should show 9/9 passed
 ```
 
 ---
@@ -243,8 +266,8 @@ Rscript scripts/run_matrix.R             # Should show 9/9 passed
 ### Core Engine (7,800+ lines each)
 | File | Purpose |
 |------|---------|
-| `NFLsimulation.R` | Monte Carlo simulation engine (~7,800 lines) |
-| `NFLmarket.R` | Market comparison and HTML report generation (~3,900 lines) |
+| `NFLsimulation.R` | Monte Carlo simulation engine (~7,800 lines); computes probabilities and report inputs only |
+| `NFLmarket.R` | Market comparison + **sole HTML/report authority** (`moneyline_report`, `export_moneyline_comparison_html`) |
 | `NFLbrier_logloss.R` | Brier score, log loss, calibration metrics (~1,150 lines) |
 | `injury_scalp.R` | Injury data loading with fallback sources |
 
@@ -262,6 +285,8 @@ Rscript scripts/run_matrix.R             # Should show 9/9 passed
 |------|---------|
 | `scripts/verify_repo_integrity.R` | Schema + invariant verification (35 checks) |
 | `scripts/verify_requirements.R` | Package dependency validation |
+| `scripts/audit_verify.R` | R implementation for audit structural checks |
+| `scripts/audit_verify.sh` | CI shell entrypoint: fail-fast audit verification + summary |
 | `scripts/run_matrix.R` | Execute all artifacts, record PASS/FAIL |
 
 ### Test Suite (`tests/testthat/`)

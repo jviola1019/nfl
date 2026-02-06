@@ -963,6 +963,46 @@ run_correlated_props <- function(game_sim_results, schedule_data = NULL,
     # For TD props, ev_over contains the ev_anytime value (set at line 836)
     results <- results %>%
       dplyr::mutate(
+        governance_ev = dplyr::case_when(
+          recommendation == "OVER" ~ ev_over,
+          recommendation == "UNDER" ~ ev_under,
+          recommendation == "BET" ~ ev_over,
+          TRUE ~ dplyr::coalesce(ev_over, ev_under)
+        ),
+        governance_prob = dplyr::case_when(
+          recommendation == "OVER" ~ p_over,
+          recommendation == "UNDER" ~ p_under,
+          recommendation == "BET" ~ p_over,
+          TRUE ~ p_over
+        ),
+        governance_odds = dplyr::case_when(
+          recommendation == "OVER" ~ over_odds,
+          recommendation == "UNDER" ~ under_odds,
+          recommendation == "BET" ~ over_odds,
+          TRUE ~ over_odds
+        ),
+        governance = purrr::pmap(
+          list(
+            ev = governance_ev,
+            prob = governance_prob,
+            odds = governance_odds,
+            is_placeholder_odds = is.na(governance_odds) | governance_odds == 0
+          ),
+          ~ apply_bet_governance(
+            ev = ..1,
+            prob = ..2,
+            odds = ..3,
+            min_stake = 0.01,
+            kelly_fraction = 0.125,
+            max_stake = 0.02,
+            is_placeholder_odds = ..4
+          )
+        ),
+        `Raw Kelly (%)` = purrr::map_dbl(governance, ~ .x$raw_kelly_pct[[1]]),
+        `Capped Stake (%)` = purrr::map_dbl(governance, ~ .x$capped_stake_pct[[1]]),
+        `Final Stake (%)` = purrr::map_dbl(governance, ~ .x$final_stake_pct[[1]]),
+        `Pass Reason` = purrr::map_chr(governance, ~ .x$pass_reason[[1]]),
+        # Get the relevant EV for classification (ev_over for both yard props and TDs)
         .ev_for_quality = dplyr::coalesce(pmax(ev_over, ev_under, na.rm = TRUE), ev_over),
         edge_quality = dplyr::case_when(
           recommendation == "PASS" ~ "Pass",
@@ -976,7 +1016,7 @@ run_correlated_props <- function(game_sim_results, schedule_data = NULL,
           TRUE ~ ""
         )
       ) %>%
-      dplyr::select(-.ev_for_quality)  # Remove helper column
+      dplyr::select(-.ev_for_quality, -governance_ev, -governance_prob, -governance_odds, -governance)  # Remove helper columns
 
     results
   } else {

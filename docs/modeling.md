@@ -4,6 +4,12 @@ This document is the comprehensive mathematical reference for the NFL prediction
 
 ---
 
+## Report Rendering Authority
+
+HTML/report rendering is intentionally centralized in `NFLmarket.R` (`moneyline_report()` and `export_moneyline_comparison_html()`). `NFLsimulation.R` is limited to simulation/backtest generation and preparing report inputs; it does not own a separate HTML export path.
+
+---
+
 ## 1. Shrinkage
 
 Market shrinkage blends the raw model probability toward the market-implied probability to account for NFL market efficiency.
@@ -312,3 +318,21 @@ Where `P(side)` is the model probability for the relevant side (over or under fo
 4. **Calibration is trained on 2022-2024 data.** The calibration function may not generalize well to seasons with significant rule changes, scoring environment shifts, or other structural breaks in NFL gameplay.
 
 5. **Margin coherence is enforced post-hoc.** The function `harmonize_home_margin` reconciles cases where the raw simulation margin and the shrunk win probability disagree. In rare edge cases, these two quantities legitimately diverge, and the post-hoc adjustment may mask that signal.
+
+
+## 10. Ambiguity Handling and Column Contracts
+
+To prevent report ambiguity, the game table now distinguishes between raw implied and vig-free market probabilities:
+
+- `ML Implied Home % (Raw)` = implied probability directly from market home moneyline.
+- `Market Home Win % (Fair, Devig=proportional)` = vig-free probability from proportional devig.
+
+Recommendation governance is deterministic and ordered:
+
+1. Missing market odds -> `PASS` with reason `Market odds missing/placeholder`
+2. Non-positive EV -> `PASS` with reason `Negative EV`
+3. Positive EV but stake below threshold -> `PASS` with reason `Stake below minimum`
+4. Otherwise -> bet recommendation
+
+For props, entries above governance bounds are labeled `MODEL ERROR / REVIEW` (review gate), not a runtime/model crash indicator by itself.
+
