@@ -3076,6 +3076,8 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       # Professional models never recommend bets with >15% perceived edge - market is too efficient
       effective_recommendation = dplyr::case_when(
         blend_recommendation %in% c("Pass", "No Play") ~ blend_recommendation,
+        is.na(market_home_ml) | is.na(market_away_ml) ~ "Pass",
+        !is.na(display_ev) & display_ev <= 0 ~ "Pass",
         is.na(blend_confidence) | blend_confidence < MIN_STAKE_THRESHOLD ~ "Pass",
         # Auto-pass implausible edges (>15% EV is not realistic in efficient markets)
         !is.na(display_ev) & display_ev > 0.15 ~ "Pass",
@@ -3089,9 +3091,11 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       ),
       # Show reason when EV is overridden to Pass
       pass_reason = dplyr::case_when(
-        effective_recommendation == blend_recommendation ~ "",
+        is.na(market_home_ml) | is.na(market_away_ml) ~ "Market odds missing/placeholder",
+        !is.na(display_ev) & display_ev <= 0 ~ "Negative EV",
         !is.na(display_ev) & display_ev > 0.15 ~ "Edge too large (>15%)",
         is.na(blend_confidence) | blend_confidence < MIN_STAKE_THRESHOLD ~ "Stake below minimum",
+        effective_recommendation %in% c("Pass", "No Play") ~ "Governance pass",
         TRUE ~ ""
       )
     ) %>%
@@ -3128,7 +3132,7 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       # For Bet games: the positive EV side
       # For Pass games: the favorite's EV (matches displayed team with *)
       # Cap at 10% maximum - anything higher is implausible in efficient markets
-      `EV Edge (%)` = pmin(display_ev, 0.10),
+      `EV Edge (%)` = display_ev,
       # Total EV: 0 for Pass (no bet = no EV), stake × EV for Bet
       `Total EV (Units)` = dplyr::case_when(
         effective_recommendation %in% c("Pass", "No Play") ~ 0,
@@ -3139,12 +3143,11 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       # Incorporate effective_recommendation to show Pass for auto-passed games
       `Edge Quality` = dplyr::case_when(
         is.na(display_ev) ~ "N/A",
-        effective_recommendation %in% c("Pass", "No Play") & display_ev > 0.10 ~ "Pass (capped)",
         effective_recommendation %in% c("Pass", "No Play") ~ "Pass",
-        pmin(display_ev, 0.10) <= 0 ~ "Pass",
-        pmin(display_ev, 0.10) <= 0.05 ~ "✓ OK",
-        pmin(display_ev, 0.10) <= 0.10 ~ "⚠ High",
-        TRUE ~ "⚠ High"
+        display_ev <= 0 ~ "Pass",
+        display_ev <= 0.05 ~ "✓ OK",
+        display_ev <= 0.10 ~ "⚠ High",
+        TRUE ~ "MODEL ERROR / REVIEW"
       ),
       # Pick-side probabilities - SHRUNK values (matches EV calculation)
       # This ensures: displayed_prob × decimal_odds - 1 ≈ displayed_EV
@@ -3174,8 +3177,18 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       `Blend Away Moneyline` = blend_away_ml_vig
     )
 
-  # Enforce a single schema contract before any rendering/formatting step.
-  validate_moneyline_report_schema(display_tbl)
+  # === FINAL TYPE VALIDATION ===
+  # Verify all probability columns are numeric (fail early if contaminated)
+  prob_cols <- c("Blend Pick Win % (Shrunk)", "Market Pick Win % (Devig)", "Prob Edge on Pick (pp)",
+                 "Blend Home Win % (Shrunk)", "Market Home Win % (Fair, Devig=proportional)", "ML Implied Home % (Raw)")
+  for (col in prob_cols) {
+    if (col %in% names(display_tbl)) {
+      if (!is.numeric(display_tbl[[col]])) {
+        warning(sprintf("COLUMN TYPE ERROR: '%s' contains non-numeric values", col))
+        display_tbl[[col]] <- as.numeric(display_tbl[[col]])
+      }
+    }
+  }
 
   saved <- FALSE
 
@@ -3740,16 +3753,19 @@ export_moneyline_comparison_html <- function(comparison_tbl,
               `EV Under` = dplyr::if_else(
                 is.na(ev_under), "-", sprintf("%+.1f%%", ev_under * 100)
               ),
+              max_abs_ev = pmax(abs(ev_over), abs(ev_under), na.rm = TRUE),
+              max_abs_ev = dplyr::if_else(is.infinite(max_abs_ev), NA_real_, max_abs_ev),
               `Edge Quality` = dplyr::case_when(
                 recommendation == "PASS" ~ "Pass",
-                recommendation == "REVIEW" ~ "MODEL ERROR",
-                pmax(abs(ev_over), abs(ev_under), na.rm = TRUE) <= 0.05 ~ "OK",
-                pmax(abs(ev_over), abs(ev_under), na.rm = TRUE) <= 0.10 ~ "Caution",
-                pmax(abs(ev_over), abs(ev_under), na.rm = TRUE) <= 0.20 ~ "High",
-                TRUE ~ "MODEL ERROR"
+                recommendation == "REVIEW" ~ "MODEL ERROR / REVIEW",
+                is.na(max_abs_ev) ~ "N/A",
+                max_abs_ev <= 0.05 ~ "✓ OK",
+                max_abs_ev <= 0.10 ~ "⚠ High",
+                TRUE ~ "MODEL ERROR / REVIEW"
               ),
               Recommendation = recommendation
-            )
+            ) %>%
+            dplyr::select(-max_abs_ev)
 
           # Create props gt table
           props_gt <- tryCatch({

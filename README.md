@@ -72,7 +72,17 @@ cd nfl
 R -e "install.packages('renv'); renv::restore()"
 ```
 
+### Audit Verification (CI-friendly)
+
+```bash
+./scripts/audit_verify.sh
+```
+
+This fail-fast wrapper validates report schema/governance guards and, when `Rscript` is available, runs full testthat + audit verification.
+
+
 ### Run Weekly Analysis
+
 
 ```bash
 # Run for current week (uses config.R defaults)
