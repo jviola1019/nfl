@@ -61,6 +61,20 @@ jobs:
           }
         shell: Rscript {0}
 
+
+      - name: Parse NFL props modules
+        run: |
+          props_files <- list.files("sports/nfl/props", pattern = "\\.R$", full.names = TRUE)
+          stopifnot(length(props_files) > 0)
+
+          for (f in props_files) {
+            parse(file = f)
+            message(sprintf("✓ parsed %s", f))
+          }
+
+          message("\n✓ All NFL props modules parsed successfully!")
+        shell: Rscript {0}
+
       - name: Source main files (smoke test)
         run: |
           # Try sourcing the main analysis files

@@ -3,7 +3,7 @@
 # PURPOSE: NFL player touchdown prop simulation
 #
 # VERSION: 2.8.0
-# LAST UPDATED: 2026-02-03
+# LAST UPDATED: 2026-02-06
 #
 # DESCRIPTION:
 #   Simulates player touchdown probabilities using Negative Binomial distribution
@@ -257,6 +257,7 @@ analyze_touchdown_prop <- function(
   opp_scoring_def_rank,
   is_home = FALSE,
   game_script = 0,
+  # Keep this formal unique; duplicate names break parsing at load time.
   anytime_odds = 100,
   first_td_odds = 1500
 ) {

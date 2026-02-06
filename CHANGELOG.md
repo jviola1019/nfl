@@ -2,6 +2,14 @@
 
 All notable changes to the NFL Prediction Model are documented in this file.
 
+## [2.9.4] - 2026-02-06
+
+### Critical Parser Fix
+
+- Fixed a blocking parser bug in `sports/nfl/props/touchdowns.R` caused by a duplicated `anytime_odds` formal parameter.
+- Added regression coverage to parse/source every NFL props module in tests.
+- Added a dedicated CI step that runs `parse(file=...)` across all `sports/nfl/props/*.R` files to catch syntax regressions early.
+
 ## [2.9.3] - 2026-02-05
 
 ### Forensic Audit Fixes
