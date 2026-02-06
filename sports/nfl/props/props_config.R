@@ -97,6 +97,24 @@ TD_OVERDISPERSION <- 1.5           # Negative binomial overdispersion
 RED_ZONE_BOOST <- 1.3              # Multiplier for high red zone usage
 
 # =============================================================================
+# ANYTIME TD MARKET ODDS DEFAULTS (v2.9.2)
+# =============================================================================
+# Position-based default odds when API unavailable
+# Based on typical sportsbook lines (2023-2024 analysis)
+
+# Default anytime TD odds by position (American format)
+# These reflect realistic market pricing, not +100 for everyone
+ANYTIME_TD_ODDS_QB <- 350          # QBs score in ~15% of games
+ANYTIME_TD_ODDS_RB1 <- -110        # RB1s score in ~45% of games
+ANYTIME_TD_ODDS_RB2 <- 200         # RB2s score in ~25% of games
+ANYTIME_TD_ODDS_WR1 <- 140         # WR1s score in ~35% of games
+ANYTIME_TD_ODDS_WR2 <- 250         # WR2s score in ~20% of games
+ANYTIME_TD_ODDS_TE <- 200          # TE1s score in ~25% of games
+
+# Default yard prop odds (industry standard)
+DEFAULT_YARD_PROP_ODDS <- -110     # Standard -110 both sides
+
+# =============================================================================
 # RECEPTIONS PARAMETERS
 # =============================================================================
 

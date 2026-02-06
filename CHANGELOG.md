@@ -2,6 +2,70 @@
 
 All notable changes to the NFL Prediction Model are documented in this file.
 
+## [2.9.3] - 2026-02-05
+
+### Forensic Audit Fixes
+
+**A1: Game Table Fixes**
+- **ML ↔ Probability Consistency**: `blend_home_ml` now derived from shrunk probability (was using raw probability, causing 37.6% vs 62% display inconsistency)
+- **Pass Reason Already Documented**: Verified `pass_reason` column exists (shows "Stake below minimum" or "Edge too large")
+
+**A2: Player Props Fixes**
+- **Config Variable Names**: Fixed `DEFAULT_YARD_ODDS` → `DEFAULT_YARD_PROP_ODDS` (6 occurrences in `R/correlated_props.R`)
+- **TD Edge Quality Thresholds**: TD props now use appropriate thresholds (10/25/50%) since long odds naturally produce higher EV variance
+- **TD Projection Clarity**: TD props now show probability (0.35) instead of expected count (0.45)
+- **Edge Note Documentation**: Added `edge_note` column explaining why positive EV can show PASS ("Edge < 2%")
+- **Edge Quality Labels**: Changed "MODEL ERROR" to "Review" for non-PASS high-EV cases
+
+**A3: HTML Layout**
+- Confirmed no actual issues (proper conditional rendering, type guards, responsive CSS)
+
+**Verification Updates**
+- Updated `scripts/audit_verify.R` with A1/A2 specific checks
+- Version bumped to 2.9.3
+
+## [2.9.2] - 2026-02-05
+
+### Major: Real Market Prop Odds Integration
+
+**Prop Odds API (NEW)**
+- Created `R/prop_odds_api.R` for The Odds API integration
+- `load_prop_odds()` fetches real sportsbook prop lines (DraftKings, FanDuel, BetMGM, Caesars)
+- `get_market_prop_line()` returns consensus line (median across books)
+- `get_default_prop_odds()` provides position-based fallbacks when API unavailable
+- Graceful degradation: works without API key using realistic defaults
+
+**Config Additions**
+- `ODDS_API_KEY` - Environment variable for The Odds API
+- `USE_REAL_PROP_ODDS` - Toggle for API usage (TRUE by default)
+- `DEFAULT_TD_ODDS` - Position-based anytime TD odds (QB: +350, RB: -110, WR: +140, TE: +200)
+- `DEFAULT_YARD_PROP_ODDS` - Standard -110 for yard props
+
+**Fixed: P(Over) Always ~50% Bug**
+- Separated **market line** (from API or baseline*0.95) from **model projection** (simulation median)
+- P(Over) now calculated against market line, not simulation median
+- Variance in P(Over) across players reflects actual model edge
+
+**New Props Display Columns**
+- `Projection` - Model's median prediction
+- `P(Under)` - Probability of going under the line
+- `Over Odds` / `Under Odds` - Market or default odds displayed
+- `EV Over` / `EV Under` - Both sides shown (was only EV Over)
+
+**Position-Based TD Odds**
+- QBs: +350 (score ~15% of games)
+- RBs: -110 (score ~45% of games)
+- WRs: +140 (score ~35% of games)
+- TEs: +200 (score ~25% of games)
+
+**HTML Output Deduplication**
+- HTML report now generated ONCE after all data (including props) is ready
+- NFLsimulation.R defers export when RUN_PLAYER_PROPS = TRUE
+- Fallback export if props fail
+
+**New Verification Script**
+- Created `scripts/audit_verify.R` with comprehensive P-CHECK and T-CHECK suite
+
 ## [2.9.1] - 2026-02-05
 
 ### Critical Math Fixes (Player Props)

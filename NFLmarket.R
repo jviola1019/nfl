@@ -2168,10 +2168,6 @@ build_moneyline_comparison_table <- function(market_comparison_result,
         probability_to_american(market_away_prob),
         market_away_ml
       ),
-      blend_home_ml = probability_to_american(blend_home_prob),
-      blend_home_ml_vig = apply_moneyline_vig(blend_home_ml, vig = vig),
-      blend_away_ml = probability_to_american(blend_away_prob),
-      blend_away_ml_vig = apply_moneyline_vig(blend_away_ml, vig = vig),
 
       # ===========================================================================
       # PROFESSIONAL CALIBRATION: Shrink probabilities toward market consensus
@@ -2198,6 +2194,13 @@ build_moneyline_comparison_table <- function(market_comparison_result,
       blend_away_prob_shrunk = shrink_probability_toward_market(
         blend_away_prob, market_away_prob, shrinkage = .game_shrinkage
       ),
+
+      # Model MLs derived from SHRUNK probabilities for consistency with displayed probabilities
+      # (v2.9.3 fix: ensures ML and displayed probability match)
+      blend_home_ml = probability_to_american(blend_home_prob_shrunk),
+      blend_home_ml_vig = apply_moneyline_vig(blend_home_ml, vig = vig),
+      blend_away_ml = probability_to_american(blend_away_prob_shrunk),
+      blend_away_ml_vig = apply_moneyline_vig(blend_away_ml, vig = vig),
 
       # Raw probability edge (for display - shows model's raw view)
       blend_edge_prob_home = blend_home_prob - market_home_prob,
@@ -3624,12 +3627,20 @@ export_moneyline_comparison_html <- function(comparison_tbl,
           )
 
           # Format props for display
+          # Helper to format American odds
+          format_odds <- function(x) {
+            dplyr::case_when(
+              is.na(x) ~ "-",
+              x >= 0 ~ sprintf("+%d", round(x)),
+              TRUE ~ sprintf("%d", round(x))
+            )
+          }
+
           props_display <- props_data %>%
             dplyr::transmute(
               Player = player,
               Position = position,
               Team = team,
-              Matchup = matchup,
               `Prop Type` = dplyr::case_when(
                 prop_type == "passing_yards" ~ "Passing Yards",
                 prop_type == "rushing_yards" ~ "Rushing Yards",
@@ -3639,14 +3650,20 @@ export_moneyline_comparison_html <- function(comparison_tbl,
               ),
               Line = ifelse(is.na(line), "-", as.character(line)),
               Projection = round(projection, 1),
+              `Over Odds` = format_odds(over_odds),
+              `Under Odds` = format_odds(under_odds),
               `P(Over)` = sprintf("%.1f%%", p_over * 100),
-              `EV Over` = sprintf("%.1f%%", ev_over * 100),
+              `P(Under)` = sprintf("%.1f%%", p_under * 100),
+              `EV Over` = sprintf("%+.1f%%", ev_over * 100),
+              `EV Under` = dplyr::if_else(
+                is.na(ev_under), "-", sprintf("%+.1f%%", ev_under * 100)
+              ),
               `Edge Quality` = dplyr::case_when(
                 recommendation == "PASS" ~ "Pass",
                 recommendation == "REVIEW" ~ "MODEL ERROR",
-                pmax(ev_over, ev_under, na.rm = TRUE) <= 0.05 ~ "OK",
-                pmax(ev_over, ev_under, na.rm = TRUE) <= 0.10 ~ "Caution",
-                pmax(ev_over, ev_under, na.rm = TRUE) <= 0.20 ~ "High",
+                pmax(abs(ev_over), abs(ev_under), na.rm = TRUE) <= 0.05 ~ "OK",
+                pmax(abs(ev_over), abs(ev_under), na.rm = TRUE) <= 0.10 ~ "Caution",
+                pmax(abs(ev_over), abs(ev_under), na.rm = TRUE) <= 0.20 ~ "High",
                 TRUE ~ "MODEL ERROR"
               ),
               Recommendation = recommendation

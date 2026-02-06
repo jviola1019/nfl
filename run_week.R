@@ -162,12 +162,51 @@ tryCatch({
           }
         } else {
           message("No player props were generated (possibly missing player data)")
+          # v2.9.2: Generate HTML without props as fallback
+          .props_failed <- TRUE
         }
       } else {
         message("Simulation results not available for props correlation")
+        .props_failed <- TRUE
       }
     } else {
       message("correlated_props.R not found; skipping player props")
+      .props_failed <- TRUE
+    }
+
+    # v2.9.2: Fallback - generate HTML without props if props failed
+    if (exists(".props_failed") && .props_failed && !exists(".props_html_opened")) {
+      if (exists("export_moneyline_comparison_html", mode = "function") &&
+          exists("moneyline_report_inputs") && !is.null(moneyline_report_inputs)) {
+        cat("  Generating HTML report without props (props unavailable)...\n")
+        tryCatch({
+          if (exists("build_moneyline_comparison_table", mode = "function") &&
+              !is.null(moneyline_report_inputs$comparison)) {
+            report_tbl <- build_moneyline_comparison_table(
+              market_comparison_result = moneyline_report_inputs$comparison,
+              enriched_schedule = if (exists("sched")) sched else NULL,
+              join_keys = if (!is.null(moneyline_report_inputs$join_keys))
+                            moneyline_report_inputs$join_keys else c("game_id", "season", "week"),
+              vig = 0.10,
+              verbose = FALSE
+            )
+            if (nrow(report_tbl) > 0) {
+              export_moneyline_comparison_html(
+                comparison_tbl = report_tbl,
+                file = file.path(getwd(), "NFLvsmarket_report.html"),
+                title = sprintf("NFL Week %d Analysis (Season %d)", WEEK_TO_SIM, SEASON),
+                verbose = FALSE,
+                auto_open = TRUE,
+                props_data = NULL
+              )
+              cat("  HTML report generated (without props).\n")
+              .props_html_opened <- TRUE
+            }
+          }
+        }, error = function(e) {
+          message(sprintf("  Could not generate HTML: %s", e$message))
+        })
+      }
     }
   }
 

@@ -8395,6 +8395,16 @@ if (!is.null(primary_report_tbl) && nrow(primary_report_tbl)) {
     }
   }
 
+  # v2.9.2: Skip initial HTML export if props will be generated (run_week.R will regenerate with props)
+  props_will_run <- exists("RUN_PLAYER_PROPS", inherits = TRUE) &&
+                    isTRUE(RUN_PLAYER_PROPS) &&
+                    file.exists(file.path(getwd(), "R", "correlated_props.R"))
+
+  if (props_will_run) {
+    message("ℹ HTML export deferred - will include player props (RUN_PLAYER_PROPS = TRUE)")
+    skip_export <- TRUE
+  }
+
   if (!skip_export && nrow(export_tbl)) {
     report_title <- sprintf("Blend vs Market Moneylines - Week %s, %s", WEEK_TO_SIM, SEASON)
     report_path <- export_moneyline_comparison_html(

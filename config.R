@@ -839,6 +839,36 @@ PROP_SAME_TEAM_CORR <- -0.15
 #' @note Makes model lines comparable to market odds
 MODEL_VIG_PCT <- 0.10
 
+# -----------------------------------------------------------------------------
+# PROP ODDS DATA SOURCE (v2.9.2)
+# -----------------------------------------------------------------------------
+
+#' @description API key for The Odds API (prop lines)
+#' @default Empty string (uses position-based defaults)
+#' @note Get free API key at https://the-odds-api.com/
+#' @usage Set via environment variable: Sys.setenv(ODDS_API_KEY = "your_key")
+ODDS_API_KEY <- Sys.getenv("ODDS_API_KEY", unset = "")
+
+#' @description Enable real market prop odds loading
+#' @default TRUE (attempts API, falls back to defaults if unavailable)
+#' @note Set FALSE to always use position-based default odds
+USE_REAL_PROP_ODDS <- TRUE
+
+#' @description Position-based default anytime TD odds (American format)
+#' @note Used when API unavailable; based on typical market ranges
+DEFAULT_TD_ODDS <- list(
+
+  QB = 350,    # QBs score in ~15% of games
+
+  RB = -110,   # RB1s score in ~45% of games
+  WR = 140,    # WR1s score in ~35% of games
+  TE = 200     # TE1s score in ~25% of games
+)
+
+#' @description Default yard prop odds (American format)
+#' @note Industry standard is -110 both sides
+DEFAULT_YARD_ODDS <- -110
+
 # =============================================================================
 # R COMPATIBILITY
 # =============================================================================

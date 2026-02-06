@@ -29,6 +29,12 @@ local({
   if (file.exists(config_path)) source(config_path, local = FALSE)
 })
 
+# Source prop odds API if available
+local({
+  api_path <- file.path(getwd(), "R", "prop_odds_api.R")
+  if (file.exists(api_path)) source(api_path, local = FALSE)
+})
+
 # =============================================================================
 # CORRELATION COEFFICIENTS
 # =============================================================================
@@ -429,7 +435,8 @@ simulate_correlated_prop <- function(baseline, sd, z_game, rho,
 #' @return Tibble with player prop projections
 #' @export
 run_game_props <- function(game_sim, home_team, away_team, season,
-                           prop_types = c("passing", "rushing", "receiving", "td")) {
+                           prop_types = c("passing", "rushing", "receiving", "td"),
+                           prop_odds_cache = NULL) {
 
   # Extract game totals from simulation
   if (is.list(game_sim) && "total" %in% names(game_sim)) {
@@ -445,6 +452,20 @@ run_game_props <- function(game_sim, home_team, away_team, season,
 
   # Convert game totals to Z-scores for copula
   z_game <- if (!is.null(game_totals)) totals_to_zscores(game_totals) else NULL
+
+  # Load prop odds from API if not provided and enabled
+  if (is.null(prop_odds_cache) && exists("USE_REAL_PROP_ODDS") && USE_REAL_PROP_ODDS) {
+    prop_odds_cache <- tryCatch({
+      if (exists("load_prop_odds", mode = "function")) {
+        load_prop_odds()
+      } else {
+        NULL
+      }
+    }, error = function(e) {
+      message(sprintf("  Prop odds API unavailable: %s", e$message))
+      NULL
+    })
+  }
 
   # Load player data
   players <- load_game_players(home_team, away_team, season)
@@ -509,15 +530,35 @@ run_game_props <- function(game_sim, home_team, away_team, season,
               distribution = "normal"
             )
 
-            # Use simulation median as the line (more robust than arbitrary 95%)
-            line <- round(median(sim_values), 0) + 0.5
+            # Model projection is the simulation median
+            projection <- round(median(sim_values), 1)
+
+            # Get market line from API or use default (baseline * 0.95)
+            market_line <- NULL
+            if (!is.null(prop_odds_cache) && exists("get_market_prop_line", mode = "function")) {
+              market_line <- get_market_prop_line(qb_name, "passing_yards", prop_odds_cache)
+            }
+
+            if (!is.null(market_line)) {
+              line <- market_line$line
+              over_odds <- market_line$over_odds
+              under_odds <- market_line$under_odds
+            } else {
+              # Fallback: use baseline * 0.95 (typical market placement)
+              line <- round(qb_passing * 0.95, 0) + 0.5
+              over_odds <- if (exists("DEFAULT_YARD_PROP_ODDS")) DEFAULT_YARD_PROP_ODDS else -110
+              under_odds <- if (exists("DEFAULT_YARD_PROP_ODDS")) DEFAULT_YARD_PROP_ODDS else -110
+            }
+
+            # P(Over/Under) based on simulation vs MARKET line
             p_over <- mean(sim_values > line)
             p_under <- mean(sim_values < line)
 
-            # Calculate EV at -110 odds
-            dec_odds <- 1 + 100/110
-            ev_over <- p_over * (dec_odds - 1) - (1 - p_over)
-            ev_under <- p_under * (dec_odds - 1) - (1 - p_under)
+            # Calculate EV using actual market odds
+            dec_over <- if (over_odds >= 0) 1 + over_odds/100 else 1 + 100/abs(over_odds)
+            dec_under <- if (under_odds >= 0) 1 + under_odds/100 else 1 + 100/abs(under_odds)
+            ev_over <- p_over * (dec_over - 1) - (1 - p_over)
+            ev_under <- p_under * (dec_under - 1) - (1 - p_under)
 
             # Recommendation with model error detection
             rec <- if (abs(ev_over) > 0.20 || abs(ev_under) > 0.20) "REVIEW" else if (ev_over > 0.02) "OVER" else if (ev_under > 0.02) "UNDER" else "PASS"
@@ -529,9 +570,11 @@ run_game_props <- function(game_sim, home_team, away_team, season,
               matchup = paste0(away_team, " @ ", home_team),
               prop_type = "passing_yards",
               line = line,
-              projection = round(mean(sim_values), 1),
+              projection = projection,
               p_over = round(p_over, 4),
               p_under = round(p_under, 4),
+              over_odds = over_odds,
+              under_odds = under_odds,
               ev_over = round(ev_over, 4),
               ev_under = round(ev_under, 4),
               recommendation = rec,
@@ -572,13 +615,32 @@ run_game_props <- function(game_sim, home_team, away_team, season,
               distribution = "normal"
             )
 
-            line <- round(median(sim_values), 0) + 0.5
+            # Model projection
+            projection <- round(median(sim_values), 1)
+
+            # Get market line from API or use default
+            market_line <- NULL
+            if (!is.null(prop_odds_cache) && exists("get_market_prop_line", mode = "function")) {
+              market_line <- get_market_prop_line(pl_name, "rushing_yards", prop_odds_cache)
+            }
+
+            if (!is.null(market_line)) {
+              line <- market_line$line
+              over_odds <- market_line$over_odds
+              under_odds <- market_line$under_odds
+            } else {
+              line <- round(pl_rushing * 0.95, 0) + 0.5
+              over_odds <- if (exists("DEFAULT_YARD_PROP_ODDS")) DEFAULT_YARD_PROP_ODDS else -110
+              under_odds <- if (exists("DEFAULT_YARD_PROP_ODDS")) DEFAULT_YARD_PROP_ODDS else -110
+            }
+
             p_over <- mean(sim_values > line)
             p_under <- mean(sim_values < line)
 
-            dec_odds <- 1 + 100/110
-            ev_over <- p_over * (dec_odds - 1) - (1 - p_over)
-            ev_under <- p_under * (dec_odds - 1) - (1 - p_under)
+            dec_over <- if (over_odds >= 0) 1 + over_odds/100 else 1 + 100/abs(over_odds)
+            dec_under <- if (under_odds >= 0) 1 + under_odds/100 else 1 + 100/abs(under_odds)
+            ev_over <- p_over * (dec_over - 1) - (1 - p_over)
+            ev_under <- p_under * (dec_under - 1) - (1 - p_under)
 
             rec <- if (abs(ev_over) > 0.20 || abs(ev_under) > 0.20) "REVIEW" else if (ev_over > 0.02) "OVER" else if (ev_under > 0.02) "UNDER" else "PASS"
 
@@ -589,9 +651,11 @@ run_game_props <- function(game_sim, home_team, away_team, season,
               matchup = paste0(away_team, " @ ", home_team),
               prop_type = "rushing_yards",
               line = line,
-              projection = round(mean(sim_values), 1),
+              projection = projection,
               p_over = round(p_over, 4),
               p_under = round(p_under, 4),
+              over_odds = over_odds,
+              under_odds = under_odds,
               ev_over = round(ev_over, 4),
               ev_under = round(ev_under, 4),
               recommendation = rec,
@@ -633,13 +697,32 @@ run_game_props <- function(game_sim, home_team, away_team, season,
               distribution = "normal"
             )
 
-            line <- round(median(sim_values), 0) + 0.5
+            # Model projection
+            projection <- round(median(sim_values), 1)
+
+            # Get market line from API or use default
+            market_line <- NULL
+            if (!is.null(prop_odds_cache) && exists("get_market_prop_line", mode = "function")) {
+              market_line <- get_market_prop_line(pl_name, "receiving_yards", prop_odds_cache)
+            }
+
+            if (!is.null(market_line)) {
+              line <- market_line$line
+              over_odds <- market_line$over_odds
+              under_odds <- market_line$under_odds
+            } else {
+              line <- round(pl_receiving * 0.95, 0) + 0.5
+              over_odds <- if (exists("DEFAULT_YARD_PROP_ODDS")) DEFAULT_YARD_PROP_ODDS else -110
+              under_odds <- if (exists("DEFAULT_YARD_PROP_ODDS")) DEFAULT_YARD_PROP_ODDS else -110
+            }
+
             p_over <- mean(sim_values > line)
             p_under <- mean(sim_values < line)
 
-            dec_odds <- 1 + 100/110
-            ev_over <- p_over * (dec_odds - 1) - (1 - p_over)
-            ev_under <- p_under * (dec_odds - 1) - (1 - p_under)
+            dec_over <- if (over_odds >= 0) 1 + over_odds/100 else 1 + 100/abs(over_odds)
+            dec_under <- if (under_odds >= 0) 1 + under_odds/100 else 1 + 100/abs(under_odds)
+            ev_over <- p_over * (dec_over - 1) - (1 - p_over)
+            ev_under <- p_under * (dec_under - 1) - (1 - p_under)
 
             rec <- if (abs(ev_over) > 0.20 || abs(ev_under) > 0.20) "REVIEW" else if (ev_over > 0.02) "OVER" else if (ev_under > 0.02) "UNDER" else "PASS"
 
@@ -650,9 +733,11 @@ run_game_props <- function(game_sim, home_team, away_team, season,
               matchup = paste0(away_team, " @ ", home_team),
               prop_type = "receiving_yards",
               line = line,
-              projection = round(mean(sim_values), 1),
+              projection = projection,
               p_over = round(p_over, 4),
               p_under = round(p_under, 4),
+              over_odds = over_odds,
+              under_odds = under_odds,
               ev_over = round(ev_over, 4),
               ev_under = round(ev_under, 4),
               recommendation = rec,
@@ -709,8 +794,29 @@ run_game_props <- function(game_sim, home_team, away_team, season,
 
             p_anytime <- mean(sim_values >= 1)
 
-            # EV at typical +100 anytime TD odds
-            dec_odds <- 2.0
+            # Get market odds for anytime TD from API or use position-based defaults
+            market_td <- NULL
+            if (!is.null(prop_odds_cache) && exists("get_market_prop_line", mode = "function")) {
+              market_td <- get_market_prop_line(pl_name, "anytime_td", prop_odds_cache)
+            }
+
+            if (!is.null(market_td)) {
+              anytime_odds <- market_td$over_odds  # Yes odds for TD
+            } else if (exists("DEFAULT_TD_ODDS") && pl_pos %in% names(DEFAULT_TD_ODDS)) {
+              anytime_odds <- DEFAULT_TD_ODDS[[pl_pos]]
+            } else {
+              # Position-based fallback
+              anytime_odds <- switch(pl_pos,
+                QB = 350,    # QBs score ~15% of games
+                RB = -110,   # RB1s score ~45% of games
+                WR = 140,    # WR1s score ~35% of games
+                TE = 200,    # TE1s score ~25% of games
+                200
+              )
+            }
+
+            # Convert to decimal
+            dec_odds <- if (anytime_odds >= 0) 1 + anytime_odds/100 else 1 + 100/abs(anytime_odds)
             ev_anytime <- p_anytime * (dec_odds - 1) - (1 - p_anytime)
 
             rec <- if (abs(ev_anytime) > 0.20) "REVIEW" else if (ev_anytime > 0.02) "BET" else "PASS"
@@ -722,9 +828,11 @@ run_game_props <- function(game_sim, home_team, away_team, season,
               matchup = paste0(away_team, " @ ", home_team),
               prop_type = "anytime_td",
               line = NA_real_,
-              projection = round(mean(sim_values), 3),
+              projection = round(p_anytime, 3),  # Probability of 1+ TD (not expected count)
               p_over = round(p_anytime, 4),
               p_under = round(1 - p_anytime, 4),
+              over_odds = anytime_odds,
+              under_odds = NA_real_,  # TD props don't have "No" odds typically
               ev_over = round(ev_anytime, 4),
               ev_under = NA_real_,
               recommendation = rec,
@@ -847,18 +955,36 @@ run_correlated_props <- function(game_sim_results, schedule_data = NULL,
     message(sprintf("\nGenerated %d player prop recommendations", nrow(results)))
 
     # Add edge quality classification
+    # Note: TD props naturally have higher EV variance due to long odds, so use different thresholds
+    # For TD props, ev_over contains the ev_anytime value (set at line 836)
     results <- results %>%
       dplyr::mutate(
+        # Get the relevant EV for classification (ev_over for both yard props and TDs)
+        .ev_for_quality = dplyr::coalesce(pmax(ev_over, ev_under, na.rm = TRUE), ev_over),
         edge_quality = dplyr::case_when(
-          is.na(ev_over) ~ "N/A",
+          # Handle missing EV
+          is.na(.ev_for_quality) ~ "N/A",
+          # Pass recommendations get Pass quality
           recommendation == "PASS" ~ "Pass",
-          recommendation == "REVIEW" ~ "MODEL ERROR",
-          pmax(ev_over, ev_under, na.rm = TRUE) <= 0.05 ~ "OK",
-          pmax(ev_over, ev_under, na.rm = TRUE) <= 0.10 ~ "Caution",
-          pmax(ev_over, ev_under, na.rm = TRUE) <= 0.20 ~ "High",
-          TRUE ~ "MODEL ERROR"
+          # TD props: use higher thresholds (long odds = higher natural EV variance)
+          prop_type == "anytime_td" & abs(.ev_for_quality) <= 0.10 ~ "OK",
+          prop_type == "anytime_td" & abs(.ev_for_quality) <= 0.25 ~ "Caution",
+          prop_type == "anytime_td" & abs(.ev_for_quality) <= 0.50 ~ "High",
+          prop_type == "anytime_td" ~ "Review",  # Very high EV for TD
+          # Yard props: standard thresholds
+          abs(.ev_for_quality) <= 0.05 ~ "OK",
+          abs(.ev_for_quality) <= 0.10 ~ "Caution",
+          abs(.ev_for_quality) <= 0.20 ~ "High",
+          TRUE ~ "Review"  # Changed from MODEL ERROR - flag for review, not error
+        ),
+        # Document why positive EV can still show PASS (2% minimum edge threshold)
+        edge_note = dplyr::case_when(
+          recommendation == "PASS" & !is.na(.ev_for_quality) & .ev_for_quality > 0 & .ev_for_quality <= 0.02 ~ "Edge < 2%",
+          recommendation == "PASS" & !is.na(.ev_for_quality) & .ev_for_quality <= 0 ~ "Negative EV",
+          TRUE ~ ""
         )
-      )
+      ) %>%
+      dplyr::select(-.ev_for_quality)  # Remove helper column
 
     results
   } else {
