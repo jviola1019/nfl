@@ -24,7 +24,8 @@
 #' @return Clamped probability
 #' @export
 clamp_probability <- function(p, eps = 1e-9) {
-  pmax(eps, pmin(1 - eps, p))
+  p <- suppressWarnings(as.numeric(p))
+  pmin(pmax(p, eps), 1 - eps)
 }
 
 #' Isotonic regression calibration
@@ -52,8 +53,11 @@ calibrate_isotonic <- function(raw_probs, outcomes, new_probs = NULL) {
   }
 
   # Apply calibration to new probabilities
-  # Use stepfun for interpolation
-  sf <- stepfun(iso_fit$x, c(iso_fit$yf[1], iso_fit$yf))
+  # Ensure monotonic x ordering for stepfun
+  ord <- order(iso_fit$x)
+  x_ord <- iso_fit$x[ord]
+  y_ord <- iso_fit$yf[ord]
+  sf <- stepfun(x_ord, c(y_ord[1], y_ord))
   calibrated <- sf(new_probs)
 
   clamp_probability(calibrated)

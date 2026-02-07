@@ -59,6 +59,13 @@ suppressPackageStartupMessages({
   library(tidyverse)
 })
 
+# Provide a no-op join signal emitter when not available from logging utilities.
+if (!exists("emit_safe_join_signal", mode = "function", inherits = TRUE)) {
+  emit_safe_join_signal <- function(message, label = NULL, severity = "inform") {
+    message(message)
+  }
+}
+
 # ------------------------------------------------------------------------------
 # Shared join-key metadata ------------------------------------------------------
 # ------------------------------------------------------------------------------
@@ -636,7 +643,8 @@ probability_to_american <- function(prob) {
   prob <- clamp_probability(prob)
   dplyr::case_when(
     is.na(prob) ~ NA_real_,
-    prob >= 0.5 ~ -round(100 * prob / (1 - prob)),
+    prob == 0.5 ~ 100,
+    prob > 0.5 ~ -round(100 * prob / (1 - prob)),
     TRUE ~ round(100 * (1 - prob) / prob)
   )
 }
@@ -2134,9 +2142,18 @@ build_moneyline_comparison_table <- function(market_comparison_result,
         market_home_spread
       ),
       market_away_prob = clamp_probability(1 - market_home_prob),
-      # Add moneyline-implied probabilities for transparency (separate from spread-derived)
-      ml_implied_home_prob = clamp_probability(american_to_probability(market_home_ml)),
-      ml_implied_away_prob = clamp_probability(american_to_probability(market_away_ml)),
+      # Raw implied probabilities from moneylines (pre-devig)
+      market_home_prob_raw = clamp_probability(american_to_probability(market_home_ml)),
+      market_away_prob_raw = clamp_probability(american_to_probability(market_away_ml)),
+      # Devig fair probabilities (proportional normalization)
+      market_home_prob_fair = devig_two_way_probabilities(market_home_prob_raw, market_away_prob_raw)$p_home,
+      market_away_prob_fair = devig_two_way_probabilities(market_home_prob_raw, market_away_prob_raw)$p_away,
+      # Use devig fair probabilities for betting math when available
+      market_home_prob = dplyr::coalesce(market_home_prob_fair, market_home_prob),
+      market_away_prob = dplyr::coalesce(market_away_prob_fair, market_away_prob),
+      # Preserve raw implied for display (separate from spread-derived)
+      ml_implied_home_prob = market_home_prob_raw,
+      ml_implied_away_prob = market_away_prob_raw,
       # Flag if market_home_prob differs significantly from moneyline-implied (spread-derived)
       prob_source = dplyr::case_when(
         is.na(market_home_ml) | !is.finite(market_home_ml) ~ "spread",
@@ -2327,19 +2344,23 @@ build_moneyline_comparison_table <- function(market_comparison_result,
       market_prob_pick = dplyr::case_when(
         blend_pick_side == "home" ~ dplyr::coalesce(
           market_home_prob,
+          market_home_prob_raw,
           american_to_probability(market_home_ml)
         ),
         blend_pick_side == "away" ~ dplyr::coalesce(
           market_away_prob,
+          market_away_prob_raw,
           american_to_probability(market_away_ml)
         ),
         # For Pass games, use market prob for blend's favorite
         blend_favorite_side == "home" ~ dplyr::coalesce(
           market_home_prob,
+          market_home_prob_raw,
           american_to_probability(market_home_ml)
         ),
         blend_favorite_side == "away" ~ dplyr::coalesce(
           market_away_prob,
+          market_away_prob_raw,
           american_to_probability(market_away_ml)
         ),
         TRUE ~ NA_real_
@@ -2680,8 +2701,12 @@ moneyline_report_schema_contract <- function() {
     "Blend Beat Market?", "character", "Outcome of blend pick vs market benchmark.",
     "Blend Beat Market Basis", "character", "Basis used to judge blend vs market.",
     "Raw Kelly (%)", "numeric", "Uncapped Kelly fraction for audit.",
+    "Capped Stake (%)", "numeric", "Capped Kelly stake after skepticism and caps.",
+    "Final Stake (%)", "numeric", "Final stake after governance (0 if Pass).",
+    "Min Stake (%)", "numeric", "Minimum stake threshold used by governance.",
     "Blend Stake (Units)", "numeric", "Final capped stake in bankroll units.",
-    "EV Edge (%)", "numeric", "Expected value edge for displayed pick.",
+    "EV Edge (Raw)", "numeric", "Expected value edge for displayed pick (uncapped).",
+    "EV Edge (Displayed, Capped)", "numeric", "Display-only EV edge capped at MAX_EDGE.",
     "Total EV (Units)", "numeric", "Stake-weighted expected value.",
     "Edge Quality", "character", "Edge quality tier label.",
     "Blend Pick Win % (Shrunk)", "numeric", "Shrunk blend probability for picked side.",
@@ -2697,8 +2722,9 @@ moneyline_report_schema_contract <- function() {
     "Total O/U", "character", "Over/Under lean from blend vs market total.",
     "Market Home Moneyline", "numeric", "Market home moneyline.",
     "Market Away Moneyline", "numeric", "Market away moneyline.",
-    "Blend Home Moneyline", "numeric", "Blend home moneyline after vig adjustment.",
-    "Blend Away Moneyline", "numeric", "Blend away moneyline after vig adjustment."
+    "Blend Home ML (Fair, from Shrunk Prob)", "numeric", "Blend home moneyline from shrunk probability.",
+    "Blend Home ML (Vigged, +X%)", "numeric", "Blend home moneyline after vig adjustment.",
+    "Blend Away Moneyline (Vigged)", "numeric", "Blend away moneyline after vig adjustment."
   )
 }
 
@@ -2924,12 +2950,9 @@ export_moneyline_comparison_html <- function(comparison_tbl,
   moneyline_cols <- c(
     "Blend Home ML (Fair, from Shrunk Prob)",
     "Blend Home ML (Vigged, +X%)",
-    "Blend Home Moneyline (vig)",
-    "Blend Away Moneyline (vig)",
+    "Blend Away Moneyline (Vigged)",
     "Market Home Moneyline",
-    "Market Away Moneyline",
-    "Blend Home Moneyline",
-    "Blend Away Moneyline"
+    "Market Away Moneyline"
   )
 
   format_signed_spread <- function(x) {
@@ -2982,15 +3005,21 @@ export_moneyline_comparison_html <- function(comparison_tbl,
 
     "<div class=\"intro-section\">",
     "<h3>Key Columns</h3>",
-    "<table class=\"metrics-table\">",
-    "<tr><td><strong>EV Edge (Raw)</strong></td><td>Expected return per unit for the displayed pick: (Shrunk Prob × Decimal Odds) - 1</td></tr><tr><td><strong>EV Edge (Displayed, Capped)</strong></td><td>Display-only cap of EV Edge (Raw) at 10% for readability; governance uses raw EV.</td></tr>",
-    "<tr><td><strong>Total EV</strong></td><td>Expected profit: Stake × EV Edge</td></tr>",
+        "<table class=\"metrics-table\">",
+    "<tr><td><strong>EV Edge (Raw)</strong></td><td>Expected return per unit for the displayed pick: (Shrunk Prob x Decimal Odds) - 1</td></tr>",
+    "<tr><td><strong>EV Edge (Displayed, Capped)</strong></td><td>Display-only cap of EV Edge (Raw) at 10% for readability; governance uses raw EV.</td></tr>",
+    "<tr><td><strong>Min Stake (%)</strong></td><td>Minimum stake threshold required to place a bet (default 1%).</td></tr>",
+    "<tr><td><strong>Final Stake (%)</strong></td><td>Kelly-based stake after caps; zero when Pass.</td></tr>",
+    "<tr><td><strong>Total EV</strong></td><td>Expected profit: Final Stake x EV Edge (Raw)</td></tr>",
     "<tr><td><strong>Blend Pick</strong></td><td>Model favorite (* = Pass game, no positive EV)</td></tr>",
-    "<tr><td><strong>Shrunk Win %</strong></td><td>Market-adjusted probability (used for EV calc)</td></tr>",
-    "<tr><td><strong>Prob Edge</strong></td><td>Raw probability advantage before shrinkage (reference only)</td></tr>",
-    "<tr><td><strong>Blend Home ML (Fair, from Shrunk Prob)</strong></td><td>Computed exactly as probability_to_american(blend_home_prob_shrunk)</td></tr>",
-    "<tr><td><strong>Blend Home ML (Vigged, +X%)</strong></td><td>Computed from fair ML using apply_moneyline_vig(fair_ml, vig); excluded from probability coherence checks</td></tr>",
+    "<tr><td><strong>Blend Pick Win % (Shrunk)</strong></td><td>Shrunk probability for the displayed pick (used for EV)</td></tr>",
+    "<tr><td><strong>Market Pick Win % (Devig)</strong></td><td>Devig market win probability for the displayed pick</td></tr>",
+    "<tr><td><strong>Market Home Win % (Fair, Devig=proportional)</strong></td><td>Vig-free market home win probability (proportional devig)</td></tr>",
+    "<tr><td><strong>ML Implied Home % (Raw)</strong></td><td>Raw implied probability from the home moneyline before devig</td></tr>",
+    "<tr><td><strong>Blend Home ML (Fair, from Shrunk Prob)</strong></td><td>Computed as probability_to_american(blend_home_prob_shrunk)</td></tr>",
+    "<tr><td><strong>Blend Home ML (Vigged, +X%)</strong></td><td>Computed from fair ML using apply_moneyline_vig(fair_ml, vig); excluded from coherence checks</td></tr>",
     "</table>",
+
     "</div>",
 
     "<div class=\"intro-section\">",
@@ -3038,6 +3067,9 @@ export_moneyline_comparison_html <- function(comparison_tbl,
 
   # Governance constants for ordered stake decisions
   MIN_STAKE_THRESHOLD <- 0.01
+  MAX_EDGE_THRESHOLD <- get0("MAX_EDGE", ifnotfound = 0.10, inherits = TRUE)
+  KELLY_FRACTION_USE <- get0("KELLY_FRACTION", ifnotfound = 0.125, inherits = TRUE)
+  MAX_STAKE_USE <- get0("MAX_STAKE", ifnotfound = 0.02, inherits = TRUE)
 
   # === TYPE GUARDS: Ensure probability columns are numeric ===
   # These guards prevent column type contamination
@@ -3064,6 +3096,13 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     }
   }
 
+  comparison_tbl <- ensure_columns_with_defaults(comparison_tbl, list(
+    market_home_prob_fair = NA_real_,
+    market_away_prob_fair = NA_real_,
+    market_home_prob_raw = NA_real_,
+    market_away_prob_raw = NA_real_
+  ))
+
   display_tbl <- comparison_tbl %>%
     dplyr::mutate(
       # Ensure all probability columns are numeric (guard against contamination)
@@ -3073,12 +3112,12 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       market_prob_pick_safe = ensure_numeric_prob(market_prob_pick),
       blend_home_prob_safe = ensure_numeric_prob(blend_home_prob),
       blend_home_prob_shrunk_safe = ensure_numeric_prob(blend_home_prob_shrunk),
-      market_home_prob_safe = ensure_numeric_prob(market_home_prob),
-      ml_implied_home_prob_safe = ensure_numeric_prob(ml_implied_home_prob),
+      market_home_prob_safe = ensure_numeric_prob(dplyr::coalesce(market_home_prob_fair, market_home_prob)),
+      ml_implied_home_prob_safe = ensure_numeric_prob(dplyr::coalesce(ml_implied_home_prob, market_home_prob_raw)),
 
       # CRITICAL FIX: For Pass games, calculate EV for the DISPLAYED pick (favorite)
       # not the best EV side, to maintain consistency between columns
-      display_ev = dplyr::case_when(
+      display_ev_raw = dplyr::case_when(
         # For Bet games (positive EV), use blend_ev_units (already correct)
         !is.na(blend_pick_side) & blend_ev_units > 0 ~ blend_ev_units,
         # For Pass games, calculate EV for the favorite (which is what we display)
@@ -3086,13 +3125,17 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         blend_favorite_side == "away" ~ expected_value_units(blend_away_prob_shrunk, market_away_ml),
         TRUE ~ blend_ev_units
       ),
+      display_ev_capped = dplyr::case_when(
+        is.na(display_ev_raw) ~ NA_real_,
+        TRUE ~ pmax(pmin(display_ev_raw, MAX_EDGE_THRESHOLD), -MAX_EDGE_THRESHOLD)
+      ),
 
       missing_market_odds = is.na(market_home_ml) | is.na(market_away_ml) |
         market_home_ml == 0 | market_away_ml == 0,
 
       governance = purrr::pmap(
         list(
-          ev = display_ev,
+          ev = display_ev_raw,
           prob = blend_prob_pick_shrunk,
           odds = market_moneyline,
           is_placeholder_odds = missing_market_odds
@@ -3102,8 +3145,9 @@ export_moneyline_comparison_html <- function(comparison_tbl,
           prob = ..2,
           odds = ..3,
           min_stake = MIN_STAKE_THRESHOLD,
-          kelly_fraction = 0.125,
-          max_stake = 0.02,
+          kelly_fraction = KELLY_FRACTION_USE,
+          max_stake = MAX_STAKE_USE,
+          max_edge = MAX_EDGE_THRESHOLD,
           is_placeholder_odds = ..4
         )
       ),
@@ -3111,27 +3155,19 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       governance_raw_kelly = purrr::map_dbl(governance, ~ .x$raw_kelly_pct[[1]]),
       governance_capped_stake = purrr::map_dbl(governance, ~ .x$capped_stake_pct[[1]]),
       governance_final_stake = purrr::map_dbl(governance, ~ .x$final_stake_pct[[1]]),
-      pass_reason = purrr::map_chr(governance, ~ .x$pass_reason[[1]]),
+      pass_reason_raw = purrr::map_chr(governance, ~ .x$pass_reason[[1]]),
       effective_recommendation = dplyr::case_when(
         blend_recommendation %in% c("Pass", "No Play") ~ blend_recommendation,
-        is.na(market_home_ml) | is.na(market_away_ml) ~ "Pass",
-        !is.na(display_ev) & display_ev <= 0 ~ "Pass",
-        is.na(blend_confidence) | blend_confidence < MIN_STAKE_THRESHOLD ~ "Pass",
-        # Auto-pass implausible edges (>15% EV is not realistic in efficient markets)
-        !is.na(display_ev) & display_ev > 0.15 ~ "Pass",
+        governance_recommendation == "Pass" ~ "Pass",
         TRUE ~ blend_recommendation
       ),
       effective_stake = dplyr::case_when(
         effective_recommendation %in% c("Pass", "No Play") ~ 0,
-        is.na(blend_confidence) ~ NA_real_,
-        TRUE ~ blend_confidence
+        TRUE ~ governance_final_stake
       ),
       # Show reason when EV is overridden to Pass
       pass_reason = dplyr::case_when(
-        is.na(market_home_ml) | is.na(market_away_ml) ~ "Market odds missing/placeholder",
-        !is.na(display_ev) & display_ev <= 0 ~ "Negative EV",
-        !is.na(display_ev) & display_ev > 0.15 ~ "Edge too large (>15%)",
-        is.na(blend_confidence) | blend_confidence < MIN_STAKE_THRESHOLD ~ "Stake below minimum",
+        effective_recommendation %in% c("Pass", "No Play") & !is.na(pass_reason_raw) & nzchar(pass_reason_raw) ~ pass_reason_raw,
         effective_recommendation %in% c("Pass", "No Play") ~ "Governance pass",
         TRUE ~ ""
       )
@@ -3164,25 +3200,27 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       `Raw Kelly (%)` = governance_raw_kelly,
       `Capped Stake (%)` = governance_capped_stake,
       `Final Stake (%)` = governance_final_stake,
+      `Min Stake (%)` = MIN_STAKE_THRESHOLD,
       `Blend Stake (Units)` = effective_stake,
       # EV Edge: Show EV for the DISPLAYED pick (consistent with Blend Pick column)
       # For Bet games: the positive EV side
       # For Pass games: the favorite's EV (matches displayed team with *)
-      # Cap at 10% maximum - anything higher is implausible in efficient markets
-      `EV Edge (%)` = display_ev,
+      # Raw EV drives governance; capped EV is display-only
+      `EV Edge (Raw)` = display_ev_raw,
+      `EV Edge (Displayed, Capped)` = display_ev_capped,
       # Total EV: 0 for Pass (no bet = no EV), stake × EV for Bet
       `Total EV (Units)` = dplyr::case_when(
         effective_recommendation %in% c("Pass", "No Play") ~ 0,
-        is.na(effective_stake) | is.na(display_ev) ~ NA_real_,
-        TRUE ~ effective_stake * display_ev
+        is.na(effective_stake) | is.na(display_ev_raw) ~ NA_real_,
+        TRUE ~ effective_stake * display_ev_raw
       ),
       # Edge Quality: driven by displayed (capped) EV only for visual flagging
       `Edge Quality` = dplyr::case_when(
-        is.na(display_ev) ~ "N/A",
+        is.na(display_ev_capped) ~ "N/A",
         effective_recommendation %in% c("Pass", "No Play") ~ "Pass",
-        display_ev <= 0 ~ "Pass",
-        display_ev <= 0.05 ~ "✓ OK",
-        display_ev <= 0.10 ~ "⚠ High",
+        display_ev_capped <= 0 ~ "Pass",
+        display_ev_capped <= 0.05 ~ "??? OK",
+        display_ev_capped < MAX_EDGE_THRESHOLD ~ "??? High",
         TRUE ~ "MODEL ERROR / REVIEW"
       ),
       # Pick-side probabilities - SHRUNK values (matches EV calculation)
@@ -3211,8 +3249,7 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       `Market Away Moneyline` = market_away_ml,
       `Blend Home ML (Fair, from Shrunk Prob)` = blend_home_ml,
       `Blend Home ML (Vigged, +X%)` = blend_home_ml_vig,
-      `Blend Home Moneyline` = blend_home_ml_vig,
-      `Blend Away Moneyline` = blend_away_ml_vig
+      `Blend Away Moneyline (Vigged)` = blend_away_ml_vig
     )
 
   # === FINAL TYPE VALIDATION ===
@@ -3253,7 +3290,8 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     gt_tbl <- gt::gt(display_tbl)
     gt_tbl <- gt_apply_if_columns(
       gt_tbl,
-      c("EV Edge (Raw)", "EV Edge (Displayed, Capped)", "Prob Edge on Pick (pp)"),
+      c("EV Edge (Raw)", "EV Edge (Displayed, Capped)", "Prob Edge on Pick (pp)",
+        "Raw Kelly (%)", "Capped Stake (%)", "Final Stake (%)", "Min Stake (%)"),
       gt::fmt_percent,
       decimals = 2
     )
@@ -3297,7 +3335,7 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       c(
         "Market Home Moneyline", "Market Away Moneyline",
         "Blend Home ML (Fair, from Shrunk Prob)", "Blend Home ML (Vigged, +X%)",
-        "Blend Home Moneyline", "Blend Away Moneyline"
+        "Blend Away Moneyline (Vigged)"
       ),
       gt::fmt,
       fns = function(x) format_moneyline_strings(x)
@@ -3368,19 +3406,42 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     # Add column spanners for better organization
     gt_tbl <- tryCatch({
       if ("tab_spanner" %in% getNamespaceExports("gt")) {
-        gt_tbl <- gt::tab_spanner(gt_tbl, label = "📅 Game Info", columns = c("Season", "Week", "Date", "Matchup"))
-        if ("Winner" %in% display_cols) {
-          gt_tbl <- gt::tab_spanner(gt_tbl, label = "🏆 Result", columns = "Winner")
+        add_spanner <- function(tbl, label, cols) {
+          cols <- intersect(cols, display_cols)
+          if (!length(cols)) return(tbl)
+          gt::tab_spanner(tbl, label = label, columns = cols)
         }
-        gt_tbl <- gt::tab_spanner(gt_tbl, label = "🎯 Blend Analysis", columns = dplyr::matches("^(Blend|EV|Total|Prob)"))
-        gt_tbl <- gt::tab_spanner(gt_tbl, label = "📊 Market Data", columns = dplyr::matches("^Market"))
+        gt_tbl <- add_spanner(gt_tbl, label = "???? Game Info", cols = c("Season", "Week", "Date", "Matchup"))
+        if ("Winner" %in% display_cols) {
+          gt_tbl <- add_spanner(gt_tbl, label = "???? Result", cols = c("Winner"))
+        }
+        gt_tbl <- add_spanner(
+          gt_tbl,
+          label = "Governance",
+          cols = c("Pass Reason", "Raw Kelly (%)", "Capped Stake (%)", "Final Stake (%)", "Min Stake (%)",
+                   "Blend Stake (Units)", "EV Edge (Raw)", "EV Edge (Displayed, Capped)", "Total EV (Units)", "Edge Quality")
+        )
+        gt_tbl <- add_spanner(
+          gt_tbl,
+          label = "???? Blend Analysis",
+          cols = c("Blend Pick", "Blend Recommendation", "Blend Beat Market?", "Blend Beat Market Basis",
+                   "Blend Pick Win % (Shrunk)", "Prob Edge on Pick (pp)", "Blend Home Win % (Shrunk)",
+                   "Blend Median Margin", "Blend Total", "Total O/U",
+                   "Blend Home ML (Fair, from Shrunk Prob)", "Blend Home ML (Vigged, +X%)", "Blend Away Moneyline (Vigged)")
+        )
+        gt_tbl <- add_spanner(
+          gt_tbl,
+          label = "???? Market Data",
+          cols = c("Market Pick Win % (Devig)", "Market Home Win % (Fair, Devig=proportional)", "ML Implied Home % (Raw)",
+                   "Market Home Spread", "Market Total", "Market Home Moneyline", "Market Away Moneyline")
+        )
       }
       gt_tbl
     }, error = function(e) gt_tbl)
 
     gt_tbl <- gt::tab_source_note(
       gt_tbl,
-      source_note = "⚠️ CALIBRATED: Playoff shrinkage 70-75% | 1/8 Kelly staking | MAX EDGE 10% | * = Pass | ✓ OK = 0-5% | ⚠ High = 5-10%"
+      source_note = "⚠️ CALIBRATED: Playoff shrinkage 70-75% | 1/8 Kelly | Max edge 10% (Review) | Min stake 1% | * = Pass | ✓ OK = 0-5% | ⚠ High = 5-10%"
     )
     gt_tbl <- gt::tab_options(
       gt_tbl,
@@ -3464,6 +3525,7 @@ export_moneyline_comparison_html <- function(comparison_tbl,
             "Pass (capped)" = "#92400e",
             "✓ OK" = "#059669",
             "⚠ High" = "#d97706",
+            "MODEL ERROR / REVIEW" = "#b91c1c",
             "N/A" = "#374151"
           )
           mapped <- palette[as.character(values)]
@@ -3515,7 +3577,8 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     if ("opt_css" %in% getNamespaceExports("gt")) {
       custom_css <- paste(
         ".gt_table { border-radius: 24px; overflow: hidden; box-shadow: 0 30px 80px rgba(0, 0, 0, 0.4); background-color: rgba(45, 42, 38, 0.9); }",
-        ".gt_table thead th { position: sticky; top: 0; z-index: 2; backdrop-filter: blur(10px); background-color: rgba(26, 24, 21, 0.95); font-size: 0.85rem; padding: 14px 10px; border-bottom: 2px solid #D97757; color: #FAF9F6; }",
+        ".gt_table thead tr.gt_col_spanners th { position: sticky; top: 0; z-index: 3; backdrop-filter: blur(10px); background-color: rgba(26, 24, 21, 0.95); font-size: 0.8rem; padding: 10px 10px; border-bottom: 1px solid #D97757; color: #FAF9F6; }",
+        ".gt_table thead tr.gt_col_headings th { position: sticky; top: 32px; z-index: 2; backdrop-filter: blur(10px); background-color: rgba(26, 24, 21, 0.95); font-size: 0.85rem; padding: 14px 10px; border-bottom: 2px solid #D97757; color: #FAF9F6; }",
         ".gt_table tbody tr:hover { background-color: rgba(217, 119, 87, 0.12); transition: all 0.2s ease; transform: scale(1.002); }",
         ".gt_table tbody td { padding: 12px 10px; font-size: 0.9rem; border-bottom: 1px solid rgba(217, 119, 87, 0.1); }",
         ".gt_table tbody td[style*='background'] { font-weight: 600; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3); }",
@@ -3588,7 +3651,10 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         ".color-chip.gray {background: #4A4640;}\n",
         # GT Table styling
         ".gt_table {border-radius: 20px; overflow: hidden; box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5); background: rgba(45, 42, 38, 0.92) !important; backdrop-filter: blur(12px);}\n",
-        ".gt_table thead th {position: sticky; top: 85px; z-index: 100; background: rgba(26, 24, 21, 0.96) !important; backdrop-filter: blur(10px); color: var(--claude-cream) !important; font-weight: 600; letter-spacing: 0.03em; border-bottom: 2px solid var(--claude-coral) !important;}\n",
+        ".gt_table thead tr.gt_col_spanners th {position: sticky; top: 85px; z-index: 110; background: rgba(26, 24, 21, 0.96) !important; backdrop-filter: blur(10px); color: var(--claude-cream) !important; font-weight: 600; letter-spacing: 0.03em; border-bottom: 1px solid var(--claude-coral) !important; font-size: 0.72rem; padding-top: 8px; padding-bottom: 8px;}
+",
+        ".gt_table thead tr.gt_col_headings th {position: sticky; top: 115px; z-index: 105; background: rgba(26, 24, 21, 0.96) !important; backdrop-filter: blur(10px); color: var(--claude-cream) !important; font-weight: 600; letter-spacing: 0.03em; border-bottom: 2px solid var(--claude-coral) !important;}
+",
         ".gt_table tbody tr {transition: all 0.2s ease;}\n",
         ".gt_table tbody tr:hover {background-color: rgba(217, 119, 87, 0.15) !important; transform: scale(1.002);}\n",
         ".gt_table tbody td {border-bottom: 1px solid rgba(217, 119, 87, 0.1) !important;}\n",
@@ -3627,8 +3693,10 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         ".props-content {margin-top: 2rem;}\n",
         ".props-content .gt_table tbody td {color: #F5F4F0 !important; font-size: 0.92rem;}\n",
         ".props-content .gt_table thead th {color: #FAF9F6 !important;}\n",
+        ".props-content .gt_table thead tr.gt_col_spanners th {position: static; top: auto;}\n",
+        ".props-content .gt_table thead tr.gt_col_headings th {position: static; top: auto;}\n",
         # Responsive adjustments
-        "@media (max-width: 768px) { body {padding-top: 100px;} .gt_table {font-size: 0.88rem;} .gt_table thead th {font-size: 0.7rem; top: 100px;} .report-intro {padding: 1.5rem; margin: 0 0.5rem 2rem;} #table-search {font-size: 0.9rem; padding: 0.85rem 1.25rem;} .filter-btn {font-size: 0.7rem; padding: 0.3rem 0.7rem;} .report-tabs {flex-direction: column;} .tab-btn {width: 100%;} }\n"
+        "@media (max-width: 768px) { body {padding-top: 100px;} .gt_table {font-size: 0.88rem;} .gt_table thead tr.gt_col_spanners th {font-size: 0.65rem; top: 100px;} .gt_table thead tr.gt_col_headings th {font-size: 0.7rem; top: 128px;} .report-intro {padding: 1.5rem; margin: 0 0.5rem 2rem;} #table-search {font-size: 0.9rem; padding: 0.85rem 1.25rem;} .filter-btn {font-size: 0.7rem; padding: 0.3rem 0.7rem;} .report-tabs {flex-direction: column;} .tab-btn {width: 100%;} }\n"
       )
 
       # ColorBends Three.js animated gradient background script
@@ -3759,6 +3827,7 @@ export_moneyline_comparison_html <- function(comparison_tbl,
             "<li><strong>TD Probability</strong> \u2194 Game Total: r = 0.40</li>",
             "</ul>",
             "<p>Props are simulated using the same game outcomes, ensuring consistent same-game correlation.</p>",
+            "<p><strong>Odds source:</strong> The Odds API when available; otherwise model-derived odds with fixed vig (see PROP_ODDS_SOURCE / ODDS_API_KEY).</p>",
             "</div>",
             "</section>"
           )
@@ -3791,23 +3860,26 @@ export_moneyline_comparison_html <- function(comparison_tbl,
               `Under Odds` = format_odds(under_odds),
               `P(Over)` = sprintf("%.1f%%", p_over * 100),
               `P(Under)` = sprintf("%.1f%%", p_under * 100),
-              `EV Over` = sprintf("%+.1f%%", ev_over * 100),
+              `EV Over` = dplyr::if_else(
+                is.na(ev_over), "-", sprintf("%+.1f%%", ev_over * 100)
+              ),
               `EV Under` = dplyr::if_else(
                 is.na(ev_under), "-", sprintf("%+.1f%%", ev_under * 100)
               ),
-              max_abs_ev = pmax(abs(ev_over), abs(ev_under), na.rm = TRUE),
-              max_abs_ev = dplyr::if_else(is.infinite(max_abs_ev), NA_real_, max_abs_ev),
-              `Edge Quality` = dplyr::case_when(
-                recommendation == "PASS" ~ "Pass",
-                recommendation == "REVIEW" ~ "MODEL ERROR / REVIEW",
-                is.na(max_abs_ev) ~ "N/A",
-                max_abs_ev <= 0.05 ~ "✓ OK",
-                max_abs_ev <= 0.10 ~ "⚠ High",
-                TRUE ~ "MODEL ERROR / REVIEW"
+              edge_quality_display = dplyr::coalesce(
+                edge_quality,
+                dplyr::case_when(
+                  recommendation == "PASS" ~ "Pass",
+                  recommendation == "REVIEW" ~ "Review",
+                  recommendation == "MODEL ERROR" ~ "MODEL ERROR",
+                  TRUE ~ "N/A"
+                )
               ),
+              `Edge Quality` = edge_quality_display,
               Recommendation = recommendation
             ) %>%
-            dplyr::select(-max_abs_ev)
+            dplyr::select(-edge_quality_display)
+
 
           # Create props gt table
           props_gt <- tryCatch({
@@ -4104,8 +4176,9 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     }
 
     # Format probability columns (updated column names with Shrunk suffix)
-    for (pcol in c("EV Edge (%)", "Prob Edge on Pick (pp)", "Blend Home Win % (Shrunk)",
-                   "Market Home Win % (Fair, Devig=proportional)", "ML Implied Home % (Raw)",
+    for (pcol in c("EV Edge (Raw)", "EV Edge (Displayed, Capped)", "Prob Edge on Pick (pp)",
+                   "Raw Kelly (%)", "Capped Stake (%)", "Final Stake (%)", "Min Stake (%)",
+                   "Blend Home Win % (Shrunk)", "Market Home Win % (Fair, Devig=proportional)", "ML Implied Home % (Raw)",
                    "Blend Pick Win % (Shrunk)", "Market Pick Win % (Devig)")) {
       formatted_tbl <- safe_percent(formatted_tbl, pcol)
     }
@@ -4150,7 +4223,7 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     }
 
     # Format moneyline columns
-    moneyline_cols_fb <- intersect(c("Market Home Moneyline", "Market Away Moneyline"), display_cols_fb)
+    moneyline_cols_fb <- intersect(c("Market Home Moneyline", "Market Away Moneyline", "Blend Home ML (Fair, from Shrunk Prob)", "Blend Home ML (Vigged, +X%)", "Blend Away Moneyline (Vigged)"), display_cols_fb)
     if (length(moneyline_cols_fb)) {
       formatted_tbl <- dplyr::mutate(
         formatted_tbl,

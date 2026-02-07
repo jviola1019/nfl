@@ -16,11 +16,15 @@ test_that("game report columns use explicit market probability semantics", {
 
 test_that("pass reasons include required deterministic governance reasons", {
   market_file <- file.path(.test_project_root, "NFLmarket.R")
-  txt <- paste(readLines(market_file, warn = FALSE), collapse = "\n")
+  utils_file <- file.path(.test_project_root, "R", "utils.R")
 
-  expect_match(txt, "Market odds missing/placeholder")
-  expect_match(txt, "Negative EV")
-  expect_match(txt, "Stake below minimum")
+  txt <- paste(readLines(market_file, warn = FALSE), collapse = "\n")
+  utils_txt <- paste(readLines(utils_file, warn = FALSE), collapse = "\n")
+  combined <- paste(txt, utils_txt, collapse = "\n")
+
+  expect_match(combined, "Market odds missing/placeholder")
+  expect_match(combined, "Negative EV")
+  expect_match(combined, "Stake below minimum")
 })
 
 test_that("props review status is not mislabeled as hard model failure only", {

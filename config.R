@@ -854,6 +854,22 @@ ODDS_API_KEY <- Sys.getenv("ODDS_API_KEY", unset = "")
 #' @note Set FALSE to always use position-based default odds
 USE_REAL_PROP_ODDS <- TRUE
 
+#' @description Prop odds source ("odds_api", "csv", or "model")
+#' @default "odds_api"
+PROP_ODDS_SOURCE <- "odds_api"
+
+#' @description Optional CSV path for prop odds (used when source = "csv")
+#' @default artifacts/prop_odds.csv
+PROP_ODDS_CSV_PATH <- file.path(getwd(), "artifacts", "prop_odds.csv")
+
+#' @description Vig (overround) applied when synthesizing odds from model probs
+#' @default 0.045 (~4.5%)
+PROP_MARKET_VIG <- 0.045
+
+#' @description Quantile used to derive fallback prop lines from simulation
+#' @default 0.50 (median)
+PROP_FALLBACK_LINE_QUANTILE <- 0.50
+
 #' @description Position-based default anytime TD odds (American format)
 #' @note Used when API unavailable; based on typical market ranges
 DEFAULT_TD_ODDS <- list(

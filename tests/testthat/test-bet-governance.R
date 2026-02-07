@@ -70,3 +70,19 @@ test_that("SEA @ NE contradiction pattern resolves deterministically", {
   expect_true(is.na(g$raw_kelly_pct))
   expect_true(is.na(g$capped_stake_pct))
 })
+
+test_that("max edge gate forces pass with explicit reason", {
+  g <- apply_bet_governance(
+    ev = 0.15,
+    prob = 0.55,
+    odds = -110,
+    min_stake = 0.01,
+    kelly_fraction = 0.125,
+    max_stake = 0.02,
+    max_edge = 0.10
+  )
+
+  expect_equal(g$recommendation, "Pass")
+  expect_equal(g$pass_reason, "Edge too large (>10%)")
+  expect_equal(g$final_stake_pct, 0)
+})

@@ -9,6 +9,9 @@ echo "AUDIT_VERIFY_START"
 # Static invariants that should always hold in source
 rg -n "Market Home Win % \(Fair, Devig=proportional\)" NFLmarket.R >/dev/null
 rg -n "ML Implied Home % \(Raw\)" NFLmarket.R >/dev/null
+rg -n "EV Edge \(Raw\)" NFLmarket.R >/dev/null
+rg -n "EV Edge \(Displayed, Capped\)" NFLmarket.R >/dev/null
+rg -n "Min Stake \(%\)" NFLmarket.R >/dev/null
 rg -n "Market odds missing/placeholder|Negative EV|Stake below minimum" NFLmarket.R >/dev/null
 rg -n "MODEL ERROR / REVIEW" NFLmarket.R >/dev/null
 

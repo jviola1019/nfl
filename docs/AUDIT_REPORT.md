@@ -9,7 +9,8 @@ This audit focused on game-table probability/odds coherence, deterministic recom
 - Governance order:
   1) missing odds -> PASS (`Market odds missing/placeholder`)
   2) EV <= 0 -> PASS (`Negative EV`)
-  3) stake < minimum -> PASS (`Stake below minimum`)
+  3) EV > max edge -> PASS (`Edge too large`)
+  4) stake < minimum -> PASS (`Stake below minimum`)
 
 Example: if `p=0.55`, odds `-110` => decimal `1.909`, EV ≈ `+0.05`.
 
@@ -17,7 +18,8 @@ Example: if `p=0.55`, odds `-110` => decimal `1.909`, EV ≈ `+0.05`.
 - `ML Implied Home % (Raw)` = direct implied probability from market home moneyline.
 - `Market Home Win % (Fair, Devig=proportional)` = `p_home_raw / (p_home_raw + p_away_raw)`.
 - `Blend Home Win % (Shrunk)` = post-shrinkage model probability.
-- `EV Edge (%)` = uncapped EV for displayed pick side.
+- `EV Edge (Raw)` = uncapped EV for displayed pick side.
+- `EV Edge (Displayed, Capped)` = display-only EV capped at MAX_EDGE.
 
 ## Interpreting Results (strictly defined; no “beat market” for TBD)
 - TBD games must be `N/A` for beat-market assessment.
@@ -43,7 +45,7 @@ Example: if `p=0.55`, odds `-110` => decimal `1.909`, EV ≈ `+0.05`.
 - Issue: review states conflated with hard model errors.
   - Evidence: REVIEW mapped to `MODEL ERROR` label.
   - Root cause: presentation mapping ambiguity.
-  - Fix: normalized to `MODEL ERROR / REVIEW` review-gate label.
+  - Fix: normalized to `REVIEW` review-gate label.
   - Verification: static guard test confirms label presence.
 
 ## AUDIT FINDINGS — GRAPHS (Issue → Evidence → Fix → Verification)

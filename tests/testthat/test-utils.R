@@ -57,6 +57,7 @@ test_that("probability_to_american inverts correctly", {
     prob_back <- american_to_probability(odds)
     expect_equal(prob_back, p, tolerance = 0.02, label = sprintf("prob=%.2f", p))
   }
+  expect_equal(probability_to_american(0.5), 100)
 })
 
 # =============================================================================

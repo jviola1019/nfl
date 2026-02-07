@@ -19,6 +19,8 @@
 local({
   props_dir <- dirname(sys.frame(1)$ofile %||% ".")
   source(file.path(props_dir, "props_config.R"))
+  api_path <- file.path(props_dir, "..", "..", "..", "R", "prop_odds_api.R")
+  if (file.exists(api_path)) source(api_path)
   source(file.path(props_dir, "passing_yards.R"))
   source(file.path(props_dir, "rushing_yards.R"))
   source(file.path(props_dir, "receiving_yards.R"))
@@ -72,6 +74,23 @@ run_player_props <- function(
   home_team <- parts[4]
 
   message(sprintf("  Season: %d, Week: %d, %s @ %s", season, week, away_team, home_team))
+
+  # Optional: load prop odds cache (API or CSV)
+  prop_odds_cache <- NULL
+  if (isTRUE(include_market_lines)) {
+    prop_odds_cache <- tryCatch({
+      if (exists("resolve_prop_odds_cache", mode = "function")) {
+        resolve_prop_odds_cache()
+      } else if (exists("load_prop_odds", mode = "function")) {
+        load_prop_odds()
+      } else {
+        NULL
+      }
+    }, error = function(e) {
+      warning(sprintf("Prop odds source unavailable: %s", e$message))
+      NULL
+    })
+  }
 
   # Load player data
   player_data <- tryCatch({
@@ -152,14 +171,27 @@ if (is.null(player_data) || nrow(player_data) == 0) {
         is_home <- qb$recent_team == home_team
         opp_def <- if (is_home) away_pass_def else home_pass_def
 
+        market_line <- NULL
+        if (!is.null(prop_odds_cache) && exists("get_market_prop_line", mode = "function")) {
+          market_line <- get_market_prop_line(
+            qb$player_name,
+            "passing_yards",
+            prop_odds_cache,
+            home_team = home_team,
+            away_team = away_team
+          )
+        }
+
         result <- analyze_passing_yards_prop(
           qb_name = qb$player_name,
           qb_avg_yards = qb$avg_passing_yards,
-          line = round(qb$avg_passing_yards * 0.95, 0) + 0.5,  # Estimate line
+          line = if (!is.null(market_line)) market_line$line else NA_real_,
           opponent = if (is_home) away_team else home_team,
           opp_pass_def_rank = opp_def,
           is_home = is_home,
-          is_dome = FALSE  # TODO: Add stadium data
+          is_dome = FALSE,  # TODO: Add stadium data
+          over_odds = if (!is.null(market_line)) market_line$over_odds else NA_real_,
+          under_odds = if (!is.null(market_line)) market_line$under_odds else NA_real_
         )
 
         results_list[[length(results_list) + 1]] <- tibble::tibble(
@@ -187,14 +219,27 @@ if (is.null(player_data) || nrow(player_data) == 0) {
         is_home <- player$recent_team == home_team
         opp_def <- if (is_home) away_rush_def else home_rush_def
 
+        market_line <- NULL
+        if (!is.null(prop_odds_cache) && exists("get_market_prop_line", mode = "function")) {
+          market_line <- get_market_prop_line(
+            player$player_name,
+            "rushing_yards",
+            prop_odds_cache,
+            home_team = home_team,
+            away_team = away_team
+          )
+        }
+
         result <- analyze_rushing_yards_prop(
           player_name = player$player_name,
           player_avg_yards = player$avg_rushing_yards,
           position = player$position,
-          line = round(player$avg_rushing_yards * 0.95, 0) + 0.5,
+          line = if (!is.null(market_line)) market_line$line else NA_real_,
           opponent = if (is_home) away_team else home_team,
           opp_rush_def_rank = opp_def,
-          is_home = is_home
+          is_home = is_home,
+          over_odds = if (!is.null(market_line)) market_line$over_odds else NA_real_,
+          under_odds = if (!is.null(market_line)) market_line$under_odds else NA_real_
         )
 
         results_list[[length(results_list) + 1]] <- tibble::tibble(
@@ -222,14 +267,27 @@ if (is.null(player_data) || nrow(player_data) == 0) {
         is_home <- player$recent_team == home_team
         opp_def <- if (is_home) away_pass_def else home_pass_def
 
+        market_line <- NULL
+        if (!is.null(prop_odds_cache) && exists("get_market_prop_line", mode = "function")) {
+          market_line <- get_market_prop_line(
+            player$player_name,
+            "receiving_yards",
+            prop_odds_cache,
+            home_team = home_team,
+            away_team = away_team
+          )
+        }
+
         result <- analyze_receiving_yards_prop(
           player_name = player$player_name,
           player_avg_yards = player$avg_receiving_yards,
           position = player$position,
-          line = round(player$avg_receiving_yards * 0.95, 0) + 0.5,
+          line = if (!is.null(market_line)) market_line$line else NA_real_,
           opponent = if (is_home) away_team else home_team,
           opp_pass_def_rank = opp_def,
-          is_home = is_home
+          is_home = is_home,
+          over_odds = if (!is.null(market_line)) market_line$over_odds else NA_real_,
+          under_odds = if (!is.null(market_line)) market_line$under_odds else NA_real_
         )
 
         results_list[[length(results_list) + 1]] <- tibble::tibble(
@@ -256,13 +314,25 @@ if (is.null(player_data) || nrow(player_data) == 0) {
         player <- skill_players[i, ]
         is_home <- player$recent_team == home_team
 
+        market_td <- NULL
+        if (!is.null(prop_odds_cache) && exists("get_market_prop_line", mode = "function")) {
+          market_td <- get_market_prop_line(
+            player$player_name,
+            "anytime_td",
+            prop_odds_cache,
+            home_team = home_team,
+            away_team = away_team
+          )
+        }
+
         result <- analyze_touchdown_prop(
           player_name = player$player_name,
           player_td_avg = player$avg_touchdowns,
           position = player$position,
           opponent = if (is_home) away_team else home_team,
           opp_scoring_def_rank = 16,  # Default - TODO: Add scoring defense data
-          is_home = is_home
+          is_home = is_home,
+          anytime_odds = if (!is.null(market_td)) market_td$over_odds else NA_real_
         )
 
         results_list[[length(results_list) + 1]] <- tibble::tibble(

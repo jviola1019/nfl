@@ -154,13 +154,21 @@ simulate_touchdowns <- function(
 #' Calculate anytime TD scorer EV
 #'
 #' @param simulation Output from simulate_touchdowns()
-#' @param anytime_odds American odds for anytime TD scorer
+#' @param anytime_odds American odds for anytime TD scorer (NA -> derived from model)
 #'
 #' @return List with probability and expected value
 #'
 #' @export
-anytime_td_scorer_ev <- function(simulation, anytime_odds = 100) {
+anytime_td_scorer_ev <- function(simulation, anytime_odds = NA_real_) {
   p_td <- simulation$p_anytime_td
+
+  # Derive odds from model probability when missing
+  if (!is.finite(anytime_odds) && exists("derive_one_way_odds_from_prob", mode = "function")) {
+    anytime_odds <- derive_one_way_odds_from_prob(
+      p_td,
+      vig = if (exists("PROP_MARKET_VIG")) PROP_MARKET_VIG else 0.045
+    )
+  }
 
   # Convert odds to decimal
   dec_odds <- if (anytime_odds >= 0) 1 + anytime_odds/100 else 1 + 100/abs(anytime_odds)
@@ -226,7 +234,7 @@ first_td_scorer_ev <- function(simulation, first_td_odds = 1500, game_players = 
 #' @param opp_scoring_def_rank Opponent scoring defense rank (1-32)
 #' @param is_home Is player's team at home?
 #' @param game_script Expected point differential
-#' @param anytime_odds American odds for anytime TD (default +100)
+#' @param anytime_odds American odds for anytime TD (NA -> derived from model)
 #' @param first_td_odds American odds for first TD (default +1500)
 #'
 #' @return List with complete analysis
@@ -258,7 +266,7 @@ analyze_touchdown_prop <- function(
   is_home = FALSE,
   game_script = 0,
   # Keep this formal unique; duplicate names break parsing at load time.
-  anytime_odds = 100,
+  anytime_odds = NA_real_,
   first_td_odds = 1500
 ) {
 

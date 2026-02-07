@@ -14,6 +14,7 @@ test_that("edge bins are centrally defined and respected", {
   expect_equal(classify_prop_edge_quality(0.04, 0.01, "OVER"), "OK")
   expect_equal(classify_prop_edge_quality(0.07, 0.01, "OVER"), "High")
   expect_equal(classify_prop_edge_quality(0.11, 0.01, "OVER"), "Review")
+  expect_equal(classify_prop_edge_quality(-0.20, 0.03, "UNDER"), "OK")
   expect_equal(classify_prop_edge_quality(NA_real_, NA_real_, "MODEL ERROR"), "MODEL ERROR")
 })
 
@@ -22,7 +23,8 @@ test_that("recommendation policy blocks >10% edges without model-error labeling"
 
   expect_equal(get_prop_recommendation(ev_over = 0.03, ev_under = 0.01, model_error = FALSE), "OVER")
   expect_equal(get_prop_recommendation(ev_over = 0.01, ev_under = 0.04, model_error = FALSE), "UNDER")
-  expect_equal(get_prop_recommendation(ev_over = 0.12, ev_under = -0.01, model_error = FALSE), "PASS")
+  expect_equal(get_prop_recommendation(ev_over = 0.052, ev_under = -0.143, model_error = FALSE), "OVER")
+  expect_equal(get_prop_recommendation(ev_over = 0.12, ev_under = -0.01, model_error = FALSE), "REVIEW")
   expect_equal(get_prop_recommendation(ev_over = 0.03, ev_under = 0.01, model_error = TRUE), "MODEL ERROR")
 })
 

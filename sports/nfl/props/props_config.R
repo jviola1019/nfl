@@ -115,6 +115,28 @@ ANYTIME_TD_ODDS_TE <- 200          # TE1s score in ~25% of games
 DEFAULT_YARD_PROP_ODDS <- -110     # Standard -110 both sides
 
 # =============================================================================
+# PROP ODDS SOURCES + FALLBACK MARKET SETTINGS
+# =============================================================================
+
+# Source selection for prop odds:
+#  - "odds_api": The Odds API (requires ODDS_API_KEY)
+#  - "csv": Local CSV file (see PROP_ODDS_CSV_PATH)
+#  - "model": Synthetic market derived from simulation distribution
+if (!exists("PROP_ODDS_SOURCE")) PROP_ODDS_SOURCE <- "odds_api"
+
+# Optional local CSV path for prop odds
+if (!exists("PROP_ODDS_CSV_PATH")) {
+  PROP_ODDS_CSV_PATH <- file.path(getwd(), "artifacts", "prop_odds.csv")
+}
+
+# Default vig (overround) used when synthesizing odds from model probabilities
+if (!exists("PROP_MARKET_VIG")) PROP_MARKET_VIG <- 0.045
+
+# Quantile used to set fallback lines from simulation distribution
+# 0.50 = median (balanced)
+if (!exists("PROP_FALLBACK_LINE_QUANTILE")) PROP_FALLBACK_LINE_QUANTILE <- 0.50
+
+# =============================================================================
 # RECEPTIONS PARAMETERS
 # =============================================================================
 
@@ -172,9 +194,10 @@ PROP_MIN_BET_EDGE <- 0.02
 #' @param is_two_sided Whether both over/under odds are required
 #' @return Logical scalar
 is_prop_model_error <- function(p_over, p_under, over_odds, under_odds, is_two_sided = TRUE) {
+  sum_probs <- p_over + p_under
   probs_valid <- is.finite(p_over) && is.finite(p_under) &&
     p_over >= 0 && p_over <= 1 && p_under >= 0 && p_under <= 1 &&
-    abs((p_over + p_under) - 1) <= 0.02
+    sum_probs <= 1.02 && sum_probs >= 0.90
 
   odds_valid <- is.finite(over_odds) && (!is_two_sided || is.finite(under_odds))
 
@@ -192,11 +215,12 @@ get_prop_recommendation <- function(ev_over, ev_under = NA_real_, model_error = 
     return("MODEL ERROR")
   }
 
-  edge_abs <- suppressWarnings(max(abs(c(ev_over, ev_under)), na.rm = TRUE))
-  if (!is.finite(edge_abs)) edge_abs <- abs(ev_over)
+  best_candidates <- c(ev_over, ev_under)
+  best_candidates <- best_candidates[is.finite(best_candidates) & best_candidates > 0]
+  best_ev <- if (length(best_candidates)) max(best_candidates, na.rm = TRUE) else NA_real_
 
-  if (edge_abs > PROP_EDGE_BIN_HIGH_MAX) {
-    return("PASS")
+  if (is.finite(best_ev) && best_ev > PROP_EDGE_BIN_HIGH_MAX) {
+    return("REVIEW")
   }
 
   if (is.finite(ev_over) && ev_over > PROP_MIN_BET_EDGE) return("OVER")
@@ -213,11 +237,13 @@ get_prop_recommendation <- function(ev_over, ev_under = NA_real_, model_error = 
 classify_prop_edge_quality <- function(ev_over, ev_under = NA_real_, recommendation = NA_character_) {
   if (identical(recommendation, "MODEL ERROR")) return("MODEL ERROR")
 
-  edge_abs <- suppressWarnings(max(abs(c(ev_over, ev_under)), na.rm = TRUE))
-  if (!is.finite(edge_abs)) return("MODEL ERROR")
+  best_candidates <- c(ev_over, ev_under)
+  best_candidates <- best_candidates[is.finite(best_candidates) & best_candidates > 0]
+  best_ev <- if (length(best_candidates)) max(best_candidates, na.rm = TRUE) else NA_real_
+  if (!is.finite(best_ev)) return("MODEL ERROR")
 
-  if (edge_abs <= PROP_EDGE_BIN_OK_MAX) return("OK")
-  if (edge_abs <= PROP_EDGE_BIN_HIGH_MAX) return("High")
+  if (best_ev <= PROP_EDGE_BIN_OK_MAX) return("OK")
+  if (best_ev <= PROP_EDGE_BIN_HIGH_MAX) return("High")
   "Review"
 }
 

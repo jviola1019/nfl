@@ -93,14 +93,31 @@ simulate_rushing_yards <- function(
 #'
 #' @param simulation Output from simulate_rushing_yards()
 #' @param line Market line (e.g., 75.5)
-#' @param over_odds American odds for over
-#' @param under_odds American odds for under
+#' @param over_odds American odds for over (NA -> derived from simulation)
+#' @param under_odds American odds for under (NA -> derived from simulation)
 #'
 #' @return List with probabilities and expected values
 #'
 #' @export
-rushing_yards_over_under <- function(simulation, line, over_odds = -110, under_odds = -110) {
+rushing_yards_over_under <- function(simulation, line, over_odds = NA_real_, under_odds = NA_real_) {
   yards <- simulation$simulated_yards
+
+  # Derive fallback line/odds from simulation when missing
+  if (!is.finite(line) || !is.finite(over_odds) || !is.finite(under_odds)) {
+    if (exists("derive_prop_market_from_sim", mode = "function")) {
+      derived <- derive_prop_market_from_sim(
+        yards,
+        line_quantile = if (exists("PROP_FALLBACK_LINE_QUANTILE")) PROP_FALLBACK_LINE_QUANTILE else 0.50,
+        vig = if (exists("PROP_MARKET_VIG")) PROP_MARKET_VIG else 0.045
+      )
+      if (!is.finite(line)) line <- derived$line
+      if (!is.finite(over_odds)) over_odds <- derived$over_odds
+      if (!is.finite(under_odds)) under_odds <- derived$under_odds
+    }
+  }
+  if (!is.finite(line)) line <- stats::median(yards, na.rm = TRUE)
+  if (!is.finite(over_odds)) over_odds <- if (exists("DEFAULT_YARD_PROP_ODDS")) DEFAULT_YARD_PROP_ODDS else -110
+  if (!is.finite(under_odds)) under_odds <- if (exists("DEFAULT_YARD_PROP_ODDS")) DEFAULT_YARD_PROP_ODDS else -110
 
   # Calculate probabilities
   p_over <- mean(yards > line)
@@ -112,8 +129,8 @@ rushing_yards_over_under <- function(simulation, line, over_odds = -110, under_o
   under_dec <- if (under_odds >= 0) 1 + under_odds/100 else 1 + 100/abs(under_odds)
 
   # Calculate EV
-  ev_over <- p_over * (over_dec - 1) - (1 - p_over)
-  ev_under <- p_under * (under_dec - 1) - (1 - p_under)
+  ev_over <- p_over * (over_dec - 1) - p_under
+  ev_under <- p_under * (under_dec - 1) - p_over
 
   list(
     line = line,
@@ -139,8 +156,8 @@ rushing_yards_over_under <- function(simulation, line, over_odds = -110, under_o
 #' @param opp_rush_def_rank Opponent rush defense rank (1-32)
 #' @param is_home Is player's team at home?
 #' @param game_script Expected point differential
-#' @param over_odds American odds for over (default -110)
-#' @param under_odds American odds for under (default -110)
+#' @param over_odds American odds for over (NA -> derived from simulation)
+#' @param under_odds American odds for under (NA -> derived from simulation)
 #'
 #' @return List with complete analysis
 #'
@@ -164,13 +181,13 @@ analyze_rushing_yards_prop <- function(
   player_name,
   player_avg_yards,
   position = "RB",
-  line,
+  line = NA_real_,
   opponent,
   opp_rush_def_rank,
   is_home = FALSE,
   game_script = 0,
-  over_odds = -110,
-  under_odds = -110
+  over_odds = NA_real_,
+  under_odds = NA_real_
 ) {
 
   # Run simulation

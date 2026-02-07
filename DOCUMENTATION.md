@@ -890,8 +890,26 @@ trench_avail_pen   # Trench position injury penalty
 - `blend_home_ml_vig`: vigged model home moneyline computed only from `blend_home_ml`.
 - Display column `Blend Home ML (Fair, from Shrunk Prob)` maps to `blend_home_ml`.
 - Display column `Blend Home ML (Vigged, +X%)` maps to `blend_home_ml_vig`.
+- Display column `Blend Away Moneyline (Vigged)` maps to `blend_away_ml_vig`.
 
 Hard rule: probability coherence checks must use fair quantities only (`blend_home_prob_shrunk` ↔ `blend_home_ml`) and must never use vigged moneylines.
+
+
+### Moneyline Report Columns (HTML)
+
+Key columns and definitions for the game table:
+
+- `EV Edge (Raw)`: Expected return per unit for the displayed pick: `(Shrunk Prob ? Decimal Odds) - 1` (uncapped).
+- `EV Edge (Displayed, Capped)`: Display-only cap of raw EV at `MAX_EDGE` (10% default); governance uses raw EV.
+- `Min Stake (%)`: Minimum stake threshold required to place a bet (default 1%).
+- `Final Stake (%)`: Kelly-based stake after caps; zero when `PASS`.
+- `Total EV (Units)`: `Final Stake ? EV Edge (Raw)` (0 for `PASS`).
+- `Market Home Win % (Fair, Devig=proportional)`: Vig-free home win probability using proportional devig on market moneylines.
+- `ML Implied Home % (Raw)`: Raw implied probability from the home moneyline before devig.
+- `Blend Home ML (Fair, from Shrunk Prob)`: `probability_to_american(blend_home_prob_shrunk)`.
+- `Blend Home ML (Vigged, +X%)`: `apply_moneyline_vig(blend_home_ml, vig)` (display only).
+- `Blend Away Moneyline (Vigged)`: `apply_moneyline_vig(blend_away_ml, vig)` (display only).
+
 
 ---
 

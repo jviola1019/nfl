@@ -23,7 +23,8 @@ run_calibration_harness <- function(data,
                                     info_time_cols = c("label_available_time", "odds_available_time"),
                                     n_folds = 5,
                                     artifact_dir = file.path("validation", "artifacts"),
-                                    default_method = "spline") {
+                                    default_method = "spline",
+                                    enforce_default = TRUE) {
   required <- c(prob_col, outcome_col, time_col)
   missing_cols <- setdiff(required, names(data))
   if (length(missing_cols)) {
@@ -82,7 +83,9 @@ run_calibration_harness <- function(data,
     FUN = mean
   )
 
-  assert_default_calibration_performance(summary, default_method = default_method)
+  if (isTRUE(enforce_default)) {
+    assert_default_calibration_performance(summary, default_method = default_method)
+  }
 
   dir.create(artifact_dir, recursive = TRUE, showWarnings = FALSE)
   fold_path <- file.path(artifact_dir, "calibration_fold_metrics.csv")

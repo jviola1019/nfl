@@ -453,16 +453,18 @@ run_game_props <- function(game_sim, home_team, away_team, season,
   # Convert game totals to Z-scores for copula
   z_game <- if (!is.null(game_totals)) totals_to_zscores(game_totals) else NULL
 
-  # Load prop odds from API if not provided and enabled
+  # Load prop odds from source if not provided and enabled
   if (is.null(prop_odds_cache) && exists("USE_REAL_PROP_ODDS") && USE_REAL_PROP_ODDS) {
     prop_odds_cache <- tryCatch({
-      if (exists("load_prop_odds", mode = "function")) {
+      if (exists("resolve_prop_odds_cache", mode = "function")) {
+        resolve_prop_odds_cache()
+      } else if (exists("load_prop_odds", mode = "function")) {
         load_prop_odds()
       } else {
         NULL
       }
     }, error = function(e) {
-      message(sprintf("  Prop odds API unavailable: %s", e$message))
+      message(sprintf("  Prop odds source unavailable: %s", e$message))
       NULL
     })
   }
@@ -499,6 +501,55 @@ run_game_props <- function(game_sim, home_team, away_team, season,
   if (!"avg_rushing_yards" %in% names(players)) players$avg_rushing_yards <- NA_real_
   if (!"avg_receiving_yards" %in% names(players)) players$avg_receiving_yards <- NA_real_
 
+  line_quantile <- if (exists("PROP_FALLBACK_LINE_QUANTILE")) PROP_FALLBACK_LINE_QUANTILE else 0.50
+  market_vig <- if (exists("PROP_MARKET_VIG")) PROP_MARKET_VIG else 0.045
+
+  resolve_sd <- function(row, sd_col, fallback) {
+    if (!is.null(row) && sd_col %in% names(row)) {
+      sd_val <- suppressWarnings(as.numeric(row[[sd_col]][1]))
+      if (is.finite(sd_val) && sd_val > 0) return(sd_val)
+    }
+    fallback
+  }
+
+  resolve_two_way_market <- function(sim_values, market_line) {
+    line <- if (!is.null(market_line)) suppressWarnings(as.numeric(market_line$line)) else NA_real_
+    line_source <- if (!is.null(market_line) && is.finite(line)) "market" else "model"
+
+    if (!is.finite(line) && exists("derive_prop_market_from_sim", mode = "function")) {
+      derived <- derive_prop_market_from_sim(sim_values, line_quantile = line_quantile, vig = market_vig)
+      line <- derived$line
+    }
+
+    p_over <- mean(sim_values > line)
+    p_under <- mean(sim_values < line)
+    p_push <- pmax(1 - p_over - p_under, 0)
+
+    over_odds <- if (!is.null(market_line)) suppressWarnings(as.numeric(market_line$over_odds)) else NA_real_
+    under_odds <- if (!is.null(market_line)) suppressWarnings(as.numeric(market_line$under_odds)) else NA_real_
+    odds_source <- "market"
+
+    if (!is.finite(over_odds) || !is.finite(under_odds)) {
+      odds_source <- "model"
+      if (exists("derive_two_way_odds_from_probs", mode = "function")) {
+        derived_odds <- derive_two_way_odds_from_probs(p_over, p_under, vig = market_vig)
+        if (!is.finite(over_odds)) over_odds <- derived_odds$over_odds
+        if (!is.finite(under_odds)) under_odds <- derived_odds$under_odds
+      }
+    }
+
+    list(
+      line = line,
+      line_source = line_source,
+      over_odds = over_odds,
+      under_odds = under_odds,
+      odds_source = odds_source,
+      p_over = p_over,
+      p_under = p_under,
+      p_push = p_push
+    )
+  }
+
   results_list <- list()
 
   # Process each prop type
@@ -519,7 +570,7 @@ run_game_props <- function(game_sim, home_team, away_team, season,
 
             rho <- get_game_correlation("QB", "passing")
             # Scale SD proportionally to baseline (CV ~0.29 from NFL data)
-            baseline_sd <- max(qb_passing * 0.29, 15)
+            baseline_sd <- resolve_sd(qb, "sd_passing_yards", max(qb_passing * 0.29, 15))
 
             sim_values <- simulate_correlated_prop(
               baseline = qb_passing,
@@ -533,32 +584,33 @@ run_game_props <- function(game_sim, home_team, away_team, season,
             # Model projection is the simulation median
             projection <- round(median(sim_values), 1)
 
-            # Get market line from API or use default (baseline * 0.95)
+            # Get market line from API when available; otherwise derive from simulation
             market_line <- NULL
             if (!is.null(prop_odds_cache) && exists("get_market_prop_line", mode = "function")) {
-              market_line <- get_market_prop_line(qb_name, "passing_yards", prop_odds_cache)
+              market_line <- get_market_prop_line(
+                qb_name,
+                "passing_yards",
+                prop_odds_cache,
+                home_team = home_team,
+                away_team = away_team
+              )
             }
 
-            if (!is.null(market_line)) {
-              line <- market_line$line
-              over_odds <- market_line$over_odds
-              under_odds <- market_line$under_odds
-            } else {
-              # Fallback: use baseline * 0.95 (typical market placement)
-              line <- round(qb_passing * 0.95, 0) + 0.5
-              over_odds <- if (exists("DEFAULT_YARD_PROP_ODDS")) DEFAULT_YARD_PROP_ODDS else -110
-              under_odds <- if (exists("DEFAULT_YARD_PROP_ODDS")) DEFAULT_YARD_PROP_ODDS else -110
-            }
-
-            # P(Over/Under) based on simulation vs MARKET line
-            p_over <- mean(sim_values > line)
-            p_under <- mean(sim_values < line)
+            resolved <- resolve_two_way_market(sim_values, market_line)
+            line <- resolved$line
+            line_source <- resolved$line_source
+            over_odds <- resolved$over_odds
+            under_odds <- resolved$under_odds
+            odds_source <- resolved$odds_source
+            p_over <- resolved$p_over
+            p_under <- resolved$p_under
+            p_push <- resolved$p_push
 
             # Calculate EV using actual market odds
             dec_over <- if (over_odds >= 0) 1 + over_odds/100 else 1 + 100/abs(over_odds)
             dec_under <- if (under_odds >= 0) 1 + under_odds/100 else 1 + 100/abs(under_odds)
-            ev_over <- p_over * (dec_over - 1) - (1 - p_over)
-            ev_under <- p_under * (dec_under - 1) - (1 - p_under)
+            ev_over <- p_over * (dec_over - 1) - p_under
+            ev_under <- p_under * (dec_under - 1) - p_over
 
             # Recommendation with model error detection
             model_error <- is_prop_model_error(p_over, p_under, over_odds, under_odds, is_two_sided = TRUE)
@@ -574,8 +626,11 @@ run_game_props <- function(game_sim, home_team, away_team, season,
               projection = projection,
               p_over = round(p_over, 4),
               p_under = round(p_under, 4),
+              p_push = round(p_push, 4),
               over_odds = over_odds,
               under_odds = under_odds,
+              line_source = line_source,
+              odds_source = odds_source,
               ev_over = round(ev_over, 4),
               ev_under = round(ev_under, 4),
               recommendation = rec,
@@ -605,7 +660,7 @@ run_game_props <- function(game_sim, home_team, away_team, season,
 
             rho <- get_game_correlation(pl_pos, "rushing")
             # Scale SD proportionally to baseline (CV ~0.40 for rushing)
-            baseline_sd <- max(pl_rushing * 0.40, 10)
+            baseline_sd <- resolve_sd(player, "sd_rushing_yards", max(pl_rushing * 0.40, 10))
 
             sim_values <- simulate_correlated_prop(
               baseline = pl_rushing,
@@ -619,29 +674,32 @@ run_game_props <- function(game_sim, home_team, away_team, season,
             # Model projection
             projection <- round(median(sim_values), 1)
 
-            # Get market line from API or use default
+            # Get market line from API when available; otherwise derive from simulation
             market_line <- NULL
             if (!is.null(prop_odds_cache) && exists("get_market_prop_line", mode = "function")) {
-              market_line <- get_market_prop_line(pl_name, "rushing_yards", prop_odds_cache)
+              market_line <- get_market_prop_line(
+                pl_name,
+                "rushing_yards",
+                prop_odds_cache,
+                home_team = home_team,
+                away_team = away_team
+              )
             }
 
-            if (!is.null(market_line)) {
-              line <- market_line$line
-              over_odds <- market_line$over_odds
-              under_odds <- market_line$under_odds
-            } else {
-              line <- round(pl_rushing * 0.95, 0) + 0.5
-              over_odds <- if (exists("DEFAULT_YARD_PROP_ODDS")) DEFAULT_YARD_PROP_ODDS else -110
-              under_odds <- if (exists("DEFAULT_YARD_PROP_ODDS")) DEFAULT_YARD_PROP_ODDS else -110
-            }
-
-            p_over <- mean(sim_values > line)
-            p_under <- mean(sim_values < line)
+            resolved <- resolve_two_way_market(sim_values, market_line)
+            line <- resolved$line
+            line_source <- resolved$line_source
+            over_odds <- resolved$over_odds
+            under_odds <- resolved$under_odds
+            odds_source <- resolved$odds_source
+            p_over <- resolved$p_over
+            p_under <- resolved$p_under
+            p_push <- resolved$p_push
 
             dec_over <- if (over_odds >= 0) 1 + over_odds/100 else 1 + 100/abs(over_odds)
             dec_under <- if (under_odds >= 0) 1 + under_odds/100 else 1 + 100/abs(under_odds)
-            ev_over <- p_over * (dec_over - 1) - (1 - p_over)
-            ev_under <- p_under * (dec_under - 1) - (1 - p_under)
+            ev_over <- p_over * (dec_over - 1) - p_under
+            ev_under <- p_under * (dec_under - 1) - p_over
 
             model_error <- is_prop_model_error(p_over, p_under, over_odds, under_odds, is_two_sided = TRUE)
             rec <- get_prop_recommendation(ev_over, ev_under, model_error = model_error)
@@ -656,8 +714,11 @@ run_game_props <- function(game_sim, home_team, away_team, season,
               projection = projection,
               p_over = round(p_over, 4),
               p_under = round(p_under, 4),
+              p_push = round(p_push, 4),
               over_odds = over_odds,
               under_odds = under_odds,
+              line_source = line_source,
+              odds_source = odds_source,
               ev_over = round(ev_over, 4),
               ev_under = round(ev_under, 4),
               recommendation = rec,
@@ -688,7 +749,7 @@ run_game_props <- function(game_sim, home_team, away_team, season,
             rho <- get_game_correlation(pl_pos, "receiving")
 
             # Scale SD proportionally to baseline (CV ~0.35 for receiving)
-            baseline_sd <- max(pl_receiving * 0.35, 8)
+            baseline_sd <- resolve_sd(player, "sd_receiving_yards", max(pl_receiving * 0.35, 8))
 
             sim_values <- simulate_correlated_prop(
               baseline = pl_receiving,
@@ -702,29 +763,32 @@ run_game_props <- function(game_sim, home_team, away_team, season,
             # Model projection
             projection <- round(median(sim_values), 1)
 
-            # Get market line from API or use default
+            # Get market line from API when available; otherwise derive from simulation
             market_line <- NULL
             if (!is.null(prop_odds_cache) && exists("get_market_prop_line", mode = "function")) {
-              market_line <- get_market_prop_line(pl_name, "receiving_yards", prop_odds_cache)
+              market_line <- get_market_prop_line(
+                pl_name,
+                "receiving_yards",
+                prop_odds_cache,
+                home_team = home_team,
+                away_team = away_team
+              )
             }
 
-            if (!is.null(market_line)) {
-              line <- market_line$line
-              over_odds <- market_line$over_odds
-              under_odds <- market_line$under_odds
-            } else {
-              line <- round(pl_receiving * 0.95, 0) + 0.5
-              over_odds <- if (exists("DEFAULT_YARD_PROP_ODDS")) DEFAULT_YARD_PROP_ODDS else -110
-              under_odds <- if (exists("DEFAULT_YARD_PROP_ODDS")) DEFAULT_YARD_PROP_ODDS else -110
-            }
-
-            p_over <- mean(sim_values > line)
-            p_under <- mean(sim_values < line)
+            resolved <- resolve_two_way_market(sim_values, market_line)
+            line <- resolved$line
+            line_source <- resolved$line_source
+            over_odds <- resolved$over_odds
+            under_odds <- resolved$under_odds
+            odds_source <- resolved$odds_source
+            p_over <- resolved$p_over
+            p_under <- resolved$p_under
+            p_push <- resolved$p_push
 
             dec_over <- if (over_odds >= 0) 1 + over_odds/100 else 1 + 100/abs(over_odds)
             dec_under <- if (under_odds >= 0) 1 + under_odds/100 else 1 + 100/abs(under_odds)
-            ev_over <- p_over * (dec_over - 1) - (1 - p_over)
-            ev_under <- p_under * (dec_under - 1) - (1 - p_under)
+            ev_over <- p_over * (dec_over - 1) - p_under
+            ev_under <- p_under * (dec_under - 1) - p_over
 
             model_error <- is_prop_model_error(p_over, p_under, over_odds, under_odds, is_two_sided = TRUE)
             rec <- get_prop_recommendation(ev_over, ev_under, model_error = model_error)
@@ -739,8 +803,11 @@ run_game_props <- function(game_sim, home_team, away_team, season,
               projection = projection,
               p_over = round(p_over, 4),
               p_under = round(p_under, 4),
+              p_push = round(p_push, 4),
               over_odds = over_odds,
               under_odds = under_odds,
+              line_source = line_source,
+              odds_source = odds_source,
               ev_over = round(ev_over, 4),
               ev_under = round(ev_under, 4),
               recommendation = rec,
@@ -800,22 +867,39 @@ run_game_props <- function(game_sim, home_team, away_team, season,
             # Get market odds for anytime TD from API or use position-based defaults
             market_td <- NULL
             if (!is.null(prop_odds_cache) && exists("get_market_prop_line", mode = "function")) {
-              market_td <- get_market_prop_line(pl_name, "anytime_td", prop_odds_cache)
+              market_td <- get_market_prop_line(
+                pl_name,
+                "anytime_td",
+                prop_odds_cache,
+                home_team = home_team,
+                away_team = away_team
+              )
             }
 
             if (!is.null(market_td)) {
               anytime_odds <- market_td$over_odds  # Yes odds for TD
-            } else if (exists("DEFAULT_TD_ODDS") && pl_pos %in% names(DEFAULT_TD_ODDS)) {
-              anytime_odds <- DEFAULT_TD_ODDS[[pl_pos]]
             } else {
-              # Position-based fallback
-              anytime_odds <- switch(pl_pos,
-                QB = 350,    # QBs score ~15% of games
-                RB = -110,   # RB1s score ~45% of games
-                WR = 140,    # WR1s score ~35% of games
-                TE = 200,    # TE1s score ~25% of games
-                200
-              )
+              # Derive model-based odds with vig when market data unavailable
+              if (exists("derive_one_way_odds_from_prob", mode = "function")) {
+                anytime_odds <- derive_one_way_odds_from_prob(p_anytime, vig = market_vig)
+              } else {
+                anytime_odds <- NA_real_
+              }
+
+              if (!is.finite(anytime_odds)) {
+                if (exists("DEFAULT_TD_ODDS") && pl_pos %in% names(DEFAULT_TD_ODDS)) {
+                  anytime_odds <- DEFAULT_TD_ODDS[[pl_pos]]
+                } else {
+                  # Position-based fallback
+                  anytime_odds <- switch(pl_pos,
+                    QB = 350,    # QBs score ~15% of games
+                    RB = -110,   # RB1s score ~45% of games
+                    WR = 140,    # WR1s score ~35% of games
+                    TE = 200,    # TE1s score ~25% of games
+                    200
+                  )
+                }
+              }
             }
 
             # Convert to decimal
@@ -823,7 +907,10 @@ run_game_props <- function(game_sim, home_team, away_team, season,
             ev_anytime <- p_anytime * (dec_odds - 1) - (1 - p_anytime)
 
             model_error <- is_prop_model_error(p_anytime, 1 - p_anytime, anytime_odds, NA_real_, is_two_sided = FALSE)
-            rec <- if (isTRUE(model_error)) "MODEL ERROR" else if (abs(ev_anytime) > PROP_EDGE_BIN_HIGH_MAX) "PASS" else if (ev_anytime > PROP_MIN_BET_EDGE) "BET" else "PASS"
+            rec <- get_prop_recommendation(ev_anytime, ev_under = NA_real_, model_error = model_error)
+            if (identical(rec, "OVER")) {
+              rec <- "BET"
+            }
 
             results_list[[length(results_list) + 1]] <- tibble::tibble(
               player = pl_name,
@@ -837,6 +924,8 @@ run_game_props <- function(game_sim, home_team, away_team, season,
               p_under = round(1 - p_anytime, 4),
               over_odds = anytime_odds,
               under_odds = NA_real_,  # TD props don't have "No" odds typically
+              line_source = "model",
+              odds_source = ifelse(!is.null(market_td), "market", "model"),
               ev_over = round(ev_anytime, 4),
               ev_under = NA_real_,
               recommendation = rec,
@@ -921,6 +1010,30 @@ run_correlated_props <- function(game_sim_results, schedule_data = NULL,
 
   message(sprintf("Processing %d games for player props...", nrow(games)))
 
+  # Load prop odds once (if enabled)
+  prop_odds_cache <- NULL
+  use_prop_odds <- TRUE
+  if (exists("USE_REAL_PROP_ODDS") && !isTRUE(USE_REAL_PROP_ODDS)) {
+    use_prop_odds <- FALSE
+  }
+  if (use_prop_odds) {
+    prop_odds_cache <- tryCatch({
+      if (exists("resolve_prop_odds_cache", mode = "function")) {
+        resolve_prop_odds_cache()
+      } else if (exists("load_prop_odds", mode = "function")) {
+        load_prop_odds()
+      } else {
+        NULL
+      }
+    }, error = function(e) {
+      message(sprintf("  Prop odds source unavailable: %s", e$message))
+      NULL
+    })
+  }
+  if (is.null(prop_odds_cache)) {
+    message("  Prop odds unavailable - using model-derived lines/odds")
+  }
+
   all_props <- list()
 
   for (i in seq_len(nrow(games))) {
@@ -941,7 +1054,8 @@ run_correlated_props <- function(game_sim_results, schedule_data = NULL,
         home_team = game$home_team,
         away_team = game$away_team,
         season = season,
-        prop_types = prop_types
+        prop_types = prop_types,
+        prop_odds_cache = prop_odds_cache
       )
     }, error = function(e) {
       warning(sprintf("Failed to generate props for %s: %s", game$game_id, e$message))
@@ -1006,12 +1120,15 @@ run_correlated_props <- function(game_sim_results, schedule_data = NULL,
         .ev_for_quality = dplyr::coalesce(pmax(ev_over, ev_under, na.rm = TRUE), ev_over),
         edge_quality = dplyr::case_when(
           recommendation == "PASS" ~ "Pass",
+          recommendation == "REVIEW" ~ "Review",
+          recommendation == "MODEL ERROR" ~ "MODEL ERROR",
           TRUE ~ classify_prop_edge_quality(ev_over, ev_under, recommendation)
         ),
         # Document why positive EV can still show PASS (2% minimum edge threshold)
         edge_note = dplyr::case_when(
           recommendation == "PASS" & !is.na(.ev_for_quality) & .ev_for_quality > 0 & .ev_for_quality <= PROP_MIN_BET_EDGE ~ "Edge < 2%",
           recommendation == "PASS" & !is.na(.ev_for_quality) & .ev_for_quality > PROP_EDGE_BIN_HIGH_MAX ~ "Blocked (>10%)",
+          recommendation == "REVIEW" & !is.na(.ev_for_quality) & .ev_for_quality > PROP_EDGE_BIN_HIGH_MAX ~ "Review (>10%)",
           recommendation == "PASS" & !is.na(.ev_for_quality) & .ev_for_quality <= 0 ~ "Negative EV",
           TRUE ~ ""
         )

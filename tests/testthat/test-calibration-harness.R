@@ -62,7 +62,8 @@ test_that("calibration harness returns fold outputs and summary artifacts", {
     info_time_cols = c("label_available_time", "odds_available_time"),
     n_folds = 3,
     artifact_dir = artifact_dir,
-    default_method = "spline"
+    default_method = "spline",
+    enforce_default = FALSE
   )
 
   expect_true(all(c("fold_metrics", "summary", "folds", "artifacts") %in% names(result)))

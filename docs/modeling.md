@@ -235,18 +235,18 @@ scoring_tds ~ NegBin(size, mu = baseline)
 Where:
 - `baseline` = player's average scoring TDs per game
 - `scoring_tds` = rushing TDs + receiving TDs (passing TDs are **excluded**)
-- `size` = overdispersion parameter
+- `size = baseline / (TD_OVERDISPERSION - 1)` (clamped to >= 0.1 in code)
 
 **Overdispersion:** `TD_OVERDISPERSION = 1.5`
 
 **Anytime TD probability:**
 
 ```
-P(anytime TD) = mean(simulated_count >= 1)
-              = 1 - P(count = 0 | NegBin)
+p0 = (size / (size + mu))^size
+P(anytime TD) = 1 - p0
 ```
 
-**Display note:** The props table shows P(anytime TD), **not** the expected TD count.
+**Display note:** The props table shows `P(anytime TD)`, **not** the expected TD count.
 
 ### 6.4 EV for Props
 
@@ -260,7 +260,7 @@ Where `P(side)` is the model probability for the relevant side (over or under fo
 
 **Minimum edge for recommendation:** 2%. Below this threshold, no BET/OVER/UNDER recommendation is made.
 
-**Review threshold:** If `|EV| > 20%`, the prop is flagged for manual review to check for data issues.
+**Review threshold:** If best positive `EV` > 10%, the prop is flagged as `REVIEW` to check for data issues.
 
 ---
 
@@ -270,7 +270,7 @@ Where `P(side)` is the model probability for the relevant side (over or under fo
 
 | Condition | Action | Reason |
 |-----------|--------|--------|
-| EV > 15% | Auto-PASS ("Edge too large") | Likely reflects stale or incorrect odds |
+| EV > 10% | Auto-PASS ("Edge too large") | Likely reflects stale or incorrect odds |
 | Kelly stake < 1% bankroll | Auto-PASS ("Stake below minimum") | Not worth the transaction cost |
 
 **Edge bins for display:**
@@ -279,31 +279,26 @@ Where `P(side)` is the model probability for the relevant side (over or under fo
 |-----------|-------|
 | 0-5% | OK |
 | 5-10% | High |
-| >10% | Capped |
+| >=10% | Review |
 
 ### Player Props
 
-**Yard props EV tiers:**
+**Props EV tiers (best positive EV):**
 
-| |EV| Range | Label |
+| EV Range | Label |
 |-----------|-------|
 | <= 5% | OK |
-| <= 10% | Caution |
-| <= 20% | High |
-| > 20% | Review |
-
-**TD props EV tiers** (wider bands due to long odds and higher variance):
-
-| |EV| Range | Label |
-|-----------|-------|
-| <= 10% | OK |
-| <= 25% | Caution |
-| <= 50% | High |
-| > 50% | Review |
+| <= 10% | High |
+| > 10% | Review |
 
 **Recommendation thresholds:**
 - Minimum 2% edge required for any BET/OVER/UNDER recommendation.
 - Props below the 2% threshold receive no directional recommendation.
+
+**Prop odds sources:**
+- `PROP_ODDS_SOURCE = "odds_api"` uses The Odds API (requires `ODDS_API_KEY`).
+- `PROP_ODDS_SOURCE = "csv"` loads a local CSV from `PROP_ODDS_CSV_PATH`.
+- `PROP_ODDS_SOURCE = "model"` derives line + odds from the simulation distribution with `PROP_MARKET_VIG`.
 
 ---
 
@@ -311,7 +306,7 @@ Where `P(side)` is the model probability for the relevant side (over or under fo
 
 1. **Shrinkage hides the raw model view.** The displayed probability is the shrunk (blended) probability, not the direct simulation output. Users cannot see the model's "pure" opinion without consulting the raw simulation logs.
 
-2. **Default -110 prop odds used when `ODDS_API_KEY` is not set.** This is the industry convention for standard juice but does not reflect actual lines at any specific sportsbook.
+2. **Prop odds fallback is synthetic when market data is unavailable.** If `ODDS_API_KEY` is missing or `PROP_ODDS_SOURCE` cannot load data, the pipeline derives a market line from the simulation distribution (default median) and applies a fixed vig (`PROP_MARKET_VIG`) to create implied over/under odds. These are model-derived and not sportsbook-specific.
 
 3. **TD model uses average scoring TDs as the Negative Binomial mean.** For low-volume players (tight ends, QB rushers), this may underestimate variance because the sample size for their TD rates is small and unstable.
 
@@ -331,8 +326,9 @@ Recommendation governance is deterministic and ordered:
 
 1. Missing market odds -> `PASS` with reason `Market odds missing/placeholder`
 2. Non-positive EV -> `PASS` with reason `Negative EV`
-3. Positive EV but stake below threshold -> `PASS` with reason `Stake below minimum`
-4. Otherwise -> bet recommendation
+3. EV > max edge -> `PASS` with reason `Edge too large`
+4. Positive EV but stake below threshold -> `PASS` with reason `Stake below minimum`
+5. Otherwise -> bet recommendation
 
-For props, entries above governance bounds are labeled `MODEL ERROR / REVIEW` (review gate), not a runtime/model crash indicator by itself.
+For props, entries above governance bounds are labeled `REVIEW` (review gate), not a runtime/model crash indicator by itself.
 

@@ -1,7 +1,7 @@
 # NFL Prediction Model - API Reference
 
 **Version**: 2.7.0
-**Last Updated**: 2026-02-02
+**Last Updated**: 2026-02-06
 
 ---
 
@@ -189,6 +189,29 @@ conservative_kelly_stake(
   max_stake = 0.02       # Maximum stake (2% of bankroll)
 )
 ```
+
+---
+
+### `apply_bet_governance()`
+
+**File**: [R/utils.R](../R/utils.R#L248)
+
+Apply ordered betting governance rules to EV, probability, and odds.
+
+```r
+apply_bet_governance(
+  ev,
+  prob,
+  odds,
+  min_stake = 0.01,
+  kelly_fraction = 0.125,
+  max_stake = 0.02,
+  max_edge = 0.10,
+  is_placeholder_odds = FALSE
+)
+```
+
+**Returns**: Tibble with `recommendation`, `raw_kelly_pct`, `capped_stake_pct`, `final_stake_pct`, and `pass_reason`.
 
 ---
 

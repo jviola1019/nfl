@@ -13,6 +13,6 @@ test_that("all NFL props modules parse and source without warnings/errors", {
 
   for (props_file in props_files) {
     expect_error(parse(file = props_file), NA, info = props_file)
-    expect_warning(source(props_file, local = new.env(parent = globalenv())), NA, info = props_file)
+    expect_warning(source(props_file, local = new.env(parent = globalenv()), chdir = TRUE), NA, info = props_file)
   }
 })

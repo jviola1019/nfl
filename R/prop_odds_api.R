@@ -12,7 +12,7 @@
 #' Load player prop odds from The Odds API
 #'
 #' Fetches real-time prop betting lines from multiple sportsbooks.
-#' Returns NULL if API key not set (graceful fallback to defaults).
+#' Returns NULL if API key not set (caller falls back to model-derived odds).
 #'
 #' @param sport Sport key (default: "americanfootball_nfl")
 #' @param event_ids Optional vector of event IDs to filter
@@ -46,9 +46,8 @@ load_prop_odds <- function(
 ) {
 
   # Check for API key
-
-if (is.null(api_key) || api_key == "") {
-    message("ℹ ODDS_API_KEY not set - using position-based default prop odds")
+  if (is.null(api_key) || api_key == "") {
+    message("INFO: ODDS_API_KEY not set - skipping odds API (model-derived fallback enabled)")
     message("  Set ODDS_API_KEY environment variable for real market data")
     return(NULL)
   }
@@ -234,7 +233,10 @@ if (is.null(api_key) || api_key == "") {
 #'
 #' @export
 get_market_prop_line <- function(player_name, prop_type, prop_odds_data,
-                                  fuzzy_match = TRUE) {
+                                  fuzzy_match = TRUE,
+                                  home_team = NULL,
+                                  away_team = NULL,
+                                  event_id = NULL) {
 
   if (is.null(prop_odds_data) || nrow(prop_odds_data) == 0) {
     return(NULL)
@@ -245,6 +247,30 @@ get_market_prop_line <- function(player_name, prop_type, prop_odds_data,
     dplyr::filter(prop_type == !!prop_type)
 
   if (nrow(matches) == 0) return(NULL)
+
+  # Optional: Filter by event or teams when available
+  if (!is.null(event_id) && "event_id" %in% names(matches)) {
+    matches <- matches %>% dplyr::filter(event_id == !!event_id)
+  }
+
+  if (!is.null(home_team) && !is.null(away_team) &&
+      all(c("home_team", "away_team") %in% names(matches))) {
+    normalize_team <- function(x) {
+      tolower(gsub("[^a-z]", "", x %||% ""))
+    }
+    map_team <- function(abbr) {
+      abbr <- toupper(abbr %||% "")
+      TEAM_ABBR_TO_NAME[[abbr]] %||% abbr
+    }
+    target_home <- normalize_team(map_team(home_team))
+    target_away <- normalize_team(map_team(away_team))
+
+    matches <- matches %>%
+      dplyr::filter(
+        (normalize_team(home_team) == target_home & normalize_team(away_team) == target_away) |
+        (normalize_team(home_team) == target_away & normalize_team(away_team) == target_home)
+      )
+  }
 
   # Match player name
   if (fuzzy_match) {
@@ -281,6 +307,204 @@ get_market_prop_line <- function(player_name, prop_type, prop_odds_data,
     books = unique(matches$book),
     n_books = length(unique(matches$book))
   )
+}
+
+# =============================================================================
+# PROP ODDS FALLBACK UTILITIES
+# =============================================================================
+
+# Team abbreviation to full name map (for odds providers using full names)
+TEAM_ABBR_TO_NAME <- c(
+  "ARI" = "Arizona Cardinals",
+  "ATL" = "Atlanta Falcons",
+  "BAL" = "Baltimore Ravens",
+  "BUF" = "Buffalo Bills",
+  "CAR" = "Carolina Panthers",
+  "CHI" = "Chicago Bears",
+  "CIN" = "Cincinnati Bengals",
+  "CLE" = "Cleveland Browns",
+  "DAL" = "Dallas Cowboys",
+  "DEN" = "Denver Broncos",
+  "DET" = "Detroit Lions",
+  "GB"  = "Green Bay Packers",
+  "HOU" = "Houston Texans",
+  "IND" = "Indianapolis Colts",
+  "JAX" = "Jacksonville Jaguars",
+  "KC"  = "Kansas City Chiefs",
+  "LAC" = "Los Angeles Chargers",
+  "LAR" = "Los Angeles Rams",
+  "LV"  = "Las Vegas Raiders",
+  "MIA" = "Miami Dolphins",
+  "MIN" = "Minnesota Vikings",
+  "NE"  = "New England Patriots",
+  "NO"  = "New Orleans Saints",
+  "NYG" = "New York Giants",
+  "NYJ" = "New York Jets",
+  "PHI" = "Philadelphia Eagles",
+  "PIT" = "Pittsburgh Steelers",
+  "SEA" = "Seattle Seahawks",
+  "SF"  = "San Francisco 49ers",
+  "TB"  = "Tampa Bay Buccaneers",
+  "TEN" = "Tennessee Titans",
+  "WAS" = "Washington Commanders"
+)
+
+probability_to_american_safe <- function(p) {
+  if (exists("probability_to_american", mode = "function")) {
+    return(probability_to_american(p))
+  }
+  p <- suppressWarnings(as.numeric(p))
+  if (!is.finite(p) || p <= 0 || p >= 1) return(NA_real_)
+  if (p == 0.5) return(100)
+  if (p > 0.5) {
+    return(-as.numeric(round(100 * p / (1 - p))))
+  }
+  as.numeric(round(100 * (1 - p) / p))
+}
+
+round_to_half <- function(x) {
+  x <- suppressWarnings(as.numeric(x))
+  if (!is.finite(x)) return(NA_real_)
+  round(x * 2) / 2
+}
+
+apply_two_way_vig <- function(p_over, p_under, vig = 0.045) {
+  p_over <- suppressWarnings(as.numeric(p_over))
+  p_under <- suppressWarnings(as.numeric(p_under))
+  if (!is.finite(p_over) || !is.finite(p_under) || p_over <= 0 || p_under <= 0) {
+    return(list(p_over = NA_real_, p_under = NA_real_))
+  }
+  scale <- (1 + vig) / (p_over + p_under)
+  list(
+    p_over = pmin(p_over * scale, 0.99),
+    p_under = pmin(p_under * scale, 0.99)
+  )
+}
+
+derive_two_way_odds_from_probs <- function(p_over, p_under, vig = 0.045) {
+  vigged <- apply_two_way_vig(p_over, p_under, vig = vig)
+  list(
+    over_odds = probability_to_american_safe(vigged$p_over),
+    under_odds = probability_to_american_safe(vigged$p_under)
+  )
+}
+
+derive_one_way_odds_from_prob <- function(p, vig = 0.045) {
+  p <- suppressWarnings(as.numeric(p))
+  if (!is.finite(p) || p <= 0 || p >= 1) return(NA_real_)
+  p_vig <- pmin(p * (1 + vig), 0.99)
+  probability_to_american_safe(p_vig)
+}
+
+derive_prop_market_from_sim <- function(sim_values,
+                                        line_quantile = NULL,
+                                        vig = NULL) {
+  sim_values <- suppressWarnings(as.numeric(sim_values))
+  sim_values <- sim_values[is.finite(sim_values)]
+  if (!length(sim_values)) {
+    return(list(line = NA_real_, over_odds = NA_real_, under_odds = NA_real_))
+  }
+
+  if (is.null(line_quantile) && exists("PROP_FALLBACK_LINE_QUANTILE")) {
+    line_quantile <- PROP_FALLBACK_LINE_QUANTILE
+  }
+  if (is.null(line_quantile) || !is.finite(line_quantile)) {
+    line_quantile <- 0.50
+  }
+
+  if (is.null(vig) && exists("PROP_MARKET_VIG")) {
+    vig <- PROP_MARKET_VIG
+  }
+  if (is.null(vig) || !is.finite(vig)) {
+    vig <- 0.045
+  }
+
+  line_raw <- stats::quantile(sim_values, probs = line_quantile, names = FALSE, na.rm = TRUE)
+  line <- round_to_half(line_raw)
+
+  p_over <- mean(sim_values > line)
+  p_under <- mean(sim_values < line)
+  p_push <- pmax(1 - p_over - p_under, 0)
+
+  vigged <- apply_two_way_vig(p_over, p_under, vig = vig)
+  over_odds <- probability_to_american_safe(vigged$p_over)
+  under_odds <- probability_to_american_safe(vigged$p_under)
+
+  list(
+    line = line,
+    over_odds = over_odds,
+    under_odds = under_odds,
+    p_over = p_over,
+    p_under = p_under,
+    p_push = p_push
+  )
+}
+
+load_prop_odds_csv <- function(path = NULL) {
+  if (is.null(path) || !nzchar(path) || !file.exists(path)) return(NULL)
+  if (!requireNamespace("readr", quietly = TRUE)) {
+    warning("readr package required to load prop odds CSV")
+    return(NULL)
+  }
+  raw <- tryCatch(readr::read_csv(path, show_col_types = FALSE), error = function(e) NULL)
+  if (is.null(raw) || nrow(raw) == 0) return(NULL)
+
+  required_cols <- c("player", "prop_type", "line", "over_odds", "under_odds")
+  if (!all(required_cols %in% names(raw))) {
+    warning("Prop odds CSV missing required columns: player, prop_type, line, over_odds, under_odds")
+    return(NULL)
+  }
+  raw$line <- suppressWarnings(as.numeric(raw$line))
+  raw$over_odds <- suppressWarnings(as.numeric(raw$over_odds))
+  raw$under_odds <- suppressWarnings(as.numeric(raw$under_odds))
+  raw
+}
+
+resolve_prop_odds_cache <- function(source = NULL,
+                                    csv_path = NULL,
+                                    api_key = Sys.getenv("ODDS_API_KEY")) {
+  if (is.null(source) && exists("PROP_ODDS_SOURCE")) source <- PROP_ODDS_SOURCE
+  if (is.null(csv_path) && exists("PROP_ODDS_CSV_PATH")) csv_path <- PROP_ODDS_CSV_PATH
+
+  source <- tolower(source %||% "odds_api")
+  cache <- NULL
+  cache_source <- "model"
+
+  if (source == "odds_api") {
+    cache <- load_prop_odds(api_key = api_key)
+    if (!is.null(cache) && nrow(cache) > 0) {
+      cache_source <- "odds_api"
+    }
+  }
+
+  if ((is.null(cache) || nrow(cache) == 0) && source %in% c("csv", "file", "local")) {
+    cache <- load_prop_odds_csv(csv_path)
+    if (!is.null(cache) && nrow(cache) > 0) {
+      cache_source <- "csv"
+    }
+  }
+
+  if ((is.null(cache) || nrow(cache) == 0) && source == "odds_api" && !is.null(csv_path)) {
+    cache <- load_prop_odds_csv(csv_path)
+    if (!is.null(cache) && nrow(cache) > 0) {
+      cache_source <- "csv"
+    }
+  }
+
+  if (is.null(cache) || nrow(cache) == 0) {
+    cache <- NULL
+    cache_source <- "model"
+  }
+
+  if (!is.null(cache)) {
+    attr(cache, "source") <- cache_source
+  }
+  cache
+}
+
+# NULL-coalescing operator
+if (!exists("%||%")) {
+  `%||%` <- function(x, y) if (is.null(x) || length(x) == 0 || (length(x) == 1 && is.na(x))) y else x
 }
 
 #' Get default prop odds when API unavailable
