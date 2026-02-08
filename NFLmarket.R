@@ -3448,6 +3448,7 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       table.font.names = c("Inter", "Söhne", "Source Sans Pro", "Helvetica Neue", "Arial", "sans-serif"),
       table.font.color = "#F5F4F0",
       table.background.color = "transparent",
+      table.width = gt::pct(100),
       heading.background.color = "#1A1815",
       heading.align = "center",
       column_labels.background.color = "#1A1815",
@@ -3576,11 +3577,11 @@ export_moneyline_comparison_html <- function(comparison_tbl,
 
     if ("opt_css" %in% getNamespaceExports("gt")) {
       custom_css <- paste(
-        ".gt_table { border-radius: 24px; overflow: hidden; box-shadow: 0 30px 80px rgba(0, 0, 0, 0.4); background-color: rgba(45, 42, 38, 0.9); }",
-        ".gt_table thead tr.gt_col_spanners th { position: sticky; top: 0; z-index: 3; backdrop-filter: blur(10px); background-color: rgba(26, 24, 21, 0.95); font-size: 0.8rem; padding: 10px 10px; border-bottom: 1px solid #D97757; color: #FAF9F6; }",
-        ".gt_table thead tr.gt_col_headings th { position: sticky; top: 32px; z-index: 2; backdrop-filter: blur(10px); background-color: rgba(26, 24, 21, 0.95); font-size: 0.85rem; padding: 14px 10px; border-bottom: 2px solid #D97757; color: #FAF9F6; }",
+        ".gt_table { border-radius: 24px; overflow: hidden; box-shadow: 0 30px 80px rgba(0, 0, 0, 0.4); background-color: rgba(45, 42, 38, 0.9); width: max-content; min-width: 100%; }",
+        ".gt_table thead tr.gt_col_spanners th { position: sticky; top: var(--sticky-offset, 85px); z-index: 3; backdrop-filter: blur(10px); background-color: rgba(26, 24, 21, 0.95); font-size: 0.8rem; padding: 10px 10px; border-bottom: 1px solid #D97757; color: #FAF9F6; }",
+        ".gt_table thead tr.gt_col_headings th { position: sticky; top: calc(var(--sticky-offset, 85px) + var(--sticky-spanner, 28px)); z-index: 2; backdrop-filter: blur(10px); background-color: rgba(26, 24, 21, 0.95); font-size: 0.85rem; padding: 14px 10px; border-bottom: 2px solid #D97757; color: #FAF9F6; }",
         ".gt_table tbody tr:hover { background-color: rgba(217, 119, 87, 0.12); transition: all 0.2s ease; transform: scale(1.002); }",
-        ".gt_table tbody td { padding: 12px 10px; font-size: 0.9rem; border-bottom: 1px solid rgba(217, 119, 87, 0.1); }",
+        ".gt_table tbody td { padding: 12px 10px; font-size: 0.9rem; border-bottom: 1px solid rgba(217, 119, 87, 0.1); font-variant-numeric: tabular-nums; }",
         ".gt_table tbody td[style*='background'] { font-weight: 600; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3); }",
         "@media (max-width: 768px) { .gt_table thead th { font-size: 0.7rem; padding: 10px 6px; } .gt_table tbody td { font-size: 0.8rem; padding: 10px 6px; } }",
         sep = "\n"
@@ -3612,7 +3613,7 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       # Modern Claude-inspired color scheme with ColorBends animated gradient background
       css_block_gt <- paste0(
         # CSS Variables for theming
-        ":root {--claude-coral: #D97757; --claude-coral-light: #E89A7A; --claude-cream: #FAF9F6; --claude-warm-gray: #2D2A26; --claude-dark: #1A1815; --accent-glow: rgba(217, 119, 87, 0.3);}\n",
+        ":root {--claude-coral: #D97757; --claude-coral-light: #E89A7A; --claude-cream: #FAF9F6; --claude-warm-gray: #2D2A26; --claude-dark: #1A1815; --accent-glow: rgba(217, 119, 87, 0.3); --sticky-offset: 85px; --sticky-spanner: 28px;}\n",
         # Body with warm gradient and canvas background
         "body {font-family: 'Inter','Söhne','Source Sans Pro','Helvetica Neue',Arial,sans-serif; background: linear-gradient(135deg, #1A1815 0%, #2D2A26 50%, #1A1815 100%); color: #F5F4F0; margin: 0; padding-top: 110px; min-height: 100vh; overflow-x: hidden;}\n",
         # ColorBends canvas background
@@ -3623,8 +3624,9 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         ".search-container {position: fixed; top: 0; left: 0; right: 0; z-index: 1000; background: rgba(26, 24, 21, 0.85); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border-bottom: 1px solid rgba(217, 119, 87, 0.3); padding: 1.25rem 0; box-shadow: 0 4px 30px rgba(0, 0, 0, 0.3);}\n",
         ".search-inner {max-width: 1400px; margin: 0 auto; padding: 0 1.5rem;}\n",
         ".page-wrapper {max-width: 1400px; margin: 0 auto; padding: 1rem 1.5rem 4rem; position: relative; z-index: 1;}\n",
+        ".table-bleed {width: 100vw; margin-left: calc(50% - 50vw); padding: 0 1.5rem;}\n",
         ".table-wrapper {overflow-x: auto; border-radius: 24px; box-shadow: 0 25px 80px rgba(0, 0, 0, 0.4); width: 100%; max-width: 100%;}\n",
-        ".gt_table {width: 100% !important; table-layout: auto;}\n",
+        ".gt_table {width: max-content !important; min-width: 100%; table-layout: auto;}\n",
         # Report intro with glass morphism
         ".report-intro {max-width: 1000px; margin: 0 auto 2.5rem; background: rgba(45, 42, 38, 0.8); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); padding: 2rem 2.25rem; border-radius: 24px; border: 1px solid rgba(217, 119, 87, 0.25); box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.08);}\n",
         ".report-intro h2 {margin: 0 0 1rem; font-size: 1.5rem; color: var(--claude-cream); letter-spacing: -0.01em; font-weight: 600;}\n",
@@ -3651,13 +3653,13 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         ".color-chip.gray {background: #4A4640;}\n",
         # GT Table styling
         ".gt_table {border-radius: 20px; overflow: hidden; box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5); background: rgba(45, 42, 38, 0.92) !important; backdrop-filter: blur(12px);}\n",
-        ".gt_table thead tr.gt_col_spanners th {position: sticky; top: 85px; z-index: 110; background: rgba(26, 24, 21, 0.96) !important; backdrop-filter: blur(10px); color: var(--claude-cream) !important; font-weight: 600; letter-spacing: 0.03em; border-bottom: 1px solid var(--claude-coral) !important; font-size: 0.72rem; padding-top: 8px; padding-bottom: 8px;}
+        ".gt_table thead tr.gt_col_spanners th {position: sticky; top: var(--sticky-offset, 85px); z-index: 110; background: rgba(26, 24, 21, 0.96) !important; backdrop-filter: blur(10px); color: var(--claude-cream) !important; font-weight: 600; letter-spacing: 0.03em; border-bottom: 1px solid var(--claude-coral) !important; font-size: 0.72rem; padding-top: 8px; padding-bottom: 8px;}
 ",
-        ".gt_table thead tr.gt_col_headings th {position: sticky; top: 115px; z-index: 105; background: rgba(26, 24, 21, 0.96) !important; backdrop-filter: blur(10px); color: var(--claude-cream) !important; font-weight: 600; letter-spacing: 0.03em; border-bottom: 2px solid var(--claude-coral) !important;}
+        ".gt_table thead tr.gt_col_headings th {position: sticky; top: calc(var(--sticky-offset, 85px) + var(--sticky-spanner, 28px)); z-index: 105; background: rgba(26, 24, 21, 0.96) !important; backdrop-filter: blur(10px); color: var(--claude-cream) !important; font-weight: 600; letter-spacing: 0.03em; border-bottom: 2px solid var(--claude-coral) !important;}
 ",
         ".gt_table tbody tr {transition: all 0.2s ease;}\n",
         ".gt_table tbody tr:hover {background-color: rgba(217, 119, 87, 0.15) !important; transform: scale(1.002);}\n",
-        ".gt_table tbody td {border-bottom: 1px solid rgba(217, 119, 87, 0.1) !important;}\n",
+        ".gt_table tbody td {border-bottom: 1px solid rgba(217, 119, 87, 0.1) !important; font-variant-numeric: tabular-nums;}\n",
         # Search input with coral accent
         "#table-search {width: 100%; max-width: 550px; padding: 1rem 1.5rem; margin: 0 auto; border-radius: 999px; border: 1px solid rgba(217, 119, 87, 0.35); background: rgba(45, 42, 38, 0.85); color: var(--claude-cream); display: block; box-shadow: 0 4px 20px rgba(217, 119, 87, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.06); transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); font-size: 1rem; backdrop-filter: blur(8px);}\n",
         "#table-search:focus {outline: none; border-color: var(--claude-coral); box-shadow: 0 0 0 4px var(--accent-glow), 0 8px 30px rgba(217, 119, 87, 0.25); transform: translateY(-2px);}\n",
@@ -3689,14 +3691,14 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         ".tab-content.active {display: block;}\n",
         # Props section styles
         ".props-section {border-left: 3px solid #10b981;}\n",
-        ".props-table {margin-top: 1.5rem;}\n",
-        ".props-content {margin-top: 2rem;}\n",
+        ".props-table {margin-top: 0.35rem;}\n",
+        ".props-content {margin-top: 0.35rem;}\n",
         ".props-content .gt_table tbody td {color: #F5F4F0 !important; font-size: 0.92rem;}\n",
-        ".props-content .gt_table thead th {color: #FAF9F6 !important;}\n",
-        ".props-content .gt_table thead tr.gt_col_spanners th {position: static; top: auto;}\n",
-        ".props-content .gt_table thead tr.gt_col_headings th {position: static; top: auto;}\n",
+        ".props-content .gt_table thead th {color: #FAF9F6 !important; padding-top: 4px; padding-bottom: 4px;}\n",
+        ".props-content .gt_table thead tr.gt_col_spanners th {position: sticky; top: var(--sticky-offset, 85px); z-index: 5; background: rgba(26, 24, 21, 0.96) !important;}\n",
+        ".props-content .gt_table thead tr.gt_col_headings th {position: sticky; top: calc(var(--sticky-offset, 85px) + var(--sticky-spanner, 28px)); z-index: 4; background: rgba(26, 24, 21, 0.96) !important;}\n",
         # Responsive adjustments
-        "@media (max-width: 768px) { body {padding-top: 100px;} .gt_table {font-size: 0.88rem;} .gt_table thead tr.gt_col_spanners th {font-size: 0.65rem; top: 100px;} .gt_table thead tr.gt_col_headings th {font-size: 0.7rem; top: 128px;} .report-intro {padding: 1.5rem; margin: 0 0.5rem 2rem;} #table-search {font-size: 0.9rem; padding: 0.85rem 1.25rem;} .filter-btn {font-size: 0.7rem; padding: 0.3rem 0.7rem;} .report-tabs {flex-direction: column;} .tab-btn {width: 100%;} }\n"
+        "@media (max-width: 768px) { body {padding-top: 100px;} .gt_table {font-size: 0.88rem;} .gt_table thead tr.gt_col_spanners th {font-size: 0.65rem;} .gt_table thead tr.gt_col_headings th {font-size: 0.7rem;} .report-intro {padding: 1.5rem; margin: 0 0.5rem 2rem;} #table-search {font-size: 0.9rem; padding: 0.85rem 1.25rem;} .filter-btn {font-size: 0.7rem; padding: 0.3rem 0.7rem;} .report-tabs {flex-direction: column;} .tab-btn {width: 100%;} .table-bleed {padding: 0 1rem;} }\n"
       )
 
       # ColorBends Three.js animated gradient background script
@@ -3813,6 +3815,29 @@ export_moneyline_comparison_html <- function(comparison_tbl,
 
       if (props_available) {
         props_data <- props_data_local
+        # Ensure optional market columns exist to prevent mutate failures
+        props_data <- ensure_columns_with_defaults(props_data, list(
+          team = NA_character_,
+          line = NA_real_,
+          line_over = NA_real_,
+          line_under = NA_real_,
+          over_odds = NA_real_,
+          under_odds = NA_real_,
+          book = NA_character_,
+          dk_line = NA_real_,
+          dk_line_over = NA_real_,
+          dk_line_under = NA_real_,
+          dk_over_odds = NA_real_,
+          dk_under_odds = NA_real_,
+          fd_line = NA_real_,
+          fd_line_over = NA_real_,
+          fd_line_under = NA_real_,
+          fd_over_odds = NA_real_,
+          fd_under_odds = NA_real_,
+          line_source = NA_character_,
+          odds_source = NA_character_,
+          edge_quality = NA_character_
+        ))
         # Build props intro HTML
         props_intro <- paste0(
             "<section class=\"report-intro props-section\">",
@@ -3821,13 +3846,13 @@ export_moneyline_comparison_html <- function(comparison_tbl,
             "<div class=\"intro-section\">",
             "<h3>Correlation Model</h3>",
             "<ul class=\"compact-list\">",
-            "<li><strong>QB Passing</strong> \u2194 Game Total: r = 0.75</li>",
-            "<li><strong>RB Rushing</strong> \u2194 Game Total: r = 0.60</li>",
-            "<li><strong>WR/TE Receiving</strong> \u2194 Team Passing: r = 0.50</li>",
-            "<li><strong>TD Probability</strong> \u2194 Game Total: r = 0.40</li>",
+            "<li><strong>QB Passing</strong> \u2194 Game Total: r = 0.40</li>",
+            "<li><strong>RB Rushing</strong> \u2194 Game Total: r = 0.09</li>",
+            "<li><strong>WR/TE Receiving</strong> \u2194 Team Passing: r = 0.30</li>",
+            "<li><strong>TD Probability</strong> \u2194 Game Total: r = 0.17</li>",
             "</ul>",
             "<p>Props are simulated using the same game outcomes, ensuring consistent same-game correlation.</p>",
-            "<p><strong>Odds source:</strong> The Odds API when available; otherwise model-derived odds with fixed vig (see PROP_ODDS_SOURCE / ODDS_API_KEY).</p>",
+            "<p><strong>Odds source:</strong> DK/FD market odds via ScoresAndOdds market-comparison or The Odds API; otherwise odds are left blank unless PROP_ALLOW_MODEL_ODDS=TRUE (model-derived with fixed vig).</p>",
             "</div>",
             "</section>"
           )
@@ -3835,11 +3860,91 @@ export_moneyline_comparison_html <- function(comparison_tbl,
           # Format props for display
           # Helper to format American odds
           format_odds <- function(x) {
+            num <- suppressWarnings(as.numeric(x))
             dplyr::case_when(
-              is.na(x) ~ "-",
-              x >= 0 ~ sprintf("+%d", round(x)),
-              TRUE ~ sprintf("%d", round(x))
+              is.na(num) ~ "-",
+              num >= 0 ~ sprintf("+%d", round(num)),
+              TRUE ~ sprintf("%d", round(num))
             )
+          }
+
+          format_line <- function(x) {
+            num <- suppressWarnings(as.numeric(x))
+            if (is.na(num) || !is.finite(num)) return("-")
+            sprintf("%.1f", num)
+          }
+
+          format_book <- function(x) {
+            if (length(x) > 1) {
+              return(vapply(x, format_book, character(1)))
+            }
+            if (is.list(x)) {
+              x <- if (length(x) && !is.null(x[[1]])) as.character(x[[1]]) else NA_character_
+            }
+            if (is.na(x) || !nzchar(x)) return("-")
+            key <- tolower(x)
+            if (key == "draftkings") return("DK")
+            if (key == "fanduel") return("FD")
+            toupper(key)
+          }
+
+          coerce_numeric <- function(x) {
+            if (is.list(x)) {
+              return(vapply(x, function(v) {
+                if (is.null(v) || length(v) == 0) return(NA_real_)
+                suppressWarnings(as.numeric(v[[1]]))
+              }, numeric(1)))
+            }
+            suppressWarnings(as.numeric(x))
+          }
+
+          format_market_cell <- function(line_over, line_under, over_odds, under_odds, prop_type) {
+            if (length(line_over) > 1 || length(line_under) > 1 ||
+                length(over_odds) > 1 || length(under_odds) > 1 ||
+                length(prop_type) > 1) {
+              return(mapply(
+                function(lo, lu, oo, uu, pt) format_market_cell(lo, lu, oo, uu, pt),
+                line_over, line_under, over_odds, under_odds, prop_type,
+                SIMPLIFY = TRUE, USE.NAMES = FALSE
+              ))
+            }
+
+            if (is.list(prop_type)) {
+              prop_type <- if (length(prop_type) && !is.null(prop_type[[1]])) {
+                as.character(prop_type[[1]])
+              } else {
+                NA_character_
+              }
+            }
+
+            line_over <- coerce_numeric(line_over)
+            line_under <- coerce_numeric(line_under)
+            over_odds <- coerce_numeric(over_odds)
+            under_odds <- coerce_numeric(under_odds)
+            has_over <- is.finite(over_odds)
+            has_under <- is.finite(under_odds)
+            if (!has_over && !has_under) return("-")
+
+            if (!is.null(prop_type) && prop_type == "anytime_td") {
+              if (has_over) {
+                implied <- if (over_odds >= 0) {
+                  100 / (over_odds + 100)
+                } else {
+                  abs(over_odds) / (abs(over_odds) + 100)
+                }
+                return(sprintf("Yes %s (%.1f%%)", format_odds(over_odds), implied * 100))
+              }
+              return("-")
+            }
+
+            parts <- character(0)
+            if (is.finite(line_over) || has_over) {
+              parts <- c(parts, sprintf("O%s (%s)", format_line(line_over), format_odds(over_odds)))
+            }
+            if (is.finite(line_under) || has_under) {
+              parts <- c(parts, sprintf("U%s (%s)", format_line(line_under), format_odds(under_odds)))
+            }
+            paste(parts, collapse = " / ")
           }
 
           props_display <- props_data %>%
@@ -3851,15 +3956,42 @@ export_moneyline_comparison_html <- function(comparison_tbl,
                 prop_type == "passing_yards" ~ "Passing Yards",
                 prop_type == "rushing_yards" ~ "Rushing Yards",
                 prop_type == "receiving_yards" ~ "Receiving Yards",
+                prop_type == "receptions" ~ "Receptions",
                 prop_type == "anytime_td" ~ "Anytime TD",
                 TRUE ~ gsub("_", " ", stringr::str_to_title(prop_type))
               ),
-              Line = ifelse(is.na(line), "-", as.character(line)),
-              Projection = round(projection, 1),
-              `Over Odds` = format_odds(over_odds),
-              `Under Odds` = format_odds(under_odds),
-              `P(Over)` = sprintf("%.1f%%", p_over * 100),
-              `P(Under)` = sprintf("%.1f%%", p_under * 100),
+              `Market DK` = format_market_cell(
+                dplyr::coalesce(dk_line_over, dk_line),
+                dplyr::coalesce(dk_line_under, dk_line),
+                dk_over_odds,
+                dk_under_odds,
+                prop_type
+              ),
+              `Market FD` = format_market_cell(
+                dplyr::coalesce(fd_line_over, fd_line),
+                dplyr::coalesce(fd_line_under, fd_line),
+                fd_over_odds,
+                fd_under_odds,
+                prop_type
+              ),
+              `Market Used` = format_market_cell(
+                dplyr::coalesce(line_over, line),
+                dplyr::coalesce(line_under, line),
+                over_odds,
+                under_odds,
+                prop_type
+              ),
+              `Book Used` = format_book(book),
+              Model = dplyr::case_when(
+                prop_type == "anytime_td" ~ sprintf("%.1f%%", projection * 100),
+                TRUE ~ sprintf("%.1f", projection)
+              ),
+              `P(Over/Yes)` = dplyr::if_else(
+                is.na(p_over), "-", sprintf("%.1f%%", p_over * 100)
+              ),
+              `P(Under/No)` = dplyr::if_else(
+                is.na(p_under), "-", sprintf("%.1f%%", p_under * 100)
+              ),
               `EV Over` = dplyr::if_else(
                 is.na(ev_over), "-", sprintf("%+.1f%%", ev_over * 100)
               ),
@@ -3876,7 +4008,13 @@ export_moneyline_comparison_html <- function(comparison_tbl,
                 )
               ),
               `Edge Quality` = edge_quality_display,
-              Recommendation = recommendation
+              Recommendation = recommendation,
+              Source = dplyr::case_when(
+                is.na(line_source) & is.na(odds_source) ~ "-",
+                TRUE ~ paste0(dplyr::coalesce(line_source, "-"),
+                              "/",
+                              dplyr::coalesce(odds_source, "-"))
+              )
             ) %>%
             dplyr::select(-edge_quality_display)
 
@@ -3889,6 +4027,22 @@ export_moneyline_comparison_html <- function(comparison_tbl,
                 subtitle = sprintf("Monte Carlo: %s trials | Correlated with game simulation",
                                    format(if(exists("N_TRIALS")) N_TRIALS else 50000, big.mark = ","))
               ) %>%
+              gt::tab_spanner(
+                label = "Market",
+                columns = c("Market DK", "Market FD", "Market Used", "Book Used")
+              ) %>%
+              gt::tab_spanner(
+                label = "Model",
+                columns = c("Model", "P(Over/Yes)", "P(Under/No)")
+              ) %>%
+              gt::tab_spanner(
+                label = "Value",
+                columns = c("EV Over", "EV Under", "Edge Quality", "Recommendation")
+              ) %>%
+              gt::tab_spanner(
+                label = "Meta",
+                columns = c("Source")
+              ) %>%
               gt::tab_style(
                 style = gt::cell_fill(color = "#22c55e40"),
                 locations = gt::cells_body(
@@ -3896,8 +4050,11 @@ export_moneyline_comparison_html <- function(comparison_tbl,
                   rows = Recommendation %in% c("OVER", "UNDER", "BET")
                 )
               ) %>%
+              gt::tab_options(
+                table.width = gt::pct(100)
+              ) %>%
               gt::tab_source_note(
-                source_note = "Props correlated with game simulation | Normal dist (yards) | Negative Binomial (TDs)"
+                source_note = "Props correlated with game simulation | Normal dist (yards) | Poisson (receptions) | Negative Binomial (TDs)"
               )
           }, error = function(e) NULL)
 
@@ -3913,8 +4070,11 @@ export_moneyline_comparison_html <- function(comparison_tbl,
                 class = "tab-content props-content",
                 htmltools::HTML(props_intro),
                 htmltools::tags$div(
-                  class = "table-wrapper props-table",
-                  htmltools::HTML(props_gt_html)
+                  class = "table-bleed",
+                  htmltools::tags$div(
+                    class = "table-wrapper props-table",
+                    htmltools::HTML(props_gt_html)
+                  )
                 )
               )
             }
@@ -3972,8 +4132,11 @@ export_moneyline_comparison_html <- function(comparison_tbl,
           class = "tab-content active",
           intro_block,
           htmltools::tags$div(
-            class = "table-wrapper",
-            htmltools::HTML(gt_html)
+            class = "table-bleed",
+            htmltools::tags$div(
+              class = "table-wrapper",
+              htmltools::HTML(gt_html)
+            )
           )
         ),
         props_section
@@ -4048,6 +4211,21 @@ export_moneyline_comparison_html <- function(comparison_tbl,
             "hint.className='search-hint';",
             "hint.textContent='Press / to search, Esc to clear';",
             "input.parentNode.appendChild(hint);",
+            "function setStickyOffset(){",
+            "  var search=document.querySelector('.search-container');",
+            "  if(!search){return;}",
+            "  var offset=search.getBoundingClientRect().height;",
+            "  document.documentElement.style.setProperty('--sticky-offset',offset+'px');",
+            "  var spanner=document.querySelector('.tab-content.active .gt_table thead tr.gt_col_spanners');",
+            "  if(!spanner){spanner=document.querySelector('.gt_table thead tr.gt_col_spanners');}",
+            "  if(spanner){",
+            "    var spannerHeight=spanner.getBoundingClientRect().height;",
+            "    if(spannerHeight>0){document.documentElement.style.setProperty('--sticky-spanner',spannerHeight+'px');}",
+            "  }",
+            "}",
+            "window.setStickyOffset=setStickyOffset;",
+            "setStickyOffset();",
+            "window.addEventListener('resize',setStickyOffset);",
             "})();"
           ),
           table_id
@@ -4066,6 +4244,7 @@ export_moneyline_comparison_html <- function(comparison_tbl,
           "  var targetBtn=document.querySelector('[data-tab=\"'+tabName+'\"]');",
           "  if(targetSection)targetSection.classList.add('active');",
           "  if(targetBtn)targetBtn.classList.add('active');",
+          "  if(window.setStickyOffset){window.setStickyOffset();}",
           "}"
         )
       ))
@@ -4105,7 +4284,9 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       "body {font-family: 'Inter','Söhne','Source Sans Pro','Helvetica Neue',Arial,sans-serif; background: linear-gradient(135deg, #1A1815 0%, #2D2A26 50%, #1A1815 100%); color: #F5F4F0; margin: 0; min-height: 100vh; overflow-x: hidden;}\n",
       "#colorbends-canvas {position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: -2; pointer-events: none;}\n",
       ".canvas-overlay {position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: linear-gradient(135deg, rgba(26, 24, 21, 0.85) 0%, rgba(45, 42, 38, 0.75) 50%, rgba(26, 24, 21, 0.85) 100%); pointer-events: none; z-index: -1;}\n",
-      ".page-wrapper {max-width: 1400px; margin: 0 auto; padding: 3rem 1.5rem 4rem; position: relative; z-index: 1;}\n",
+        ".page-wrapper {max-width: 1400px; margin: 0 auto; padding: 3rem 1.5rem 4rem; position: relative; z-index: 1;}\n",
+        ".table-bleed {width: 100vw; margin-left: calc(50% - 50vw); padding: 0 1.5rem;}\n",
+      ".table-bleed {width: 100vw; margin-left: calc(50% - 50vw); padding: 0 1.5rem;}\n",
       ".table-wrapper {overflow-x: auto; border-radius: 24px; box-shadow: 0 25px 80px rgba(0, 0, 0, 0.4);}\n",
       ".report-intro {max-width: 1000px; margin: 0 auto 2.5rem; background: rgba(45, 42, 38, 0.8); backdrop-filter: blur(16px); padding: 2rem 2.25rem; border-radius: 24px; border: 1px solid rgba(217, 119, 87, 0.25); box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);}\n",
       ".report-intro h2 {margin: 0 0 1rem; font-size: 1.5rem; color: var(--claude-cream); font-weight: 600;}\n",
@@ -4296,7 +4477,10 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       wrapper <- htmltools::tags$div(
         class = "page-wrapper",
         search_box,
-        htmltools::tags$div(class = "table-wrapper", table_html)
+        htmltools::tags$div(
+          class = "table-bleed",
+          htmltools::tags$div(class = "table-wrapper", table_html)
+        )
       )
 
       script_block <- htmltools::tags$script(htmltools::HTML(
@@ -4382,7 +4566,7 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         "<div class=\"canvas-overlay\"></div>",
         "<div class=\"page-wrapper\"><input id=\"table-search\" type=\"search\" placeholder=\"Search teams, wagers, or math checks...\" aria-label=\"Search moneyline table\"/>",
         intro_html,
-        "<div class=\"table-wrapper\"><table id=\"",
+        "<div class=\"table-bleed\"><div class=\"table-wrapper\"><table id=\"",
         table_id,
         "\"><caption>",
         title,
@@ -4390,7 +4574,7 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         header,
         "</th></tr></thead><tbody>",
         paste(body, collapse = ""),
-        "</tbody></table></div></div><script>(function(){var input=document.getElementById('table-search');var table=document.getElementById('",
+        "</tbody></table></div></div></div><script>(function(){var input=document.getElementById('table-search');var table=document.getElementById('",
         table_id,
         "');if(!input||!table){return;}var rows=table.getElementsByTagName('tbody')[0].rows;input.addEventListener('input',function(){var query=this.value.toLowerCase();Array.prototype.forEach.call(rows,function(row){var text=row.textContent.toLowerCase();row.style.display=text.indexOf(query)>-1?'':'none';});});})();</script>",
         colorbends_script_fallback,

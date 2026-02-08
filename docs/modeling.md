@@ -172,14 +172,14 @@ Calibration maps raw simulation probabilities to better-calibrated probabilities
 
 Player prop simulations are correlated with game-level simulation outcomes using a Gaussian copula. This ensures that, for example, a QB's passing yards are higher in simulations where the game total is high.
 
-**Correlation targets** (empirically validated against nflreadr 2019-2024 data):
+**Correlation targets** (empirically validated against recent nflreadr data; see `scripts/correlation_audit.R`):
 
 | Relationship | Correlation (r) | 95% CI |
 |-------------|-----------------|--------|
-| QB passing <-> game total | 0.75 | [0.72, 0.78] |
-| RB rushing <-> game total | 0.60 | [0.55, 0.65] |
-| WR receiving <-> team passing | 0.50 | [0.45, 0.55] |
-| TD probability <-> game total | 0.40 | [0.35, 0.45] |
+| QB passing <-> game total | 0.40 | [0.35, 0.45] |
+| RB rushing <-> game total | 0.09 | [0.05, 0.12] |
+| WR/TE receiving <-> team passing | 0.30 | [0.26, 0.34] |
+| TD probability <-> game total | 0.17 | [0.14, 0.20] |
 | Same-team cannibalization | -0.15 | [-0.20, -0.10] |
 
 **Mechanism:** For each simulation trial, a reference z-score from the game simulation is used to generate a correlated z-score for the player prop via:
@@ -191,6 +191,8 @@ z_player = rho * z_game + sqrt(1 - rho^2) * z_independent
 Where `z_independent ~ N(0, 1)` is an independent standard normal draw.
 
 **Source:** `R/correlated_props.R:generate_correlated_variates()`
+
+**Audit:** Run `Rscript scripts/correlation_audit.R` to recompute empirical correlations from nflreadr data and compare against config values.
 
 ### 6.2 Yard Props (Truncated Normal)
 
@@ -221,6 +223,32 @@ P(Over line) = mean(simulated_yards > market_line)
 ```
 
 Computed as the proportion of simulation trials exceeding the market line.
+
+**Push-aware accounting (two-way props):**
+
+If books post asymmetric lines (or a whole-number line), the model tracks push probability:
+
+```
+p_push_over = mean(simulated == line_over)
+p_push_under = mean(simulated == line_under)
+```
+
+EV uses push-aware formulas so pushes are not treated as losses.
+
+### 6.2.1 Receptions (Count Model)
+
+Receptions are modeled as a count process with Poisson by default and optional Negative Binomial:
+
+```
+receptions ~ Poisson(lambda = baseline)
+```
+
+If `PROP_DISTRIBUTION_COUNT = "negbin"`, the model uses:
+
+```
+receptions ~ NegBin(size, mu = baseline)
+size = baseline / (RECEPTIONS_OVERDISPERSION - 1)
+```
 
 ### 6.3 Anytime TD Props (Negative Binomial)
 
@@ -253,7 +281,7 @@ P(anytime TD) = 1 - p0
 Player prop EV uses the same formula as game-level EV:
 
 ```
-EV = P(side) * (decimal_odds - 1) - (1 - P(side))
+EV = P(side) * (decimal_odds - 1) - (1 - P(side) - P(push))
 ```
 
 Where `P(side)` is the model probability for the relevant side (over or under for yards; anytime or no-TD for touchdowns).
@@ -296,9 +324,15 @@ Where `P(side)` is the model probability for the relevant side (over or under fo
 - Props below the 2% threshold receive no directional recommendation.
 
 **Prop odds sources:**
+- `PROP_ODDS_SOURCE = "auto"` prefers ScoresAndOdds scraping when allowed; otherwise uses The Odds API (if `ODDS_API_KEY` is set), then CSV.
 - `PROP_ODDS_SOURCE = "odds_api"` uses The Odds API (requires `ODDS_API_KEY`).
+- `PROP_ODDS_SOURCE = "scoresandodds"` uses the ScoresAndOdds market-comparison API (requires `PROP_ODDS_ALLOW_REMOTE_HTML = TRUE`).
 - `PROP_ODDS_SOURCE = "csv"` loads a local CSV from `PROP_ODDS_CSV_PATH`.
-- `PROP_ODDS_SOURCE = "model"` derives line + odds from the simulation distribution with `PROP_MARKET_VIG`.
+- `PROP_ODDS_SOURCE = "model"` derives line + odds from the simulation distribution with `PROP_MARKET_VIG` **only when** `PROP_ALLOW_MODEL_ODDS = TRUE`.
+- `PROP_ODDS_BOOK_PRIORITY` sets the preferred sportsbooks for market selection (default DraftKings -> FanDuel).
+- `PROP_ODDS_SCRAPE_DELAY_SEC` throttles remote scrape calls to respect rate limits (default 0.4s).
+- `PROP_ALLOW_MODEL_LINES` controls whether missing lines fall back to simulation quantiles (default TRUE).
+- `PROP_ALLOW_MODEL_ODDS` controls whether missing odds are synthesized from model probabilities (default FALSE).
 
 ---
 
@@ -306,13 +340,17 @@ Where `P(side)` is the model probability for the relevant side (over or under fo
 
 1. **Shrinkage hides the raw model view.** The displayed probability is the shrunk (blended) probability, not the direct simulation output. Users cannot see the model's "pure" opinion without consulting the raw simulation logs.
 
-2. **Prop odds fallback is synthetic when market data is unavailable.** If `ODDS_API_KEY` is missing or `PROP_ODDS_SOURCE` cannot load data, the pipeline derives a market line from the simulation distribution (default median) and applies a fixed vig (`PROP_MARKET_VIG`) to create implied over/under odds. These are model-derived and not sportsbook-specific.
+2. **Prop odds fallback is synthetic only when enabled.** If market odds are unavailable and `PROP_ALLOW_MODEL_ODDS = FALSE` (default), the report shows missing odds and suppresses EV/recommendations. Setting `PROP_ALLOW_MODEL_ODDS = TRUE` allows the pipeline to derive odds from the simulation distribution with `PROP_MARKET_VIG` (model-derived, not sportsbook-specific).
 
 3. **TD model uses average scoring TDs as the Negative Binomial mean.** For low-volume players (tight ends, QB rushers), this may underestimate variance because the sample size for their TD rates is small and unstable.
 
 4. **Calibration is trained on 2022-2024 data.** The calibration function may not generalize well to seasons with significant rule changes, scoring environment shifts, or other structural breaks in NFL gameplay.
 
 5. **Margin coherence is enforced post-hoc.** The function `harmonize_home_margin` reconciles cases where the raw simulation margin and the shrunk win probability disagree. In rare edge cases, these two quantities legitimately diverge, and the post-hoc adjustment may mask that signal.
+
+6. **Scraping rate limits vary by provider.** The model throttles ScoresAndOdds requests via `PROP_ODDS_SCRAPE_DELAY_SEC`, but explicit rate limits for public pages are not always published. Validate terms and adjust the delay as needed. Some providers (e.g., ScoresAndOdds, OddsTrader) prohibit automated scraping without permission, so only enable `PROP_ODDS_ALLOW_REMOTE_HTML` when licensed.
+
+7. **Aggregator coverage is source-specific.** The current implementation supports The Odds API and ScoresAndOdds. OddsTrader and Covers are not yet wired as automated sources.
 
 
 ## 10. Ambiguity Handling and Column Contracts

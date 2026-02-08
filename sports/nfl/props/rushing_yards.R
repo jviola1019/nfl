@@ -10,6 +10,12 @@
 #   probabilities for player prop betting (RB and QB).
 # =============================================================================
 
+# Provide local fallback for %||% when sourced directly
+if (!exists("%||%")) {
+  `%||%` <- function(x, y) if (is.null(x) || length(x) == 0 ||
+                                 (length(x) == 1 && is.na(x))) y else x
+}
+
 # Source configuration
 local({
   config_path <- file.path(dirname(sys.frame(1)$ofile %||% "."), "props_config.R")
@@ -99,11 +105,15 @@ simulate_rushing_yards <- function(
 #' @return List with probabilities and expected values
 #'
 #' @export
-rushing_yards_over_under <- function(simulation, line, over_odds = NA_real_, under_odds = NA_real_) {
+rushing_yards_over_under <- function(simulation, line,
+                                     over_odds = NA_real_, under_odds = NA_real_,
+                                     line_over = NA_real_, line_under = NA_real_) {
   yards <- simulation$simulated_yards
+  allow_model_lines <- isTRUE(if (exists("PROP_ALLOW_MODEL_LINES")) PROP_ALLOW_MODEL_LINES else TRUE)
+  allow_model_odds <- isTRUE(if (exists("PROP_ALLOW_MODEL_ODDS")) PROP_ALLOW_MODEL_ODDS else FALSE)
 
-  # Derive fallback line/odds from simulation when missing
-  if (!is.finite(line) || !is.finite(over_odds) || !is.finite(under_odds)) {
+  # Derive fallback line from simulation when missing
+  if (!is.finite(line) && allow_model_lines) {
     if (exists("derive_prop_market_from_sim", mode = "function")) {
       derived <- derive_prop_market_from_sim(
         yards,
@@ -111,36 +121,80 @@ rushing_yards_over_under <- function(simulation, line, over_odds = NA_real_, und
         vig = if (exists("PROP_MARKET_VIG")) PROP_MARKET_VIG else 0.045
       )
       if (!is.finite(line)) line <- derived$line
-      if (!is.finite(over_odds)) over_odds <- derived$over_odds
-      if (!is.finite(under_odds)) under_odds <- derived$under_odds
     }
   }
   if (!is.finite(line)) line <- stats::median(yards, na.rm = TRUE)
-  if (!is.finite(over_odds)) over_odds <- if (exists("DEFAULT_YARD_PROP_ODDS")) DEFAULT_YARD_PROP_ODDS else -110
-  if (!is.finite(under_odds)) under_odds <- if (exists("DEFAULT_YARD_PROP_ODDS")) DEFAULT_YARD_PROP_ODDS else -110
+  if (!is.finite(line_over)) line_over <- line
+  if (!is.finite(line_under)) line_under <- line
 
   # Calculate probabilities
-  p_over <- mean(yards > line)
-  p_under <- mean(yards < line)
-  p_push <- mean(yards == line)
+  p_over <- mean(yards > line_over)
+  p_under <- mean(yards < line_under)
+  p_push_over <- mean(yards == line_over)
+  p_push_under <- mean(yards == line_under)
+  p_push <- if (is.finite(line_over) && is.finite(line_under) &&
+                abs(line_over - line_under) <= 0.001) {
+    p_push_over
+  } else {
+    NA_real_
+  }
+
+  # Derive fallback odds from probabilities only when explicitly allowed
+  if (allow_model_odds && (!is.finite(over_odds) || !is.finite(under_odds))) {
+    if (exists("derive_two_way_odds_from_probs", mode = "function")) {
+      derived_odds <- derive_two_way_odds_from_probs(
+        p_over,
+        p_under,
+        vig = if (exists("PROP_MARKET_VIG")) PROP_MARKET_VIG else 0.045
+      )
+      if (!is.finite(over_odds)) over_odds <- derived_odds$over_odds
+      if (!is.finite(under_odds)) under_odds <- derived_odds$under_odds
+    }
+  }
 
   # Convert odds to decimal
-  over_dec <- if (over_odds >= 0) 1 + over_odds/100 else 1 + 100/abs(over_odds)
-  under_dec <- if (under_odds >= 0) 1 + under_odds/100 else 1 + 100/abs(under_odds)
+  over_dec <- if (is.finite(over_odds)) {
+    if (over_odds >= 0) 1 + over_odds/100 else 1 + 100/abs(over_odds)
+  } else {
+    NA_real_
+  }
+  under_dec <- if (is.finite(under_odds)) {
+    if (under_odds >= 0) 1 + under_odds/100 else 1 + 100/abs(under_odds)
+  } else {
+    NA_real_
+  }
 
-  # Calculate EV
-  ev_over <- p_over * (over_dec - 1) - p_under
-  ev_under <- p_under * (under_dec - 1) - p_over
+  # Calculate EV (push-aware)
+  ev_over <- if (is.finite(over_dec)) {
+    p_over * (over_dec - 1) - (1 - p_over - p_push_over)
+  } else {
+    NA_real_
+  }
+  ev_under <- if (is.finite(under_dec)) {
+    p_under * (under_dec - 1) - (1 - p_under - p_push_under)
+  } else {
+    NA_real_
+  }
 
   list(
     line = line,
+    line_over = line_over,
+    line_under = line_under,
+    over_odds = over_odds,
+    under_odds = under_odds,
     projection = simulation$projection,
     p_over = round(p_over, 4),
     p_under = round(p_under, 4),
     p_push = round(p_push, 4),
     ev_over = round(ev_over, 4),
     ev_under = round(ev_under, 4),
-    recommendation = if (ev_over > 0.02) "OVER" else if (ev_under > 0.02) "UNDER" else "PASS"
+    recommendation = if (is.finite(ev_over) && ev_over > 0.02) {
+      "OVER"
+    } else if (is.finite(ev_under) && ev_under > 0.02) {
+      "UNDER"
+    } else {
+      "PASS"
+    }
   )
 }
 
@@ -187,7 +241,9 @@ analyze_rushing_yards_prop <- function(
   is_home = FALSE,
   game_script = 0,
   over_odds = NA_real_,
-  under_odds = NA_real_
+  under_odds = NA_real_,
+  line_over = NA_real_,
+  line_under = NA_real_
 ) {
 
   # Run simulation
@@ -200,7 +256,7 @@ analyze_rushing_yards_prop <- function(
   )
 
   # Calculate over/under
-  ou <- rushing_yards_over_under(sim, line, over_odds, under_odds)
+  ou <- rushing_yards_over_under(sim, line, over_odds, under_odds, line_over, line_under)
 
   # Return complete analysis
   list(
@@ -208,11 +264,16 @@ analyze_rushing_yards_prop <- function(
     prop_type = "rushing_yards",
     position = position,
     opponent = opponent,
-    line = line,
+    line = ou$line,
+    line_over = ou$line_over,
+    line_under = ou$line_under,
+    over_odds = ou$over_odds,
+    under_odds = ou$under_odds,
     projection = sim$projection,
     ci_90 = sim$ci_90,
     p_over = ou$p_over,
     p_under = ou$p_under,
+    p_push = ou$p_push,
     ev_over = ou$ev_over,
     ev_under = ou$ev_under,
     recommendation = ou$recommendation,

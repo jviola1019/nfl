@@ -119,10 +119,21 @@ DEFAULT_YARD_PROP_ODDS <- -110     # Standard -110 both sides
 # =============================================================================
 
 # Source selection for prop odds:
+#  - "auto": Prefer ScoresAndOdds scraping when available; otherwise Odds API
 #  - "odds_api": The Odds API (requires ODDS_API_KEY)
+#  - "scoresandodds": ScoresAndOdds market-comparison API
 #  - "csv": Local CSV file (see PROP_ODDS_CSV_PATH)
 #  - "model": Synthetic market derived from simulation distribution
-if (!exists("PROP_ODDS_SOURCE")) PROP_ODDS_SOURCE <- "odds_api"
+if (!exists("PROP_ODDS_SOURCE")) PROP_ODDS_SOURCE <- "auto"
+
+# Allow remote HTML/API scraping (ScoresAndOdds) for props
+if (!exists("PROP_ODDS_ALLOW_REMOTE_HTML")) PROP_ODDS_ALLOW_REMOTE_HTML <- TRUE
+
+# Delay between scrape requests (seconds)
+if (!exists("PROP_ODDS_SCRAPE_DELAY_SEC")) PROP_ODDS_SCRAPE_DELAY_SEC <- 0.4
+
+# Preferred books for market odds selection
+if (!exists("PROP_ODDS_BOOK_PRIORITY")) PROP_ODDS_BOOK_PRIORITY <- c("draftkings", "fanduel")
 
 # Optional local CSV path for prop odds
 if (!exists("PROP_ODDS_CSV_PATH")) {
@@ -131,6 +142,11 @@ if (!exists("PROP_ODDS_CSV_PATH")) {
 
 # Default vig (overround) used when synthesizing odds from model probabilities
 if (!exists("PROP_MARKET_VIG")) PROP_MARKET_VIG <- 0.045
+
+# Allow model-derived fallback lines and odds when market data missing.
+# Lines default to enabled; odds default to disabled to avoid synthetic -110 output.
+if (!exists("PROP_ALLOW_MODEL_LINES")) PROP_ALLOW_MODEL_LINES <- TRUE
+if (!exists("PROP_ALLOW_MODEL_ODDS")) PROP_ALLOW_MODEL_ODDS <- FALSE
 
 # Quantile used to set fallback lines from simulation distribution
 # 0.50 = median (balanced)
@@ -149,6 +165,14 @@ RECEPTIONS_RB_BASELINE <- 2.5      # RB average
 RECEPTIONS_WR_SD <- 2.5
 RECEPTIONS_TE_SD <- 2.0
 RECEPTIONS_RB_SD <- 1.8
+
+# Situational adjustments
+RECEPTIONS_HOME_ADJ <- 0.2
+RECEPTIONS_DOME_ADJ <- 0.3
+RECEPTIONS_GAMESCRIPT_COEF <- 0.05  # Per expected point deficit
+
+# Overdispersion for count model (>=1; 1 = Poisson)
+RECEPTIONS_OVERDISPERSION <- 1.15
 
 # =============================================================================
 # COMPLETIONS PARAMETERS (QB)
@@ -195,9 +219,10 @@ PROP_MIN_BET_EDGE <- 0.02
 #' @return Logical scalar
 is_prop_model_error <- function(p_over, p_under, over_odds, under_odds, is_two_sided = TRUE) {
   sum_probs <- p_over + p_under
+  # When over/under lines differ across books, p_over + p_under can be < 0.9
   probs_valid <- is.finite(p_over) && is.finite(p_under) &&
     p_over >= 0 && p_over <= 1 && p_under >= 0 && p_under <= 1 &&
-    sum_probs <= 1.02 && sum_probs >= 0.90
+    sum_probs <= 1.05 && sum_probs >= 0.70
 
   odds_valid <- is.finite(over_odds) && (!is_two_sided || is.finite(under_odds))
 

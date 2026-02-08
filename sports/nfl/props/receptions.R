@@ -1,12 +1,12 @@
 # =============================================================================
-# FILE: sports/nfl/props/receiving_yards.R
-# PURPOSE: NFL player receiving yards prop simulation
+# FILE: sports/nfl/props/receptions.R
+# PURPOSE: NFL player receptions prop simulation
 #
-# VERSION: 2.8.0
-# LAST UPDATED: 2026-02-03
+# VERSION: 1.0.0
+# LAST UPDATED: 2026-02-07
 #
 # DESCRIPTION:
-#   Simulates receiving yards distributions and calculates over/under
+#   Simulates receptions distributions and calculates over/under
 #   probabilities for player prop betting (WR, TE, RB).
 # =============================================================================
 
@@ -22,119 +22,103 @@ local({
   if (file.exists(config_path)) source(config_path)
 })
 
-#' Simulate player receiving yards
+#' Simulate player receptions
 #'
-#' Monte Carlo simulation of receiving yards for a specific game.
-#'
-#' @param player_projection Player's baseline projection (yards)
+#' @param player_receptions Player's baseline receptions per game
 #' @param position Player position ("WR", "TE", or "RB")
-#' @param target_share Player's target share (0-1, e.g., 0.25 = 25%)
 #' @param opponent_def_rank Opponent pass defense rank (1-32, 1 = best)
 #' @param is_home Boolean: is player on home team?
 #' @param is_dome Boolean: is game indoors?
-#' @param game_script Expected point differential (negative = trailing = more passing)
+#' @param game_script Expected point differential (negative = trailing)
 #' @param n_trials Number of simulation trials
 #'
-#' @return List containing:
-#'   \item{projection}{Mean projected yards}
-#'   \item{sd}{Standard deviation}
-#'   \item{ci_90}{90% confidence interval}
-#'   \item{simulated_yards}{Vector of simulated values}
+#' @return List with projection, sd, and simulated receptions
 #'
 #' @export
-simulate_receiving_yards <- function(
-  player_projection = NULL,
+simulate_receptions <- function(
+  player_receptions = NULL,
   position = "WR",
-  target_share = 0.20,  # League average ~15-25%
-  opponent_def_rank = 16,  # Average
+  opponent_def_rank = 16,
   is_home = FALSE,
   is_dome = FALSE,
   game_script = 0,
   n_trials = PROP_TRIALS
 ) {
 
-  # Set baseline and SD based on position if no projection provided
-  baseline <- if (is.null(player_projection)) {
+  baseline <- if (is.null(player_receptions)) {
     switch(position,
-      WR = RECEIVING_YARDS_WR_BASELINE,
-      TE = RECEIVING_YARDS_TE_BASELINE,
-      RB = RECEIVING_YARDS_RB_BASELINE,
-      RECEIVING_YARDS_WR_BASELINE
+      WR = RECEPTIONS_WR_BASELINE,
+      TE = RECEPTIONS_TE_BASELINE,
+      RB = RECEPTIONS_RB_BASELINE,
+      RECEPTIONS_WR_BASELINE
     )
   } else {
-    player_projection
+    player_receptions
   }
 
   base_sd <- switch(position,
-    WR = RECEIVING_YARDS_WR_SD,
-    TE = RECEIVING_YARDS_TE_SD,
-    RB = RECEIVING_YARDS_RB_SD,
-    RECEIVING_YARDS_WR_SD
+    WR = RECEPTIONS_WR_SD,
+    TE = RECEPTIONS_TE_SD,
+    RB = RECEPTIONS_RB_SD,
+    RECEPTIONS_WR_SD
   )
 
-  # Start with player's baseline projection
   projection <- baseline
 
-  # Target share adjustment (above/below 20% average)
-  target_adj <- (target_share - 0.20) * 10 * TARGET_SHARE_MULTIPLIER * baseline
-  projection <- projection + target_adj
+  if (is_home) projection <- projection + RECEPTIONS_HOME_ADJ
+  if (is_dome) projection <- projection + RECEPTIONS_DOME_ADJ
 
-  # Apply home field adjustment
-  if (is_home) {
-    projection <- projection + RECEIVING_YARDS_HOME_ADJ
-  }
-
-  # Dome adjustment
-  if (is_dome) {
-    projection <- projection + RECEIVING_YARDS_DOME_ADJ
-  }
-
-  # Opponent defense adjustment
-  # Rank 1 = best defense = lower multiplier
-  # Rank 32 = worst defense = higher multiplier
-  def_mult_range <- PASSING_DEF_MULTIPLIER_RANGE  # Use passing defense for receivers
+  # Opponent defense adjustment (passing defense)
+  def_mult_range <- PASSING_DEF_MULTIPLIER_RANGE
   def_multiplier <- def_mult_range[1] + (opponent_def_rank - 1) / 31 * diff(def_mult_range)
   projection <- projection * def_multiplier
 
-  # Game script adjustment - negative script (trailing) means more passing
-  if (game_script < -7) {
-    projection <- projection * 1.15  # 15% boost when trailing
-  } else if (game_script > 7) {
-    projection <- projection * 0.90  # 10% reduction when leading
+  # Game script adjustment (trailing -> more targets)
+  if (game_script < 0) {
+    projection <- projection * (1 + abs(game_script) * RECEPTIONS_GAMESCRIPT_COEF / 10)
   }
 
-  # Ensure positive projection
-  projection <- max(5, projection)
+  projection <- max(0.5, projection)
 
-  # Standard deviation scales with projection
-  sd <- base_sd * (projection / baseline)
-
-  # Simulate using normal distribution
-  simulated <- rnorm(n_trials, mean = projection, sd = sd)
-  simulated <- pmax(0, simulated)  # No negative yards
+  # Distribution for counts
+  if (exists("PROP_DISTRIBUTION_COUNT") && PROP_DISTRIBUTION_COUNT == "negbin") {
+    overdispersion <- if (exists("RECEPTIONS_OVERDISPERSION")) RECEPTIONS_OVERDISPERSION else 1.15
+    if (overdispersion <= 1) {
+      simulated <- rpois(n_trials, lambda = projection)
+    } else {
+      size <- projection / (overdispersion - 1)
+      simulated <- rnbinom(n_trials, size = size, mu = projection)
+    }
+  } else {
+    simulated <- rpois(n_trials, lambda = projection)
+  }
 
   list(
-    projection = round(projection, 1),
-    sd = round(sd, 1),
-    ci_90 = quantile(simulated, c(0.05, 0.95)),
-    simulated_yards = simulated
+    projection = round(projection, 2),
+    sd = round(base_sd, 2),
+    simulated_receptions = simulated
   )
 }
 
-#' Calculate over/under probabilities for receiving yards
+#' Calculate over/under probabilities for receptions
 #'
-#' @param simulation Output from simulate_receiving_yards()
-#' @param line Market line (e.g., 65.5)
+#' @param simulation Output from simulate_receptions()
+#' @param line Market line (e.g., 5.5)
 #' @param over_odds American odds for over (NA -> derived from simulation)
 #' @param under_odds American odds for under (NA -> derived from simulation)
+#' @param line_over Optional line for over side
+#' @param line_under Optional line for under side
 #'
 #' @return List with probabilities and expected values
 #'
 #' @export
-receiving_yards_over_under <- function(simulation, line,
-                                       over_odds = NA_real_, under_odds = NA_real_,
-                                       line_over = NA_real_, line_under = NA_real_) {
-  yards <- simulation$simulated_yards
+receptions_over_under <- function(simulation,
+                                  line = NA_real_,
+                                  over_odds = NA_real_,
+                                  under_odds = NA_real_,
+                                  line_over = NA_real_,
+                                  line_under = NA_real_) {
+  recs <- simulation$simulated_receptions
   allow_model_lines <- isTRUE(if (exists("PROP_ALLOW_MODEL_LINES")) PROP_ALLOW_MODEL_LINES else TRUE)
   allow_model_odds <- isTRUE(if (exists("PROP_ALLOW_MODEL_ODDS")) PROP_ALLOW_MODEL_ODDS else FALSE)
 
@@ -142,22 +126,22 @@ receiving_yards_over_under <- function(simulation, line,
   if (!is.finite(line) && allow_model_lines) {
     if (exists("derive_prop_market_from_sim", mode = "function")) {
       derived <- derive_prop_market_from_sim(
-        yards,
+        recs,
         line_quantile = if (exists("PROP_FALLBACK_LINE_QUANTILE")) PROP_FALLBACK_LINE_QUANTILE else 0.50,
         vig = if (exists("PROP_MARKET_VIG")) PROP_MARKET_VIG else 0.045
       )
       if (!is.finite(line)) line <- derived$line
     }
   }
-  if (!is.finite(line)) line <- stats::median(yards, na.rm = TRUE)
+
   if (!is.finite(line_over)) line_over <- line
   if (!is.finite(line_under)) line_under <- line
 
-  # Calculate probabilities
-  p_over <- mean(yards > line_over)
-  p_under <- mean(yards < line_under)
-  p_push_over <- mean(yards == line_over)
-  p_push_under <- mean(yards == line_under)
+  # Calculate probabilities using side-specific lines
+  p_over <- mean(recs > line_over)
+  p_under <- mean(recs < line_under)
+  p_push_over <- mean(recs == line_over)
+  p_push_under <- mean(recs == line_under)
   p_push <- if (is.finite(line_over) && is.finite(line_under) &&
                 abs(line_over - line_under) <= 0.001) {
     p_push_over
@@ -190,7 +174,7 @@ receiving_yards_over_under <- function(simulation, line,
     NA_real_
   }
 
-  # Calculate EV (push-aware)
+  # Calculate EV (push-aware, line-specific)
   ev_over <- if (is.finite(over_dec)) {
     p_over * (over_dec - 1) - (1 - p_over - p_push_over)
   } else {
@@ -206,8 +190,6 @@ receiving_yards_over_under <- function(simulation, line,
     line = line,
     line_over = line_over,
     line_under = line_under,
-    over_odds = over_odds,
-    under_odds = under_odds,
     projection = simulation$projection,
     p_over = round(p_over, 4),
     p_under = round(p_under, 4),
@@ -224,48 +206,29 @@ receiving_yards_over_under <- function(simulation, line,
   )
 }
 
-#' Full receiving yards prop analysis
-#'
-#' Complete pipeline from inputs to betting recommendation.
+#' Full receptions prop analysis
 #'
 #' @param player_name Player name (for display)
-#' @param player_avg_yards Player's season average receiving yards
+#' @param player_avg_receptions Player's season average receptions
 #' @param position Player position ("WR", "TE", "RB")
-#' @param target_share Player's target share (0-1)
-#' @param line Market line
 #' @param opponent Opponent team abbreviation
 #' @param opp_pass_def_rank Opponent pass defense rank (1-32)
 #' @param is_home Is player's team at home?
 #' @param is_dome Indoor game?
 #' @param game_script Expected point differential
+#' @param line Market line
 #' @param over_odds American odds for over (NA -> derived from simulation)
 #' @param under_odds American odds for under (NA -> derived from simulation)
+#' @param line_over Optional line for over side
+#' @param line_under Optional line for under side
 #'
 #' @return List with complete analysis
 #'
-#' @examples
-#' \dontrun{
-#'   result <- analyze_receiving_yards_prop(
-#'     player_name = "CeeDee Lamb",
-#'     player_avg_yards = 95,
-#'     position = "WR",
-#'     target_share = 0.28,
-#'     line = 85.5,
-#'     opponent = "PHI",
-#'     opp_pass_def_rank = 8,
-#'     is_home = FALSE,
-#'     is_dome = FALSE,
-#'     game_script = 0
-#'   )
-#'   print(result)
-#' }
-#'
 #' @export
-analyze_receiving_yards_prop <- function(
+analyze_receptions_prop <- function(
   player_name,
-  player_avg_yards,
+  player_avg_receptions,
   position = "WR",
-  target_share = 0.20,
   line = NA_real_,
   opponent,
   opp_pass_def_rank,
@@ -278,45 +241,28 @@ analyze_receiving_yards_prop <- function(
   line_under = NA_real_
 ) {
 
-  # Run simulation
-  sim <- simulate_receiving_yards(
-    player_projection = player_avg_yards,
+  sim <- simulate_receptions(
+    player_receptions = player_avg_receptions,
     position = position,
-    target_share = target_share,
     opponent_def_rank = opp_pass_def_rank,
     is_home = is_home,
     is_dome = is_dome,
     game_script = game_script
   )
 
-  # Calculate over/under
-  ou <- receiving_yards_over_under(sim, line, over_odds, under_odds, line_over, line_under)
+  ou <- receptions_over_under(sim, line, over_odds, under_odds, line_over, line_under)
 
-  # Return complete analysis
   list(
     player = player_name,
-    prop_type = "receiving_yards",
-    position = position,
-    opponent = opponent,
+    projection = ou$projection,
     line = ou$line,
     line_over = ou$line_over,
     line_under = ou$line_under,
-    over_odds = ou$over_odds,
-    under_odds = ou$under_odds,
-    projection = sim$projection,
-    ci_90 = sim$ci_90,
     p_over = ou$p_over,
     p_under = ou$p_under,
     p_push = ou$p_push,
     ev_over = ou$ev_over,
     ev_under = ou$ev_under,
-    recommendation = ou$recommendation,
-    factors = list(
-      is_home = is_home,
-      is_dome = is_dome,
-      opp_def_rank = opp_pass_def_rank,
-      target_share = target_share,
-      game_script = game_script
-    )
+    recommendation = ou$recommendation
   )
 }

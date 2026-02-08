@@ -910,6 +910,25 @@ Key columns and definitions for the game table:
 - `Blend Home ML (Vigged, +X%)`: `apply_moneyline_vig(blend_home_ml, vig)` (display only).
 - `Blend Away Moneyline (Vigged)`: `apply_moneyline_vig(blend_away_ml, vig)` (display only).
 
+### Player Props Report Columns (HTML)
+
+Key columns and definitions for the player props table:
+
+- `Market DK`: DraftKings line + odds (Over/Under) when available. Anytime TD rows append implied percent to the "Yes" odds.
+- `Market FD`: FanDuel line + odds (Over/Under) when available. Anytime TD rows append implied percent to the "Yes" odds.
+- `Market Used`: The line/odds selected by the odds resolver (book priority + best price). Anytime TD rows append implied percent to the "Yes" odds.
+- `Book Used`: Book key used for `Market Used` (e.g., `draftkings`, `fanduel`).
+- `Model`: Model projection (yards/receptions) or anytime TD probability (percent).
+- `P(Over/Yes)`: Model probability of the Over/Yes outcome.
+- `P(Under/No)`: Model probability of the Under/No outcome.
+- `EV Over`: Expected value for Over/Yes using market odds.
+- `EV Under`: Expected value for Under/No using market odds (blank if no "No" odds).
+- `Edge Quality`: EV tier (OK/High/Review/Pass) using best positive EV.
+- `Recommendation`: `OVER`, `UNDER`, `BET`, `REVIEW`, or `PASS`.
+- `Source`: `line_source/odds_source` (e.g., `market/market`, `model/model`, or `model/missing`). When `odds_source = missing`, EV and recommendations are suppressed.
+
+**Anytime TD props:** Only the "Yes" side is priced in most books. The table displays `P(Over/Yes)` and `EV Over` only, with `EV Under` left blank unless "No" odds exist. If `PROP_ALLOW_MODEL_ODDS = FALSE` and no market odds are found, the "Yes" odds stay blank and the recommendation is `PASS`.
+
 
 ---
 

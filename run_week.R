@@ -144,6 +144,7 @@ tryCatch({
                   verbose = FALSE
                 )
                 if (nrow(report_tbl) > 0) {
+                  assign("last_comparison_tbl", report_tbl, envir = .GlobalEnv)
                   export_moneyline_comparison_html(
                     comparison_tbl = report_tbl,
                     file = file.path(getwd(), "NFLvsmarket_report.html"),
@@ -191,6 +192,7 @@ tryCatch({
               verbose = FALSE
             )
             if (nrow(report_tbl) > 0) {
+              assign("last_comparison_tbl", report_tbl, envir = .GlobalEnv)
               export_moneyline_comparison_html(
                 comparison_tbl = report_tbl,
                 file = file.path(getwd(), "NFLvsmarket_report.html"),
@@ -215,6 +217,59 @@ tryCatch({
   if (!exists(".props_html_opened") && file.exists(html_path)) {
     tryCatch(utils::browseURL(html_path), error = function(e) NULL)
   }
+
+  # Export audit artifacts (baseline tables + run context)
+  tryCatch({
+    artifact_dir <- file.path(getwd(), "artifacts")
+    if (!dir.exists(artifact_dir)) dir.create(artifact_dir, recursive = TRUE)
+    if (file.exists(html_path)) {
+      file.copy(html_path, file.path(artifact_dir, "baseline_report.html"), overwrite = TRUE)
+    }
+    if (exists("last_comparison_tbl") && is.data.frame(last_comparison_tbl)) {
+      games_export <- last_comparison_tbl
+      list_cols <- vapply(games_export, is.list, logical(1))
+      if (any(list_cols)) {
+        games_export[list_cols] <- lapply(games_export[list_cols], function(col) {
+          vapply(col, function(v) {
+            if (is.null(v) || length(v) == 0) return(NA_character_)
+            if (is.atomic(v)) return(paste(v, collapse = ";"))
+            paste(unlist(v), collapse = ";")
+          }, character(1))
+        })
+      }
+      utils::write.csv(games_export, file.path(artifact_dir, "baseline_games.csv"), row.names = FALSE)
+    }
+    if (exists("props_results") && is.data.frame(props_results)) {
+      props_export <- props_results
+      list_cols <- vapply(props_export, is.list, logical(1))
+      if (any(list_cols)) {
+        props_export[list_cols] <- lapply(props_export[list_cols], function(col) {
+          vapply(col, function(v) {
+            if (is.null(v) || length(v) == 0) return(NA_character_)
+            if (is.atomic(v)) return(paste(v, collapse = ";"))
+            paste(unlist(v), collapse = ";")
+          }, character(1))
+        })
+      }
+      utils::write.csv(props_export, file.path(artifact_dir, "baseline_props.csv"), row.names = FALSE)
+    }
+
+    log_dir <- file.path(getwd(), "run_logs")
+    if (!dir.exists(log_dir)) dir.create(log_dir, recursive = TRUE)
+    timestamp <- format(Sys.time(), "%Y%m%d_%H%M%S")
+    commit_hash <- tryCatch(system("git rev-parse HEAD", intern = TRUE), error = function(e) NA_character_)
+    trials <- if (exists("N_TRIALS")) format(N_TRIALS, big.mark = ",") else "NA"
+    log_lines <- c(
+      sprintf("timestamp=%s", timestamp),
+      sprintf("season=%s", SEASON),
+      sprintf("week=%s", WEEK_TO_SIM),
+      sprintf("trials=%s", trials),
+      sprintf("commit=%s", ifelse(length(commit_hash) > 0, commit_hash[1], NA_character_))
+    )
+    writeLines(log_lines, file.path(log_dir, sprintf("audit_context_%s.txt", timestamp)))
+  }, error = function(e) {
+    message(sprintf("Audit artifact export failed: %s", e$message))
+  })
 
   cat("\n")
   cat("=================================================================\n")

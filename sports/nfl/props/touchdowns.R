@@ -16,6 +16,12 @@
 #   - Validated against historical TD distributions (Pearson chi-squared p > 0.05)
 # =============================================================================
 
+# Provide local fallback for %||% when sourced directly
+if (!exists("%||%")) {
+  `%||%` <- function(x, y) if (is.null(x) || length(x) == 0 ||
+                                 (length(x) == 1 && is.na(x))) y else x
+}
+
 # Source configuration
 local({
   config_path <- file.path(dirname(sys.frame(1)$ofile %||% "."), "props_config.R")
@@ -161,13 +167,25 @@ simulate_touchdowns <- function(
 #' @export
 anytime_td_scorer_ev <- function(simulation, anytime_odds = NA_real_) {
   p_td <- simulation$p_anytime_td
+  allow_model_odds <- isTRUE(if (exists("PROP_ALLOW_MODEL_ODDS")) PROP_ALLOW_MODEL_ODDS else FALSE)
 
   # Derive odds from model probability when missing
-  if (!is.finite(anytime_odds) && exists("derive_one_way_odds_from_prob", mode = "function")) {
+  if (!is.finite(anytime_odds) && allow_model_odds &&
+      exists("derive_one_way_odds_from_prob", mode = "function")) {
     anytime_odds <- derive_one_way_odds_from_prob(
       p_td,
       vig = if (exists("PROP_MARKET_VIG")) PROP_MARKET_VIG else 0.045
     )
+  }
+
+  if (!is.finite(anytime_odds)) {
+    return(list(
+      model_prob = round(p_td, 4),
+      implied_prob = NA_real_,
+      edge = NA_real_,
+      ev = NA_real_,
+      recommendation = "PASS"
+    ))
   }
 
   # Convert odds to decimal

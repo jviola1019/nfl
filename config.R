@@ -804,7 +804,7 @@ RUN_PLAYER_PROPS <- TRUE
 
 #' @description Prop types to simulate
 #' @default c("passing", "rushing", "receiving", "td")
-PROP_TYPES <- c("passing", "rushing", "receiving", "td")
+PROP_TYPES <- c("passing", "rushing", "receiving", "receptions", "td")
 
 # Correlation coefficients (empirically derived from 2019-2024 NFL data)
 # These control how strongly player stats correlate with game outcomes
@@ -812,22 +812,22 @@ PROP_TYPES <- c("passing", "rushing", "receiving", "td")
 #' @description QB passing yards correlation with game total
 #' @default 0.75
 #' @validation Based on nflreadr data 2019-2024, r = 0.72-0.78
-PROP_GAME_CORR_PASSING <- 0.75
+PROP_GAME_CORR_PASSING <- 0.40
 
 #' @description RB rushing yards correlation with game total
 #' @default 0.60
 #' @validation Based on nflreadr data 2019-2024, r = 0.55-0.65
-PROP_GAME_CORR_RUSHING <- 0.60
+PROP_GAME_CORR_RUSHING <- 0.09
 
 #' @description WR/TE receiving yards correlation with team passing
 #' @default 0.50
 #' @validation Based on nflreadr data 2019-2024, r = 0.45-0.55
-PROP_GAME_CORR_RECEIVING <- 0.50
+PROP_GAME_CORR_RECEIVING <- 0.30
 
 #' @description TD probability correlation with game total
 #' @default 0.40
 #' @validation Overdispersed count data, correlation weaker
-PROP_GAME_CORR_TD <- 0.40
+PROP_GAME_CORR_TD <- 0.17
 
 #' @description Intra-team player correlation (cannibalization effect)
 #' @default -0.15
@@ -854,9 +854,22 @@ ODDS_API_KEY <- Sys.getenv("ODDS_API_KEY", unset = "")
 #' @note Set FALSE to always use position-based default odds
 USE_REAL_PROP_ODDS <- TRUE
 
-#' @description Prop odds source ("odds_api", "csv", or "model")
-#' @default "odds_api"
-PROP_ODDS_SOURCE <- "odds_api"
+#' @description Prop odds source ("auto", "odds_api", "scoresandodds", "csv", or "model")
+#' @default "auto"
+#' @note "auto" prefers ScoresAndOdds scraping when allowed, otherwise Odds API
+PROP_ODDS_SOURCE <- "auto"
+
+#' @description Allow remote HTML/API scraping for prop odds
+#' @default TRUE
+PROP_ODDS_ALLOW_REMOTE_HTML <- TRUE
+
+#' @description Delay (seconds) between prop odds scrape requests
+#' @default 0.4
+PROP_ODDS_SCRAPE_DELAY_SEC <- 0.4
+
+#' @description Preferred books for market odds selection
+#' @default c("draftkings","fanduel")
+PROP_ODDS_BOOK_PRIORITY <- c("draftkings", "fanduel")
 
 #' @description Optional CSV path for prop odds (used when source = "csv")
 #' @default artifacts/prop_odds.csv
@@ -865,6 +878,14 @@ PROP_ODDS_CSV_PATH <- file.path(getwd(), "artifacts", "prop_odds.csv")
 #' @description Vig (overround) applied when synthesizing odds from model probs
 #' @default 0.045 (~4.5%)
 PROP_MARKET_VIG <- 0.045
+
+#' @description Allow model-derived fallback lines when market lines are missing
+#' @default TRUE
+PROP_ALLOW_MODEL_LINES <- TRUE
+
+#' @description Allow model-derived fallback odds when market odds are missing
+#' @default FALSE (leave odds blank and suppress EV)
+PROP_ALLOW_MODEL_ODDS <- FALSE
 
 #' @description Quantile used to derive fallback prop lines from simulation
 #' @default 0.50 (median)

@@ -86,6 +86,9 @@ load_player_projections <- function(season = NULL, week = NULL, min_games = 3) {
       avg_passing_yards = numeric(),
       avg_rushing_yards = numeric(),
       avg_receiving_yards = numeric(),
+      avg_receptions = numeric(),
+      avg_targets = numeric(),
+      sd_receptions = numeric(),
       avg_touchdowns = numeric(),
       avg_scoring_tds = numeric()
     ))
@@ -131,6 +134,10 @@ load_player_projections <- function(season = NULL, week = NULL, min_games = 3) {
         # Receiving stats (WRs, TEs, RBs)
         avg_receiving_yards = mean(receiving_yards, na.rm = TRUE),
         sd_receiving_yards = stats::sd(receiving_yards, na.rm = TRUE),
+        avg_receptions = mean(receptions, na.rm = TRUE),
+        sd_receptions = stats::sd(receptions, na.rm = TRUE),
+        avg_targets = mean(targets, na.rm = TRUE),
+        sd_targets = stats::sd(targets, na.rm = TRUE),
 
         # Scoring touchdowns (rushing + receiving only - for anytime TD props)
         avg_scoring_tds = mean(

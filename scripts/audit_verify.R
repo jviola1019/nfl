@@ -97,6 +97,8 @@ log_check("P-CHECK-2c: get_default_prop_odds() exists",
 # P-CHECK-3: Default prop odds are realistic
 # =============================================================================
 if (exists("get_default_prop_odds", mode = "function")) {
+  old_allow <- if (exists("PROP_ALLOW_MODEL_ODDS")) PROP_ALLOW_MODEL_ODDS else NULL
+  assign("PROP_ALLOW_MODEL_ODDS", TRUE, envir = .GlobalEnv)
   qb_odds <- get_default_prop_odds("anytime_td", "QB", 0)
   rb_odds <- get_default_prop_odds("anytime_td", "RB", 0)
   wr_odds <- get_default_prop_odds("anytime_td", "WR", 0)
@@ -112,6 +114,14 @@ if (exists("get_default_prop_odds", mode = "function")) {
   log_check("P-CHECK-3c: WR TD odds realistic (+100 to +250)",
             wr_odds$over_odds >= 100 && wr_odds$over_odds <= 250,
             sprintf("Got %+d", wr_odds$over_odds))
+
+  if (is.null(old_allow)) {
+    if (exists("PROP_ALLOW_MODEL_ODDS", envir = .GlobalEnv)) {
+      rm("PROP_ALLOW_MODEL_ODDS", envir = .GlobalEnv)
+    }
+  } else {
+    assign("PROP_ALLOW_MODEL_ODDS", old_allow, envir = .GlobalEnv)
+  }
 } else {
   log_check("P-CHECK-3: Default prop odds functions missing", FALSE)
 }

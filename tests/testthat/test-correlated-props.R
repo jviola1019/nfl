@@ -47,19 +47,19 @@ test_that("get_game_correlation returns valid coefficients", {
 
   # QB passing should have highest correlation
   qb_corr <- get_game_correlation("QB", "passing")
-  expect_true(qb_corr >= 0.70 && qb_corr <= 0.85)
+  expect_true(qb_corr >= 0.30 && qb_corr <= 0.50)
 
   # RB rushing
   rb_corr <- get_game_correlation("RB", "rushing")
-  expect_true(rb_corr >= 0.50 && rb_corr <= 0.70)
+  expect_true(rb_corr >= 0.05 && rb_corr <= 0.20)
 
   # WR receiving
   wr_corr <- get_game_correlation("WR", "receiving")
-  expect_true(wr_corr >= 0.40 && wr_corr <= 0.60)
+  expect_true(wr_corr >= 0.20 && wr_corr <= 0.40)
 
   # TD probability
   td_corr <- get_game_correlation("RB", "td")
-  expect_true(td_corr >= 0.30 && td_corr <= 0.50)
+  expect_true(td_corr >= 0.10 && td_corr <= 0.25)
 })
 
 test_that("get_intrateam_correlation returns negative values for competition", {
@@ -351,17 +351,17 @@ test_that("correlation coefficients match empirical benchmarks", {
   # Skip if running without full environment
   skip_if_not(exists("PROP_GAME_CORR_PASSING"), "Config not loaded")
 
-  # QB passing correlation should be 0.72-0.78 (empirical 2019-2024)
-  expect_true(PROP_GAME_CORR_PASSING >= 0.70)
-  expect_true(PROP_GAME_CORR_PASSING <= 0.80)
+  # QB passing correlation should match empirical 2023-2025 audits (approx 0.40)
+  expect_true(PROP_GAME_CORR_PASSING >= 0.30)
+  expect_true(PROP_GAME_CORR_PASSING <= 0.50)
 
-  # RB rushing correlation should be 0.55-0.65
-  expect_true(PROP_GAME_CORR_RUSHING >= 0.55)
-  expect_true(PROP_GAME_CORR_RUSHING <= 0.70)
+  # RB rushing correlation should be low (approx 0.09)
+  expect_true(PROP_GAME_CORR_RUSHING >= 0.05)
+  expect_true(PROP_GAME_CORR_RUSHING <= 0.20)
 
-  # WR receiving correlation should be 0.45-0.55
-  expect_true(PROP_GAME_CORR_RECEIVING >= 0.45)
-  expect_true(PROP_GAME_CORR_RECEIVING <= 0.60)
+  # WR receiving correlation should be moderate (approx 0.30)
+  expect_true(PROP_GAME_CORR_RECEIVING >= 0.20)
+  expect_true(PROP_GAME_CORR_RECEIVING <= 0.40)
 })
 
 test_that("Monte Carlo generates reproducible results with seed", {
@@ -498,27 +498,27 @@ test_that("prop simulations converge with sufficient trials", {
 # =============================================================================
 
 test_that("correlation coefficients are within empirical bounds", {
-  # Based on 2019-2024 NFL data analysis via nflreadr
-  # These bounds validated against 5 seasons of player stats
+  # Based on 2023-2025 NFL data analysis via nflreadr
+  # These bounds validated against recent seasons of player stats
 
   # Skip if config not loaded
   skip_if_not(exists("PROP_GAME_CORR_PASSING"), "Config not loaded")
 
-  # QB passing ↔ game total: empirical r = 0.72-0.78
-  expect_true(PROP_GAME_CORR_PASSING >= 0.70)
-  expect_true(PROP_GAME_CORR_PASSING <= 0.80)
+  # QB passing ↔ game total: empirical r ~0.40
+  expect_true(PROP_GAME_CORR_PASSING >= 0.30)
+  expect_true(PROP_GAME_CORR_PASSING <= 0.50)
 
-  # RB rushing ↔ game total: empirical r = 0.55-0.65
-  expect_true(PROP_GAME_CORR_RUSHING >= 0.55)
-  expect_true(PROP_GAME_CORR_RUSHING <= 0.65)
+  # RB rushing ↔ game total: empirical r ~0.09
+  expect_true(PROP_GAME_CORR_RUSHING >= 0.05)
+  expect_true(PROP_GAME_CORR_RUSHING <= 0.20)
 
-  # WR receiving ↔ team passing: empirical r = 0.45-0.55
-  expect_true(PROP_GAME_CORR_RECEIVING >= 0.45)
-  expect_true(PROP_GAME_CORR_RECEIVING <= 0.55)
+  # WR receiving ↔ team passing: empirical r ~0.30
+  expect_true(PROP_GAME_CORR_RECEIVING >= 0.20)
+  expect_true(PROP_GAME_CORR_RECEIVING <= 0.40)
 
-  # TD probability ↔ game total: empirical r = 0.35-0.45
-  expect_true(PROP_GAME_CORR_TD >= 0.35)
-  expect_true(PROP_GAME_CORR_TD <= 0.45)
+  # TD probability ↔ game total: empirical r ~0.17
+  expect_true(PROP_GAME_CORR_TD >= 0.10)
+  expect_true(PROP_GAME_CORR_TD <= 0.25)
 
   # Same-team cannibalization: empirical r = -0.20 to -0.10
   expect_true(PROP_SAME_TEAM_CORR >= -0.25)

@@ -47,8 +47,8 @@ load_prop_odds <- function(
 
   # Check for API key
   if (is.null(api_key) || api_key == "") {
-    message("INFO: ODDS_API_KEY not set - skipping odds API (model-derived fallback enabled)")
-    message("  Set ODDS_API_KEY environment variable for real market data")
+    message("INFO: ODDS_API_KEY not set - skipping odds API")
+    message("  Set ODDS_API_KEY for real market data or enable PROP_ALLOW_MODEL_ODDS for synthetic odds")
     return(NULL)
   }
 
@@ -222,6 +222,179 @@ load_prop_odds <- function(
   all_props
 }
 
+# =============================================================================
+# SCORESANDODDS MARKET-COMPARISON SCRAPER
+# =============================================================================
+
+scoresandodds_market_map <- c(
+  passing_yards = "passing yards",
+  rushing_yards = "rushing yards",
+  receiving_yards = "receiving yards",
+  receptions = "receptions",
+  anytime_td = "touchdowns"
+)
+
+scoresandodds_user_agent <- "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+
+scoresandodds_endpoint_map <- c(
+  passing_yards = "https://www.scoresandodds.com/nfl/props/passing-yards",
+  rushing_yards = "https://www.scoresandodds.com/nfl/props/rushing-yards",
+  receiving_yards = "https://www.scoresandodds.com/nfl/props/receiving-yards",
+  receptions = "https://www.scoresandodds.com/nfl/props/receptions",
+  anytime_td = "https://www.scoresandodds.com/nfl/props/touchdowns"
+)
+
+extract_scoresandodds_events <- function(html_text) {
+  if (!requireNamespace("xml2", quietly = TRUE)) return(character(0))
+  doc <- tryCatch(xml2::read_html(html_text), error = function(e) NULL)
+  if (is.null(doc)) return(character(0))
+  nodes <- xml2::xml_find_all(doc, "//*[@data-event]")
+  events <- unique(xml2::xml_attr(nodes, "data-event"))
+  events <- events[!is.na(events) & nzchar(events)]
+  events
+}
+
+fetch_scoresandodds_market <- function(event_id, market) {
+  if (!requireNamespace("httr", quietly = TRUE) ||
+      !requireNamespace("jsonlite", quietly = TRUE)) return(NULL)
+
+  base_url <- "https://rga51lus77.execute-api.us-east-1.amazonaws.com/prod/market-comparison"
+  url <- sprintf("%s?event=%s&market=%s",
+                 base_url,
+                 utils::URLencode(event_id, reserved = TRUE),
+                 utils::URLencode(market, reserved = TRUE))
+
+  ua <- scoresandodds_user_agent %||% "Mozilla/5.0"
+  resp <- tryCatch({
+    httr::GET(url, httr::timeout(15), httr::user_agent(ua))
+  }, error = function(e) NULL)
+
+  if (is.null(resp) || httr::status_code(resp) != 200) return(NULL)
+
+  content <- tryCatch({
+    jsonlite::fromJSON(
+      httr::content(resp, "text", encoding = "UTF-8"),
+      simplifyVector = FALSE
+    )
+  }, error = function(e) NULL)
+
+  content
+}
+
+parse_scoresandodds_market_json <- function(payload, prop_type) {
+  if (is.null(payload) || !is.list(payload) || is.null(payload$markets)) {
+    return(tibble::tibble())
+  }
+
+  home_team <- payload$event$home$key %||% NA_character_
+  away_team <- payload$event$away$key %||% NA_character_
+  event_id <- if (!is.null(payload$event) && !is.null(payload$event$sport)) {
+    sprintf("%s/%s", payload$event$sport, payload$event$home$id %||% payload$event$away$id %||% "")
+  } else {
+    NA_character_
+  }
+
+  rows <- lapply(payload$markets, function(mkt) {
+    if (is.null(mkt) || !is.list(mkt)) return(NULL)
+    if (is.null(mkt$comparison)) return(NULL)
+    player_name <- NA_character_
+    if (!is.null(mkt$player$first_name)) {
+      player_name <- paste(mkt$player$first_name, mkt$player$last_name)
+    } else if (!is.null(mkt$player$last_name)) {
+      player_name <- mkt$player$last_name
+    }
+
+    team_key <- mkt$player$team$key %||% NA_character_
+
+    book_rows <- lapply(names(mkt$comparison), function(book_key) {
+      bk <- mkt$comparison[[book_key]]
+      if (is.null(bk)) return(NULL)
+      available <- bk$available
+      if (isFALSE(available)) return(NULL)
+      tibble::tibble(
+        player = player_name,
+        prop_type = prop_type,
+        line = suppressWarnings(as.numeric(bk$value)),
+        line_over = suppressWarnings(as.numeric(bk$value)),
+        line_under = suppressWarnings(as.numeric(bk$value)),
+        over_odds = suppressWarnings(as.numeric(bk$over)),
+        under_odds = suppressWarnings(as.numeric(bk$under)),
+        book = book_key,
+        event_id = payload$event$id %||% NA_character_,
+        home_team = home_team,
+        away_team = away_team,
+        team = team_key,
+        source = "scoresandodds"
+      )
+    })
+    dplyr::bind_rows(book_rows)
+  })
+
+  dplyr::bind_rows(rows)
+}
+
+#' Load prop odds from ScoresAndOdds market-comparison API
+#'
+#' @param prop_types Vector of prop types to fetch
+#' @param allow_remote Logical to allow remote scraping
+#' @param sleep_sec Delay between requests
+#' @return Tibble of prop odds or NULL
+load_prop_odds_scoresandodds <- function(prop_types = NULL,
+                                         allow_remote = TRUE,
+                                         sleep_sec = NULL) {
+
+  if (!isTRUE(allow_remote)) {
+    message("INFO: ScoresAndOdds scraping disabled (PROP_ODDS_ALLOW_REMOTE_HTML=FALSE)")
+    return(NULL)
+  }
+
+  if (!requireNamespace("httr", quietly = TRUE) ||
+      !requireNamespace("jsonlite", quietly = TRUE) ||
+      !requireNamespace("xml2", quietly = TRUE)) {
+    warning("httr/jsonlite/xml2 packages required for ScoresAndOdds scraping")
+    return(NULL)
+  }
+
+  if (is.null(prop_types)) prop_types <- names(scoresandodds_market_map)
+  prop_types <- intersect(prop_types, names(scoresandodds_market_map))
+  if (!length(prop_types)) return(NULL)
+
+  if (is.null(sleep_sec) && exists("PROP_ODDS_SCRAPE_DELAY_SEC")) {
+    sleep_sec <- PROP_ODDS_SCRAPE_DELAY_SEC
+  }
+  if (is.null(sleep_sec) || !is.finite(sleep_sec)) sleep_sec <- 0.4
+
+  all_rows <- list()
+
+  for (prop_type in prop_types) {
+    endpoint <- scoresandodds_endpoint_map[[prop_type]]
+    market <- scoresandodds_market_map[[prop_type]]
+    if (is.null(endpoint) || is.null(market)) next
+
+    html <- tryCatch({
+      resp <- httr::GET(endpoint, httr::timeout(15), httr::user_agent(scoresandodds_user_agent))
+      if (httr::status_code(resp) != 200) return(NULL)
+      httr::content(resp, "text", encoding = "UTF-8")
+    }, error = function(e) NULL)
+
+    if (is.null(html)) next
+    event_ids <- extract_scoresandodds_events(html)
+    if (!length(event_ids)) next
+
+    for (event_id in event_ids) {
+      payload <- fetch_scoresandodds_market(event_id, market)
+      parsed <- parse_scoresandodds_market_json(payload, prop_type)
+      if (!is.null(parsed) && nrow(parsed) > 0) {
+        all_rows[[length(all_rows) + 1]] <- parsed
+      }
+      if (sleep_sec > 0) Sys.sleep(sleep_sec)
+    }
+  }
+
+  if (!length(all_rows)) return(NULL)
+  dplyr::bind_rows(all_rows)
+}
+
 #' Get consensus prop line for a player (median across books)
 #'
 #' @param player_name Player name to search for
@@ -229,16 +402,24 @@ load_prop_odds <- function(
 #' @param prop_odds_data Data from load_prop_odds()
 #' @param fuzzy_match Use fuzzy matching for player names (default TRUE)
 #'
-#' @return List with line, over_odds, under_odds, books; NULL if not found
+#' @param preferred_books Optional vector of book keys to prioritize (e.g., c("draftkings","fanduel"))
+#'
+#' @return List with line, line_over, line_under, over_odds, under_odds, book, books; NULL if not found
 #'
 #' @export
 get_market_prop_line <- function(player_name, prop_type, prop_odds_data,
                                   fuzzy_match = TRUE,
                                   home_team = NULL,
                                   away_team = NULL,
-                                  event_id = NULL) {
+                                  event_id = NULL,
+                                  preferred_books = NULL) {
 
   if (is.null(prop_odds_data) || nrow(prop_odds_data) == 0) {
+    return(NULL)
+  }
+
+  player_name <- as.character(player_name %||% "")
+  if (!nzchar(player_name) || !grepl("[A-Za-z]", player_name)) {
     return(NULL)
   }
 
@@ -260,16 +441,23 @@ get_market_prop_line <- function(player_name, prop_type, prop_odds_data,
     }
     map_team <- function(abbr) {
       abbr <- toupper(abbr %||% "")
-      TEAM_ABBR_TO_NAME[[abbr]] %||% abbr
+      mapped <- TEAM_ABBR_TO_NAME[abbr]
+      mapped[is.na(mapped)] <- abbr[is.na(mapped)]
+      as.character(mapped)
     }
     target_home <- normalize_team(map_team(home_team))
     target_away <- normalize_team(map_team(away_team))
 
     matches <- matches %>%
+      dplyr::mutate(
+        home_norm = normalize_team(map_team(.data$home_team)),
+        away_norm = normalize_team(map_team(.data$away_team))
+      ) %>%
       dplyr::filter(
-        (normalize_team(home_team) == target_home & normalize_team(away_team) == target_away) |
-        (normalize_team(home_team) == target_away & normalize_team(away_team) == target_home)
-      )
+        (home_norm == target_home & away_norm == target_away) |
+        (home_norm == target_away & away_norm == target_home)
+      ) %>%
+      dplyr::select(-home_norm, -away_norm)
   }
 
   # Match player name
@@ -281,14 +469,32 @@ get_market_prop_line <- function(player_name, prop_type, prop_odds_data,
         stringr::str_replace_all("[^a-z ]", "") %>%
         stringr::str_squish()
     }
+    normalize_name_spaced <- function(x) {
+      x %>%
+        tolower() %>%
+        stringr::str_replace_all("[^a-z ]", " ") %>%
+        stringr::str_squish()
+    }
 
     target_norm <- normalize_name(player_name)
+    if (is.na(target_norm) || !nzchar(target_norm)) return(NULL)
+    target_spaced <- normalize_name_spaced(player_name)
+    target_parts <- strsplit(target_spaced, " ")[[1]]
+    target_initial <- if (length(target_parts) >= 1) substr(target_parts[1], 1, 1) else ""
+    target_last <- if (length(target_parts) >= 2) target_parts[length(target_parts)] else ""
+
     matches <- matches %>%
-      dplyr::mutate(name_norm = normalize_name(player)) %>%
+      dplyr::mutate(
+        name_norm = normalize_name(player),
+        name_spaced = normalize_name_spaced(player),
+        last_name = stringr::word(name_spaced, -1),
+        first_initial = substr(stringr::word(name_spaced, 1), 1, 1)
+      ) %>%
       dplyr::filter(
         name_norm == target_norm |
         stringr::str_detect(name_norm, stringr::fixed(target_norm)) |
-        stringr::str_detect(target_norm, name_norm)
+        stringr::str_detect(target_norm, name_norm) |
+        (nzchar(target_last) & last_name == target_last & first_initial == target_initial)
       )
   } else {
     matches <- matches %>%
@@ -297,13 +503,66 @@ get_market_prop_line <- function(player_name, prop_type, prop_odds_data,
 
   if (nrow(matches) == 0) return(NULL)
 
-  # Calculate consensus (median)
+  # Apply preferred book filter if available
+  if (!is.null(preferred_books)) {
+    preferred_books <- tolower(preferred_books)
+    matches$book <- tolower(matches$book)
+    preferred_matches <- matches %>% dplyr::filter(book %in% preferred_books)
+    if (nrow(preferred_matches) > 0) {
+      matches <- preferred_matches
+    }
+  }
+
+  # Choose best book row (min vig for two-way, max price for one-way)
+  is_one_way <- all(is.na(matches$under_odds) | !is.finite(matches$under_odds))
+
+  score_row <- function(df) {
+    if (nrow(df) == 1) return(df)
+    if (is_one_way) {
+      dec <- american_to_decimal_odds(df$over_odds)
+      df[which.max(dec), , drop = FALSE]
+    } else {
+      over_p <- american_odds_to_implied_prob(df$over_odds)
+      under_p <- american_odds_to_implied_prob(df$under_odds)
+      vig <- over_p + under_p
+      df[which.min(vig), , drop = FALSE]
+    }
+  }
+
+  best_row <- score_row(matches)
+
+  as_scalar_num <- function(x) {
+    if (is.null(x)) return(NA_real_)
+    if (is.list(x)) x <- unlist(x, recursive = TRUE, use.names = FALSE)
+    x <- suppressWarnings(as.numeric(x))
+    if (!length(x)) return(NA_real_)
+    x[1]
+  }
+
+  line_over <- if ("line_over" %in% names(best_row)) best_row$line_over else best_row$line
+  line_under <- if ("line_under" %in% names(best_row)) best_row$line_under else best_row$line
+  line_over <- as_scalar_num(line_over)
+  line_under <- as_scalar_num(line_under)
+
+  # Use average line when over/under lines are very close
+  line_value <- if (is.finite(line_over) && is.finite(line_under) &&
+                    abs(line_over - line_under) <= 0.25) {
+    mean(c(line_over, line_under), na.rm = TRUE)
+  } else if (is.finite(line_over)) {
+    line_over
+  } else {
+    line_under
+  }
+
   list(
-    player = matches$player[1],
+    player = best_row$player[1],
     prop_type = prop_type,
-    line = stats::median(matches$line, na.rm = TRUE),
-    over_odds = round(stats::median(matches$over_odds, na.rm = TRUE)),
-    under_odds = round(stats::median(matches$under_odds, na.rm = TRUE)),
+    line = as_scalar_num(line_value),
+    line_over = line_over,
+    line_under = line_under,
+    over_odds = as_scalar_num(best_row$over_odds),
+    under_odds = as_scalar_num(best_row$under_odds),
+    book = best_row$book[1],
     books = unique(matches$book),
     n_books = length(unique(matches$book))
   )
@@ -449,14 +708,16 @@ load_prop_odds_csv <- function(path = NULL) {
   raw <- tryCatch(readr::read_csv(path, show_col_types = FALSE), error = function(e) NULL)
   if (is.null(raw) || nrow(raw) == 0) return(NULL)
 
-  required_cols <- c("player", "prop_type", "line", "over_odds", "under_odds")
+  required_cols <- c("player", "prop_type", "over_odds")
   if (!all(required_cols %in% names(raw))) {
-    warning("Prop odds CSV missing required columns: player, prop_type, line, over_odds, under_odds")
+    warning("Prop odds CSV missing required columns: player, prop_type, over_odds")
     return(NULL)
   }
-  raw$line <- suppressWarnings(as.numeric(raw$line))
+  if ("line" %in% names(raw)) raw$line <- suppressWarnings(as.numeric(raw$line))
+  if ("line_over" %in% names(raw)) raw$line_over <- suppressWarnings(as.numeric(raw$line_over))
+  if ("line_under" %in% names(raw)) raw$line_under <- suppressWarnings(as.numeric(raw$line_under))
   raw$over_odds <- suppressWarnings(as.numeric(raw$over_odds))
-  raw$under_odds <- suppressWarnings(as.numeric(raw$under_odds))
+  if ("under_odds" %in% names(raw)) raw$under_odds <- suppressWarnings(as.numeric(raw$under_odds))
   raw
 }
 
@@ -466,25 +727,27 @@ resolve_prop_odds_cache <- function(source = NULL,
   if (is.null(source) && exists("PROP_ODDS_SOURCE")) source <- PROP_ODDS_SOURCE
   if (is.null(csv_path) && exists("PROP_ODDS_CSV_PATH")) csv_path <- PROP_ODDS_CSV_PATH
 
-  source <- tolower(source %||% "odds_api")
+  source <- tolower(source %||% "auto")
   cache <- NULL
   cache_source <- "model"
 
-  if (source == "odds_api") {
+  allow_remote <- if (exists("PROP_ODDS_ALLOW_REMOTE_HTML")) isTRUE(PROP_ODDS_ALLOW_REMOTE_HTML) else FALSE
+
+  if (source %in% c("auto", "scoresandodds", "sao")) {
+    cache <- load_prop_odds_scoresandodds(allow_remote = allow_remote)
+    if (!is.null(cache) && nrow(cache) > 0) {
+      cache_source <- "scoresandodds"
+    }
+  }
+
+  if ((is.null(cache) || nrow(cache) == 0) && source %in% c("auto", "odds_api")) {
     cache <- load_prop_odds(api_key = api_key)
     if (!is.null(cache) && nrow(cache) > 0) {
       cache_source <- "odds_api"
     }
   }
 
-  if ((is.null(cache) || nrow(cache) == 0) && source %in% c("csv", "file", "local")) {
-    cache <- load_prop_odds_csv(csv_path)
-    if (!is.null(cache) && nrow(cache) > 0) {
-      cache_source <- "csv"
-    }
-  }
-
-  if ((is.null(cache) || nrow(cache) == 0) && source == "odds_api" && !is.null(csv_path)) {
+  if ((is.null(cache) || nrow(cache) == 0) && source %in% c("csv", "file", "local", "auto")) {
     cache <- load_prop_odds_csv(csv_path)
     if (!is.null(cache) && nrow(cache) > 0) {
       cache_source <- "csv"
@@ -519,6 +782,7 @@ if (!exists("%||%")) {
 #'
 #' @export
 get_default_prop_odds <- function(prop_type, position, baseline) {
+  allow_model_odds <- isTRUE(if (exists("PROP_ALLOW_MODEL_ODDS")) PROP_ALLOW_MODEL_ODDS else FALSE)
 
   if (prop_type == "anytime_td") {
     # Position-based TD odds (realistic market ranges)
@@ -532,17 +796,17 @@ get_default_prop_odds <- function(prop_type, position, baseline) {
 
     return(list(
       line = NA_real_,
-      over_odds = odds,     # "Yes" odds
+      over_odds = if (allow_model_odds) odds else NA_real_,     # "Yes" odds
       under_odds = NA_real_ # TD props don't have "No" lines typically
     ))
   }
 
   # Yard props: line at 95% of baseline (typical market placement)
-  # -110 both sides is industry standard
+  # -110 both sides is industry standard when synthetic odds are enabled
   list(
     line = round(baseline * 0.95, 0) + 0.5,
-    over_odds = -110,
-    under_odds = -110
+    over_odds = if (allow_model_odds) -110 else NA_real_,
+    under_odds = if (allow_model_odds) -110 else NA_real_
   )
 }
 
@@ -553,12 +817,15 @@ get_default_prop_odds <- function(prop_type, position, baseline) {
 #'
 #' @export
 format_american_odds <- function(odds) {
-  if (is.na(odds)) return("N/A")
-  if (odds >= 0) {
-    sprintf("+%d", round(odds))
-  } else {
-    sprintf("%d", round(odds))
-  }
+  odds <- suppressWarnings(as.numeric(odds))
+  out <- rep("N/A", length(odds))
+  valid <- is.finite(odds)
+  pos <- valid & odds >= 0
+  neg <- valid & odds < 0
+  out[pos] <- sprintf("+%d", round(odds[pos]))
+  out[neg] <- sprintf("%d", round(odds[neg]))
+  if (length(out) == 1) return(out[1])
+  out
 }
 
 #' Calculate implied probability from American odds
@@ -568,12 +835,14 @@ format_american_odds <- function(odds) {
 #'
 #' @export
 american_odds_to_implied_prob <- function(odds) {
-  if (is.na(odds)) return(NA_real_)
-  if (odds >= 0) {
-    100 / (odds + 100)
-  } else {
-    abs(odds) / (abs(odds) + 100)
-  }
+  odds <- suppressWarnings(as.numeric(odds))
+  out <- rep(NA_real_, length(odds))
+  valid <- is.finite(odds)
+  pos <- valid & odds >= 0
+  neg <- valid & odds < 0
+  out[pos] <- 100 / (odds[pos] + 100)
+  out[neg] <- abs(odds[neg]) / (abs(odds[neg]) + 100)
+  out
 }
 
 #' Calculate decimal odds from American odds
@@ -583,10 +852,12 @@ american_odds_to_implied_prob <- function(odds) {
 #'
 #' @export
 american_to_decimal_odds <- function(odds) {
-  if (is.na(odds)) return(NA_real_)
-  if (odds >= 0) {
-    1 + odds / 100
-  } else {
-    1 + 100 / abs(odds)
-  }
+  odds <- suppressWarnings(as.numeric(odds))
+  out <- rep(NA_real_, length(odds))
+  valid <- is.finite(odds)
+  pos <- valid & odds >= 0
+  neg <- valid & odds < 0
+  out[pos] <- 1 + odds[pos] / 100
+  out[neg] <- 1 + 100 / abs(odds[neg])
+  out
 }
