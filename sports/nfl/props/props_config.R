@@ -126,6 +126,11 @@ DEFAULT_YARD_PROP_ODDS <- -110     # Standard -110 both sides
 #  - "model": Synthetic market derived from simulation distribution
 if (!exists("PROP_ODDS_SOURCE")) PROP_ODDS_SOURCE <- "auto"
 
+# Source order when PROP_ODDS_SOURCE = "auto"
+if (!exists("PROP_ODDS_SOURCE_ORDER")) {
+  PROP_ODDS_SOURCE_ORDER <- c("scoresandodds", "oddstrader", "covers", "odds_api", "csv", "model")
+}
+
 # Allow remote HTML/API scraping (ScoresAndOdds) for props
 if (!exists("PROP_ODDS_ALLOW_REMOTE_HTML")) PROP_ODDS_ALLOW_REMOTE_HTML <- TRUE
 
@@ -147,6 +152,9 @@ if (!exists("PROP_MARKET_VIG")) PROP_MARKET_VIG <- 0.045
 # Lines default to enabled; odds default to disabled to avoid synthetic -110 output.
 if (!exists("PROP_ALLOW_MODEL_LINES")) PROP_ALLOW_MODEL_LINES <- TRUE
 if (!exists("PROP_ALLOW_MODEL_ODDS")) PROP_ALLOW_MODEL_ODDS <- FALSE
+
+# Require market odds for output rows (drop missing odds when TRUE).
+if (!exists("PROP_REQUIRE_MARKET_ODDS")) PROP_REQUIRE_MARKET_ODDS <- TRUE
 
 # Quantile used to set fallback lines from simulation distribution
 # 0.50 = median (balanced)

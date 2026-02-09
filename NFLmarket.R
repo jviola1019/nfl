@@ -3252,6 +3252,162 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       `Blend Away Moneyline (Vigged)` = blend_away_ml_vig
     )
 
+  plot_to_base64_img <- function(plot_fn, width = 900, height = 520, title = NULL) {
+    if (!requireNamespace("base64enc", quietly = TRUE) ||
+        !requireNamespace("htmltools", quietly = TRUE)) {
+      return(NULL)
+    }
+    tryCatch({
+      tmp <- tempfile(fileext = ".png")
+      grDevices::png(filename = tmp, width = width, height = height, res = 140, bg = "transparent")
+      on.exit({
+        if (grDevices::dev.cur() > 1) {
+          grDevices::dev.off()
+        }
+      }, add = TRUE)
+      plot_fn()
+      if (grDevices::dev.cur() > 1) {
+        grDevices::dev.off()
+      }
+      uri <- base64enc::dataURI(file = tmp, mime = "image/png")
+      unlink(tmp)
+      alt_text <- if (!is.null(title)) title else "chart"
+      htmltools::tags$div(
+        class = "chart-card",
+        if (!is.null(title)) htmltools::tags$div(class = "chart-title", title),
+        htmltools::tags$img(src = uri, class = "chart-img", alt = alt_text)
+      )
+    }, error = function(e) NULL)
+  }
+
+  build_games_charts <- function(tbl) {
+    if (!requireNamespace("htmltools", quietly = TRUE)) return(NULL)
+    market_col <- "Market Home Win % (Fair, Devig=proportional)"
+    model_col <- "Blend Home Win % (Shrunk)"
+    ev_col <- "EV Edge (Raw)"
+    if (!all(c(market_col, model_col, ev_col) %in% names(tbl))) return(NULL)
+
+    chart_df <- data.frame(
+      market = as.numeric(tbl[[market_col]]),
+      model = as.numeric(tbl[[model_col]]),
+      ev = as.numeric(tbl[[ev_col]])
+    )
+    chart_df <- chart_df[is.finite(chart_df$market) & is.finite(chart_df$model), , drop = FALSE]
+    ev_df <- data.frame(ev = as.numeric(tbl[[ev_col]]))
+    ev_df <- ev_df[is.finite(ev_df$ev), , drop = FALSE]
+
+    htmltools::tags$div(
+      class = "charts-row",
+      plot_to_base64_img(function() {
+        par(mar = c(4, 4, 2, 1), bg = "transparent", fg = "#F5F4F0", col.axis = "#C9C5BE", col.lab = "#C9C5BE")
+        plot(chart_df$market, chart_df$model,
+             pch = 19, col = "#FCA5A5", xlab = "Market Home Win %", ylab = "Blend Home Win %",
+             xlim = c(0, 1), ylim = c(0, 1), axes = FALSE)
+        abline(0, 1, lty = 2, col = "#E89A7A")
+        axis(1, at = seq(0, 1, 0.2), labels = paste0(seq(0, 100, 20), "%"), col = "#C9C5BE", col.axis = "#C9C5BE")
+        axis(2, at = seq(0, 1, 0.2), labels = paste0(seq(0, 100, 20), "%"), col = "#C9C5BE", col.axis = "#C9C5BE")
+        box(col = "#E89A7A")
+      }, title = "Model vs Market Win %"),
+      plot_to_base64_img(function() {
+        par(mar = c(4, 4, 2, 1), bg = "transparent", fg = "#F5F4F0", col.axis = "#C9C5BE", col.lab = "#C9C5BE")
+        hist(ev_df$ev, col = "#D97757", border = NA, breaks = 12, main = "", xlab = "EV Edge (Raw)",
+             axes = FALSE)
+        abline(v = 0, lty = 2, col = "#FCA5A5")
+        axis(1, at = pretty(ev_df$ev), labels = paste0(round(pretty(ev_df$ev) * 100), "%"),
+             col = "#C9C5BE", col.axis = "#C9C5BE")
+        axis(2, col = "#C9C5BE", col.axis = "#C9C5BE")
+        box(col = "#E89A7A")
+      }, title = "EV Edge Distribution")
+    )
+  }
+
+  build_props_charts <- function(props_df) {
+    if (is.null(props_df) || !is.data.frame(props_df)) return(NULL)
+    if (!requireNamespace("htmltools", quietly = TRUE)) return(NULL)
+    props_df$ev_over <- suppressWarnings(as.numeric(props_df$ev_over))
+    props_df$ev_under <- suppressWarnings(as.numeric(props_df$ev_under))
+    props_df$p_over <- suppressWarnings(as.numeric(props_df$p_over))
+    props_df$line <- suppressWarnings(as.numeric(props_df$line))
+    props_df$projection <- suppressWarnings(as.numeric(props_df$projection))
+
+    props_df$best_ev <- pmax(props_df$ev_over, props_df$ev_under, na.rm = TRUE)
+    ev_df <- props_df[is.finite(props_df$best_ev), , drop = FALSE]
+    p_df <- props_df[is.finite(props_df$p_over), , drop = FALSE]
+    scatter_df <- props_df[
+      is.finite(props_df$line) & is.finite(props_df$projection) &
+        props_df$prop_type != "anytime_td",
+      , drop = FALSE
+    ]
+
+    rec_df <- as.data.frame(table(props_df$prop_type, props_df$recommendation), stringsAsFactors = FALSE)
+    names(rec_df) <- c("prop_type", "recommendation", "n")
+
+    chart_nodes <- list()
+
+    if (nrow(scatter_df) > 0) {
+      chart_nodes[[length(chart_nodes) + 1]] <- plot_to_base64_img(function() {
+        par(mar = c(4, 4, 2, 1), bg = "transparent", fg = "#F5F4F0", col.axis = "#C9C5BE", col.lab = "#C9C5BE")
+        plot(scatter_df$line, scatter_df$projection,
+             pch = 19, col = "#60A5FA", xlab = "Market Line", ylab = "Model Projection",
+             axes = FALSE)
+        axis(1, col = "#C9C5BE", col.axis = "#C9C5BE")
+        axis(2, col = "#C9C5BE", col.axis = "#C9C5BE")
+        abline(0, 1, lty = 2, col = "#FCA5A5")
+        box(col = "#E89A7A")
+      }, title = "Projection vs Market Line")
+    }
+
+    if (nrow(ev_df) > 0) {
+      chart_nodes[[length(chart_nodes) + 1]] <- plot_to_base64_img(function() {
+        par(mar = c(4, 4, 2, 1), bg = "transparent", fg = "#F5F4F0", col.axis = "#C9C5BE", col.lab = "#C9C5BE")
+        hist(ev_df$best_ev, col = "#10b981", border = NA, breaks = 12, main = "", xlab = "Best EV (Over/Under)",
+             axes = FALSE)
+        abline(v = 0, lty = 2, col = "#FCA5A5")
+        axis(1, at = pretty(ev_df$best_ev), labels = paste0(round(pretty(ev_df$best_ev) * 100), "%"),
+             col = "#C9C5BE", col.axis = "#C9C5BE")
+        axis(2, col = "#C9C5BE", col.axis = "#C9C5BE")
+        box(col = "#E89A7A")
+      }, title = "Props EV Distribution")
+    } else if (nrow(p_df) > 0) {
+      chart_nodes[[length(chart_nodes) + 1]] <- plot_to_base64_img(function() {
+        par(mar = c(4, 4, 2, 1), bg = "transparent", fg = "#F5F4F0", col.axis = "#C9C5BE", col.lab = "#C9C5BE")
+        hist(p_df$p_over, col = "#10b981", border = NA, breaks = 12, main = "", xlab = "P(Over/Yes)",
+             axes = FALSE)
+        abline(v = 0.5, lty = 2, col = "#FCA5A5")
+        axis(1, at = pretty(p_df$p_over), labels = paste0(round(pretty(p_df$p_over) * 100), "%"),
+             col = "#C9C5BE", col.axis = "#C9C5BE")
+        axis(2, col = "#C9C5BE", col.axis = "#C9C5BE")
+        box(col = "#E89A7A")
+      }, title = "P(Over/Yes) Distribution")
+    }
+
+    if (nrow(rec_df) > 0) {
+      chart_nodes[[length(chart_nodes) + 1]] <- plot_to_base64_img(function() {
+        par(mar = c(6, 4, 2, 1), bg = "transparent", fg = "#F5F4F0", col.axis = "#C9C5BE", col.lab = "#C9C5BE")
+        types <- unique(rec_df$prop_type)
+        rec_levels <- unique(rec_df$recommendation)
+        counts <- matrix(0, nrow = length(rec_levels), ncol = length(types),
+                         dimnames = list(rec_levels, types))
+        for (i in seq_len(nrow(rec_df))) {
+          counts[rec_df$recommendation[i], rec_df$prop_type[i]] <- rec_df$n[i]
+        }
+        bp <- barplot(counts, beside = FALSE,
+                      col = c("#D97757", "#10b981", "#FCA5A5", "#4A4640")[seq_len(nrow(counts))],
+                      ylab = "Count", xaxt = "n")
+        axis(1, at = bp, labels = types, las = 2, col = "#C9C5BE", col.axis = "#C9C5BE")
+        axis(2, col = "#C9C5BE", col.axis = "#C9C5BE")
+        box(col = "#E89A7A")
+      }, title = "Recommendations by Prop Type")
+    }
+
+    if (!length(chart_nodes)) return(NULL)
+
+    htmltools::tags$div(
+      class = "charts-row",
+      htmltools::tagList(chart_nodes)
+    )
+  }
+
   # === FINAL TYPE VALIDATION ===
   # Verify all probability columns are numeric (fail early if contaminated)
   prob_cols <- c("Blend Pick Win % (Shrunk)", "Market Pick Win % (Devig)", "Prob Edge on Pick (pp)",
@@ -3264,6 +3420,8 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       }
     }
   }
+
+  games_charts_html <- tryCatch(build_games_charts(display_tbl), error = function(e) NULL)
 
   saved <- FALSE
 
@@ -3578,8 +3736,8 @@ export_moneyline_comparison_html <- function(comparison_tbl,
     if ("opt_css" %in% getNamespaceExports("gt")) {
       custom_css <- paste(
         ".gt_table { border-radius: 24px; overflow: hidden; box-shadow: 0 30px 80px rgba(0, 0, 0, 0.4); background-color: rgba(45, 42, 38, 0.9); width: max-content; min-width: 100%; }",
-        ".gt_table thead tr.gt_col_spanners th { position: sticky; top: var(--sticky-offset, 85px); z-index: 3; backdrop-filter: blur(10px); background-color: rgba(26, 24, 21, 0.95); font-size: 0.8rem; padding: 10px 10px; border-bottom: 1px solid #D97757; color: #FAF9F6; }",
-        ".gt_table thead tr.gt_col_headings th { position: sticky; top: calc(var(--sticky-offset, 85px) + var(--sticky-spanner, 28px)); z-index: 2; backdrop-filter: blur(10px); background-color: rgba(26, 24, 21, 0.95); font-size: 0.85rem; padding: 14px 10px; border-bottom: 2px solid #D97757; color: #FAF9F6; }",
+        ".gt_table thead tr.gt_col_spanners th { position: sticky; top: var(--sticky-offset, 72px); z-index: 3; backdrop-filter: blur(10px); background-color: rgba(26, 24, 21, 0.95); font-size: 0.78rem; padding: 8px 10px; border-bottom: 1px solid #D97757; color: #FAF9F6; }",
+        ".gt_table thead tr.gt_col_headings th { position: sticky; top: calc(var(--sticky-offset, 72px) + var(--sticky-spanner, 26px)); z-index: 2; backdrop-filter: blur(10px); background-color: rgba(26, 24, 21, 0.95); font-size: 0.82rem; padding: 12px 10px; border-bottom: 2px solid #D97757; color: #FAF9F6; }",
         ".gt_table tbody tr:hover { background-color: rgba(217, 119, 87, 0.12); transition: all 0.2s ease; transform: scale(1.002); }",
         ".gt_table tbody td { padding: 12px 10px; font-size: 0.9rem; border-bottom: 1px solid rgba(217, 119, 87, 0.1); font-variant-numeric: tabular-nums; }",
         ".gt_table tbody td[style*='background'] { font-weight: 600; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3); }",
@@ -3613,9 +3771,9 @@ export_moneyline_comparison_html <- function(comparison_tbl,
       # Modern Claude-inspired color scheme with ColorBends animated gradient background
       css_block_gt <- paste0(
         # CSS Variables for theming
-        ":root {--claude-coral: #D97757; --claude-coral-light: #E89A7A; --claude-cream: #FAF9F6; --claude-warm-gray: #2D2A26; --claude-dark: #1A1815; --accent-glow: rgba(217, 119, 87, 0.3); --sticky-offset: 85px; --sticky-spanner: 28px;}\n",
+        ":root {--claude-coral: #D97757; --claude-coral-light: #E89A7A; --claude-cream: #FAF9F6; --claude-warm-gray: #2D2A26; --claude-dark: #1A1815; --accent-glow: rgba(217, 119, 87, 0.3); --sticky-offset: 72px; --sticky-spanner: 26px;}\n",
         # Body with warm gradient and canvas background
-        "body {font-family: 'Inter','Söhne','Source Sans Pro','Helvetica Neue',Arial,sans-serif; background: linear-gradient(135deg, #1A1815 0%, #2D2A26 50%, #1A1815 100%); color: #F5F4F0; margin: 0; padding-top: 110px; min-height: 100vh; overflow-x: hidden;}\n",
+        "body {font-family: 'Inter','Söhne','Source Sans Pro','Helvetica Neue',Arial,sans-serif; background: linear-gradient(135deg, #1A1815 0%, #2D2A26 50%, #1A1815 100%); color: #F5F4F0; margin: 0; padding-top: 96px; min-height: 100vh; overflow-x: hidden;}\n",
         # ColorBends canvas background
         "#colorbends-canvas {position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: -2; pointer-events: none;}\n",
         # Overlay for better text readability over animated background
@@ -3627,6 +3785,10 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         ".table-bleed {width: 100vw; margin-left: calc(50% - 50vw); padding: 0 1.5rem;}\n",
         ".table-wrapper {overflow-x: auto; border-radius: 24px; box-shadow: 0 25px 80px rgba(0, 0, 0, 0.4); width: 100%; max-width: 100%;}\n",
         ".gt_table {width: max-content !important; min-width: 100%; table-layout: auto;}\n",
+        ".charts-row {display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.25rem; margin: 1rem 0 1.75rem;}\n",
+        ".chart-card {background: rgba(45, 42, 38, 0.7); border: 1px solid rgba(217, 119, 87, 0.2); border-radius: 18px; padding: 1rem; box-shadow: 0 18px 40px rgba(0,0,0,0.3);} \n",
+        ".chart-title {color: #E89A7A; font-size: 0.85rem; margin-bottom: 0.6rem; letter-spacing: 0.02em; text-transform: uppercase;}\n",
+        ".chart-img {width: 100%; height: auto; display: block;}\n",
         # Report intro with glass morphism
         ".report-intro {max-width: 1000px; margin: 0 auto 2.5rem; background: rgba(45, 42, 38, 0.8); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); padding: 2rem 2.25rem; border-radius: 24px; border: 1px solid rgba(217, 119, 87, 0.25); box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.08);}\n",
         ".report-intro h2 {margin: 0 0 1rem; font-size: 1.5rem; color: var(--claude-cream); letter-spacing: -0.01em; font-weight: 600;}\n",
@@ -3653,9 +3815,9 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         ".color-chip.gray {background: #4A4640;}\n",
         # GT Table styling
         ".gt_table {border-radius: 20px; overflow: hidden; box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5); background: rgba(45, 42, 38, 0.92) !important; backdrop-filter: blur(12px);}\n",
-        ".gt_table thead tr.gt_col_spanners th {position: sticky; top: var(--sticky-offset, 85px); z-index: 110; background: rgba(26, 24, 21, 0.96) !important; backdrop-filter: blur(10px); color: var(--claude-cream) !important; font-weight: 600; letter-spacing: 0.03em; border-bottom: 1px solid var(--claude-coral) !important; font-size: 0.72rem; padding-top: 8px; padding-bottom: 8px;}
+        ".gt_table thead tr.gt_col_spanners th {position: sticky; top: var(--sticky-offset, 72px); z-index: 110; background: rgba(26, 24, 21, 0.96) !important; backdrop-filter: blur(10px); color: var(--claude-cream) !important; font-weight: 600; letter-spacing: 0.03em; border-bottom: 1px solid var(--claude-coral) !important; font-size: 0.72rem; padding-top: 6px; padding-bottom: 6px;}
 ",
-        ".gt_table thead tr.gt_col_headings th {position: sticky; top: calc(var(--sticky-offset, 85px) + var(--sticky-spanner, 28px)); z-index: 105; background: rgba(26, 24, 21, 0.96) !important; backdrop-filter: blur(10px); color: var(--claude-cream) !important; font-weight: 600; letter-spacing: 0.03em; border-bottom: 2px solid var(--claude-coral) !important;}
+        ".gt_table thead tr.gt_col_headings th {position: sticky; top: calc(var(--sticky-offset, 72px) + var(--sticky-spanner, 26px)); z-index: 105; background: rgba(26, 24, 21, 0.96) !important; backdrop-filter: blur(10px); color: var(--claude-cream) !important; font-weight: 600; letter-spacing: 0.03em; border-bottom: 2px solid var(--claude-coral) !important;}
 ",
         ".gt_table tbody tr {transition: all 0.2s ease;}\n",
         ".gt_table tbody tr:hover {background-color: rgba(217, 119, 87, 0.15) !important; transform: scale(1.002);}\n",
@@ -3695,10 +3857,10 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         ".props-content {margin-top: 0.35rem;}\n",
         ".props-content .gt_table tbody td {color: #F5F4F0 !important; font-size: 0.92rem;}\n",
         ".props-content .gt_table thead th {color: #FAF9F6 !important; padding-top: 4px; padding-bottom: 4px;}\n",
-        ".props-content .gt_table thead tr.gt_col_spanners th {position: sticky; top: var(--sticky-offset, 85px); z-index: 5; background: rgba(26, 24, 21, 0.96) !important;}\n",
-        ".props-content .gt_table thead tr.gt_col_headings th {position: sticky; top: calc(var(--sticky-offset, 85px) + var(--sticky-spanner, 28px)); z-index: 4; background: rgba(26, 24, 21, 0.96) !important;}\n",
+        ".props-content .gt_table thead tr.gt_col_spanners th {position: sticky; top: var(--sticky-offset, 72px); z-index: 5; background: rgba(26, 24, 21, 0.96) !important;}\n",
+        ".props-content .gt_table thead tr.gt_col_headings th {position: sticky; top: calc(var(--sticky-offset, 72px) + var(--sticky-spanner, 26px)); z-index: 4; background: rgba(26, 24, 21, 0.96) !important;}\n",
         # Responsive adjustments
-        "@media (max-width: 768px) { body {padding-top: 100px;} .gt_table {font-size: 0.88rem;} .gt_table thead tr.gt_col_spanners th {font-size: 0.65rem;} .gt_table thead tr.gt_col_headings th {font-size: 0.7rem;} .report-intro {padding: 1.5rem; margin: 0 0.5rem 2rem;} #table-search {font-size: 0.9rem; padding: 0.85rem 1.25rem;} .filter-btn {font-size: 0.7rem; padding: 0.3rem 0.7rem;} .report-tabs {flex-direction: column;} .tab-btn {width: 100%;} .table-bleed {padding: 0 1rem;} }\n"
+        "@media (max-width: 768px) { body {padding-top: 90px;} .gt_table {font-size: 0.88rem;} .gt_table thead tr.gt_col_spanners th {font-size: 0.65rem;} .gt_table thead tr.gt_col_headings th {font-size: 0.7rem;} .report-intro {padding: 1.5rem; margin: 0 0.5rem 2rem;} #table-search {font-size: 0.9rem; padding: 0.85rem 1.25rem;} .filter-btn {font-size: 0.7rem; padding: 0.3rem 0.7rem;} .report-tabs {flex-direction: column;} .tab-btn {width: 100%;} .table-bleed {padding: 0 1rem;} .charts-row {grid-template-columns: 1fr;} }\n"
       )
 
       # ColorBends Three.js animated gradient background script
@@ -3815,6 +3977,13 @@ export_moneyline_comparison_html <- function(comparison_tbl,
 
       if (props_available) {
         props_data <- props_data_local
+        if (exists("PROP_REQUIRE_MARKET_ODDS") && isTRUE(PROP_REQUIRE_MARKET_ODDS) &&
+            "odds_source" %in% names(props_data)) {
+          market_only <- props_data %>% dplyr::filter(.data$odds_source == "market")
+          if (nrow(market_only) > 0) {
+            props_data <- market_only
+          }
+        }
         # Ensure optional market columns exist to prevent mutate failures
         props_data <- ensure_columns_with_defaults(props_data, list(
           team = NA_character_,
@@ -3853,6 +4022,7 @@ export_moneyline_comparison_html <- function(comparison_tbl,
             "</ul>",
             "<p>Props are simulated using the same game outcomes, ensuring consistent same-game correlation.</p>",
             "<p><strong>Odds source:</strong> DK/FD market odds via ScoresAndOdds market-comparison or The Odds API; otherwise odds are left blank unless PROP_ALLOW_MODEL_ODDS=TRUE (model-derived with fixed vig).</p>",
+            "<p><strong>Market filter:</strong> When PROP_REQUIRE_MARKET_ODDS=TRUE, only rows with market odds are shown.</p>",
             "</div>",
             "</section>"
           )
@@ -4018,6 +4188,7 @@ export_moneyline_comparison_html <- function(comparison_tbl,
             ) %>%
             dplyr::select(-edge_quality_display)
 
+          props_charts_html <- tryCatch(build_props_charts(props_data), error = function(e) NULL)
 
           # Create props gt table
           props_gt <- tryCatch({
@@ -4026,6 +4197,24 @@ export_moneyline_comparison_html <- function(comparison_tbl,
                 title = "Player Props Recommendations",
                 subtitle = sprintf("Monte Carlo: %s trials | Correlated with game simulation",
                                    format(if(exists("N_TRIALS")) N_TRIALS else 50000, big.mark = ","))
+              ) %>%
+              gt::cols_width(
+                Player ~ gt::px(150),
+                Position ~ gt::px(70),
+                Team ~ gt::px(60),
+                `Prop Type` ~ gt::px(140),
+                `Market DK` ~ gt::px(170),
+                `Market FD` ~ gt::px(170),
+                `Market Used` ~ gt::px(180),
+                `Book Used` ~ gt::px(90),
+                Model ~ gt::px(90),
+                `P(Over/Yes)` ~ gt::px(95),
+                `P(Under/No)` ~ gt::px(95),
+                `EV Over` ~ gt::px(85),
+                `EV Under` ~ gt::px(85),
+                `Edge Quality` ~ gt::px(90),
+                Recommendation ~ gt::px(110),
+                Source ~ gt::px(90)
               ) %>%
               gt::tab_spanner(
                 label = "Market",
@@ -4058,6 +4247,24 @@ export_moneyline_comparison_html <- function(comparison_tbl,
               )
           }, error = function(e) NULL)
 
+          render_props_fallback_table <- function(df) {
+            if (!requireNamespace("htmltools", quietly = TRUE)) return(NULL)
+            cols <- names(df)
+            head_row <- htmltools::tags$tr(lapply(cols, htmltools::tags$th))
+            body_rows <- lapply(seq_len(nrow(df)), function(i) {
+              htmltools::tags$tr(lapply(cols, function(col) {
+                val <- df[[col]][i]
+                if (is.na(val)) val <- ""
+                htmltools::tags$td(as.character(val))
+              }))
+            })
+            htmltools::tags$table(
+              class = "gt_table",
+              htmltools::tags$thead(head_row),
+              htmltools::tags$tbody(body_rows)
+            )
+          }
+
           if (!is.null(props_gt)) {
             props_gt_html <- tryCatch(
               as.character(gt::as_raw_html(props_gt)),
@@ -4069,6 +4276,7 @@ export_moneyline_comparison_html <- function(comparison_tbl,
                 id = "props-section",
                 class = "tab-content props-content",
                 htmltools::HTML(props_intro),
+                if (!is.null(props_charts_html)) props_charts_html,
                 htmltools::tags$div(
                   class = "table-bleed",
                   htmltools::tags$div(
@@ -4078,6 +4286,24 @@ export_moneyline_comparison_html <- function(comparison_tbl,
                 )
               )
             }
+          }
+          if (is.null(props_section)) {
+            fallback_table <- render_props_fallback_table(props_display)
+            props_section <- htmltools::tags$div(
+              id = "props-section",
+              class = "tab-content props-content",
+              htmltools::HTML(props_intro),
+              if (!is.null(props_charts_html)) props_charts_html,
+              htmltools::tags$div(
+                class = "table-bleed",
+                htmltools::tags$div(
+                  class = "table-wrapper props-table",
+                  if (!is.null(fallback_table)) fallback_table else htmltools::HTML(
+                    "<div class=\"report-intro props-section\"><h2>Player Props Analysis</h2><p>Props table could not render. Verify gt/htmltools availability and props schema.</p></div>"
+                  )
+                )
+              )
+            )
           }
       } else {
         # Show informative message when props not available
@@ -4131,6 +4357,7 @@ export_moneyline_comparison_html <- function(comparison_tbl,
           id = "games-section",
           class = "tab-content active",
           intro_block,
+          if (!is.null(games_charts_html)) games_charts_html,
           htmltools::tags$div(
             class = "table-bleed",
             htmltools::tags$div(
@@ -4288,6 +4515,10 @@ export_moneyline_comparison_html <- function(comparison_tbl,
         ".table-bleed {width: 100vw; margin-left: calc(50% - 50vw); padding: 0 1.5rem;}\n",
       ".table-bleed {width: 100vw; margin-left: calc(50% - 50vw); padding: 0 1.5rem;}\n",
       ".table-wrapper {overflow-x: auto; border-radius: 24px; box-shadow: 0 25px 80px rgba(0, 0, 0, 0.4);}\n",
+      ".charts-row {display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.25rem; margin: 1rem 0 1.75rem;}\n",
+      ".chart-card {background: rgba(45, 42, 38, 0.7); border: 1px solid rgba(217, 119, 87, 0.2); border-radius: 18px; padding: 1rem; box-shadow: 0 18px 40px rgba(0,0,0,0.3);} \n",
+      ".chart-title {color: #E89A7A; font-size: 0.85rem; margin-bottom: 0.6rem; letter-spacing: 0.02em; text-transform: uppercase;}\n",
+      ".chart-img {width: 100%; height: auto; display: block;}\n",
       ".report-intro {max-width: 1000px; margin: 0 auto 2.5rem; background: rgba(45, 42, 38, 0.8); backdrop-filter: blur(16px); padding: 2rem 2.25rem; border-radius: 24px; border: 1px solid rgba(217, 119, 87, 0.25); box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);}\n",
       ".report-intro h2 {margin: 0 0 1rem; font-size: 1.5rem; color: var(--claude-cream); font-weight: 600;}\n",
       ".report-intro h3 {color: var(--claude-coral-light); font-size: 1.1rem; margin: 1.5rem 0 0.75rem; font-weight: 600;}\n",

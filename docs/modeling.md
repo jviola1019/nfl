@@ -324,15 +324,19 @@ Where `P(side)` is the model probability for the relevant side (over or under fo
 - Props below the 2% threshold receive no directional recommendation.
 
 **Prop odds sources:**
-- `PROP_ODDS_SOURCE = "auto"` prefers ScoresAndOdds scraping when allowed; otherwise uses The Odds API (if `ODDS_API_KEY` is set), then CSV.
+- `PROP_ODDS_SOURCE = "auto"` iterates sources in `PROP_ODDS_SOURCE_ORDER` (default: ScoresAndOdds → OddsTrader → Covers → The Odds API → CSV → model).
 - `PROP_ODDS_SOURCE = "odds_api"` uses The Odds API (requires `ODDS_API_KEY`).
 - `PROP_ODDS_SOURCE = "scoresandodds"` uses the ScoresAndOdds market-comparison API (requires `PROP_ODDS_ALLOW_REMOTE_HTML = TRUE`).
+- `PROP_ODDS_SOURCE = "oddstrader"` attempts OddsTrader HTML scraping; falls back to CSV if the site is client-rendered.
+- `PROP_ODDS_SOURCE = "covers"` attempts Covers HTML scraping; may require CSV if blocked.
 - `PROP_ODDS_SOURCE = "csv"` loads a local CSV from `PROP_ODDS_CSV_PATH`.
 - `PROP_ODDS_SOURCE = "model"` derives line + odds from the simulation distribution with `PROP_MARKET_VIG` **only when** `PROP_ALLOW_MODEL_ODDS = TRUE`.
+- `PROP_ODDS_SOURCE_ORDER` sets the auto order when `PROP_ODDS_SOURCE = "auto"`.
 - `PROP_ODDS_BOOK_PRIORITY` sets the preferred sportsbooks for market selection (default DraftKings -> FanDuel).
 - `PROP_ODDS_SCRAPE_DELAY_SEC` throttles remote scrape calls to respect rate limits (default 0.4s).
 - `PROP_ALLOW_MODEL_LINES` controls whether missing lines fall back to simulation quantiles (default TRUE).
 - `PROP_ALLOW_MODEL_ODDS` controls whether missing odds are synthesized from model probabilities (default FALSE).
+- `PROP_REQUIRE_MARKET_ODDS` filters props output to rows with market odds when TRUE (falls back if none are available).
 
 ---
 

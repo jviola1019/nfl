@@ -859,6 +859,10 @@ USE_REAL_PROP_ODDS <- TRUE
 #' @note "auto" prefers ScoresAndOdds scraping when allowed, otherwise Odds API
 PROP_ODDS_SOURCE <- "auto"
 
+#' @description Prop odds source order when PROP_ODDS_SOURCE="auto"
+#' @default c("scoresandodds","oddstrader","covers","odds_api","csv","model")
+PROP_ODDS_SOURCE_ORDER <- c("scoresandodds", "oddstrader", "covers", "odds_api", "csv", "model")
+
 #' @description Allow remote HTML/API scraping for prop odds
 #' @default TRUE
 PROP_ODDS_ALLOW_REMOTE_HTML <- TRUE
@@ -886,6 +890,10 @@ PROP_ALLOW_MODEL_LINES <- TRUE
 #' @description Allow model-derived fallback odds when market odds are missing
 #' @default FALSE (leave odds blank and suppress EV)
 PROP_ALLOW_MODEL_ODDS <- FALSE
+
+#' @description Require market odds for props in output (drop missing-odds rows)
+#' @default TRUE
+PROP_REQUIRE_MARKET_ODDS <- TRUE
 
 #' @description Quantile used to derive fallback prop lines from simulation
 #' @default 0.50 (median)

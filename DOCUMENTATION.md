@@ -929,6 +929,8 @@ Key columns and definitions for the player props table:
 
 **Anytime TD props:** Only the "Yes" side is priced in most books. The table displays `P(Over/Yes)` and `EV Over` only, with `EV Under` left blank unless "No" odds exist. If `PROP_ALLOW_MODEL_ODDS = FALSE` and no market odds are found, the "Yes" odds stay blank and the recommendation is `PASS`.
 
+**Prop odds sourcing:** When `PROP_ODDS_SOURCE = "auto"`, sources are tried in `PROP_ODDS_SOURCE_ORDER` (default: ScoresAndOdds → OddsTrader → Covers → The Odds API → CSV → model). Set `PROP_REQUIRE_MARKET_ODDS = TRUE` to filter the table to rows with market odds only (falls back to model rows if none are available).
+
 
 ---
 

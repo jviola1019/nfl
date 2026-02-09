@@ -1450,6 +1450,7 @@ run_correlated_props <- function(game_sim_results, schedule_data = NULL,
             min_stake = 0.01,
             kelly_fraction = 0.125,
             max_stake = 0.02,
+            max_edge = get0("MAX_EDGE", ifnotfound = 0.10, inherits = TRUE),
             is_placeholder_odds = ..4
           )
         ),
@@ -1475,6 +1476,18 @@ run_correlated_props <- function(game_sim_results, schedule_data = NULL,
         )
       ) %>%
       dplyr::select(-.ev_for_quality, -governance_ev, -governance_prob, -governance_odds, -governance)  # Remove helper columns
+
+    require_market_odds <- isTRUE(if (exists("PROP_REQUIRE_MARKET_ODDS")) PROP_REQUIRE_MARKET_ODDS else FALSE)
+    if (require_market_odds) {
+      market_only <- results %>% dplyr::filter(.data$odds_source == "market")
+      if (nrow(market_only) > 0) {
+        message(sprintf("Filtered props to market odds only (%d of %d rows).",
+                        nrow(market_only), nrow(results)))
+        results <- market_only
+      } else {
+        message("PROP_REQUIRE_MARKET_ODDS=TRUE but no market odds found; retaining model rows.")
+      }
+    }
 
     results
   } else {

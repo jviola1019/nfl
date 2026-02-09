@@ -155,7 +155,8 @@ load_prop_odds <- function(
                     event_id = event_id,
                     home_team = home_team,
                     away_team = away_team,
-                    commence_time = commence_time
+                    commence_time = commence_time,
+                    source = "odds_api"
                   )
                   all_props <- dplyr::bind_rows(all_props, prop_row)
                 }
@@ -202,7 +203,8 @@ load_prop_odds <- function(
                 event_id = event_id,
                 home_team = home_team,
                 away_team = away_team,
-                commence_time = commence_time
+                commence_time = commence_time,
+                source = "odds_api"
               )
               all_props <- dplyr::bind_rows(all_props, prop_row)
             }
@@ -393,6 +395,113 @@ load_prop_odds_scoresandodds <- function(prop_types = NULL,
 
   if (!length(all_rows)) return(NULL)
   dplyr::bind_rows(all_rows)
+}
+
+# =============================================================================
+# ODDSTRADER + COVERS HTML SCRAPERS (best-effort)
+# =============================================================================
+
+oddstrader_default_url <- "https://www.oddstrader.com/nfl/player-props/"
+covers_default_url <- "https://www.covers.com/sport/football/nfl/props"
+
+extract_json_blob <- function(html_text, prefix) {
+  # Best-effort extraction of inline JSON blobs (e.g., window.__STATE__=...)
+  if (is.null(html_text) || !nzchar(html_text)) return(NULL)
+  pattern <- paste0(prefix, "\\s*=\\s*")
+  start <- regexpr(pattern, html_text)
+  if (start[1] == -1) return(NULL)
+  slice <- substr(html_text, start[1] + attr(start, "match.length"), nchar(html_text))
+  # Attempt to capture JSON ending at semicolon
+  end <- regexpr(";</script>|;</", slice)
+  if (end[1] == -1) end <- regexpr(";", slice)
+  if (end[1] == -1) return(NULL)
+  json_txt <- substr(slice, 1, end[1] - 1)
+  json_txt <- trimws(json_txt)
+  if (!nzchar(json_txt)) return(NULL)
+  json_txt
+}
+
+parse_oddstrader_html <- function(html_text) {
+  # OddsTrader player props are rendered client-side; HTML often lacks data.
+  # Attempt to parse any embedded JSON if present.
+  if (!requireNamespace("jsonlite", quietly = TRUE)) return(tibble::tibble())
+  blob <- extract_json_blob(html_text, "window.__PRELOADED_STATE__")
+  if (is.null(blob)) blob <- extract_json_blob(html_text, "window.__INITIAL_STATE__")
+  if (is.null(blob)) return(tibble::tibble())
+  payload <- tryCatch(jsonlite::fromJSON(blob, simplifyVector = FALSE), error = function(e) NULL)
+  if (is.null(payload)) return(tibble::tibble())
+  # No stable schema discovered; return empty to avoid false positives.
+  tibble::tibble()
+}
+
+load_prop_odds_oddstrader <- function(prop_types = NULL,
+                                      allow_remote = TRUE,
+                                      html_path = NULL,
+                                      url = oddstrader_default_url) {
+  if (!isTRUE(allow_remote) && is.null(html_path)) {
+    message("INFO: OddsTrader scraping disabled (PROP_ODDS_ALLOW_REMOTE_HTML=FALSE)")
+    return(NULL)
+  }
+
+  html_text <- NULL
+  if (!is.null(html_path) && file.exists(html_path)) {
+    html_text <- tryCatch(paste(readLines(html_path, warn = FALSE), collapse = "\n"),
+                          error = function(e) NULL)
+  }
+
+  if (is.null(html_text) && isTRUE(allow_remote)) {
+    if (!requireNamespace("httr", quietly = TRUE)) return(NULL)
+    resp <- tryCatch(httr::GET(url, httr::timeout(20), httr::user_agent(scoresandodds_user_agent)),
+                     error = function(e) NULL)
+    if (!is.null(resp) && httr::status_code(resp) == 200) {
+      html_text <- httr::content(resp, "text", encoding = "UTF-8")
+    } else if (!is.null(resp)) {
+      message(sprintf("INFO: OddsTrader fetch status %d (blocked or unavailable).", httr::status_code(resp)))
+    }
+  }
+
+  rows <- parse_oddstrader_html(html_text)
+  if (is.null(rows) || nrow(rows) == 0) {
+    message("INFO: OddsTrader props not found in HTML (site likely client-rendered). Provide CSV or API access.")
+    return(NULL)
+  }
+  rows
+}
+
+load_prop_odds_covers <- function(prop_types = NULL,
+                                  allow_remote = TRUE,
+                                  html_path = NULL,
+                                  url = covers_default_url) {
+  if (!isTRUE(allow_remote) && is.null(html_path)) {
+    message("INFO: Covers scraping disabled (PROP_ODDS_ALLOW_REMOTE_HTML=FALSE)")
+    return(NULL)
+  }
+
+  html_text <- NULL
+  if (!is.null(html_path) && file.exists(html_path)) {
+    html_text <- tryCatch(paste(readLines(html_path, warn = FALSE), collapse = "\n"),
+                          error = function(e) NULL)
+  }
+
+  if (is.null(html_text) && isTRUE(allow_remote)) {
+    if (!requireNamespace("httr", quietly = TRUE)) return(NULL)
+    resp <- tryCatch(httr::GET(url, httr::timeout(20), httr::user_agent(scoresandodds_user_agent)),
+                     error = function(e) NULL)
+    if (!is.null(resp) && httr::status_code(resp) == 200) {
+      html_text <- httr::content(resp, "text", encoding = "UTF-8")
+    } else if (!is.null(resp)) {
+      message(sprintf("INFO: Covers fetch status %d (blocked or unavailable).", httr::status_code(resp)))
+    }
+  }
+
+  # Covers currently blocks automated requests (403); return NULL to allow fallback.
+  if (is.null(html_text) || !nzchar(html_text)) {
+    message("INFO: Covers props not available via HTML; provide CSV or API access.")
+    return(NULL)
+  }
+
+  # No stable public HTML schema detected; return empty.
+  tibble::tibble()
 }
 
 #' Get consensus prop line for a player (median across books)
@@ -718,39 +827,77 @@ load_prop_odds_csv <- function(path = NULL) {
   if ("line_under" %in% names(raw)) raw$line_under <- suppressWarnings(as.numeric(raw$line_under))
   raw$over_odds <- suppressWarnings(as.numeric(raw$over_odds))
   if ("under_odds" %in% names(raw)) raw$under_odds <- suppressWarnings(as.numeric(raw$under_odds))
+  if (!"source" %in% names(raw)) raw$source <- "csv"
   raw
 }
 
 resolve_prop_odds_cache <- function(source = NULL,
                                     csv_path = NULL,
-                                    api_key = Sys.getenv("ODDS_API_KEY")) {
+                                    api_key = Sys.getenv("ODDS_API_KEY"),
+                                    source_order = NULL) {
   if (is.null(source) && exists("PROP_ODDS_SOURCE")) source <- PROP_ODDS_SOURCE
   if (is.null(csv_path) && exists("PROP_ODDS_CSV_PATH")) csv_path <- PROP_ODDS_CSV_PATH
+  if (is.null(source_order) && exists("PROP_ODDS_SOURCE_ORDER")) {
+    source_order <- PROP_ODDS_SOURCE_ORDER
+  }
 
   source <- tolower(source %||% "auto")
+  if (is.null(source_order) || !length(source_order)) {
+    source_order <- c("scoresandodds", "oddstrader", "covers", "odds_api", "csv", "model")
+  }
+  source_order <- tolower(source_order)
   cache <- NULL
   cache_source <- "model"
 
   allow_remote <- if (exists("PROP_ODDS_ALLOW_REMOTE_HTML")) isTRUE(PROP_ODDS_ALLOW_REMOTE_HTML) else FALSE
 
-  if (source %in% c("auto", "scoresandodds", "sao")) {
-    cache <- load_prop_odds_scoresandodds(allow_remote = allow_remote)
-    if (!is.null(cache) && nrow(cache) > 0) {
-      cache_source <- "scoresandodds"
-    }
+  # If a single source is specified, override order
+  if (!is.null(source) && !identical(source, "auto")) {
+    source_order <- c(source)
   }
 
-  if ((is.null(cache) || nrow(cache) == 0) && source %in% c("auto", "odds_api")) {
-    cache <- load_prop_odds(api_key = api_key)
-    if (!is.null(cache) && nrow(cache) > 0) {
-      cache_source <- "odds_api"
-    }
-  }
+  for (src in source_order) {
+    src <- tolower(src %||% "")
+    if (!nzchar(src)) next
 
-  if ((is.null(cache) || nrow(cache) == 0) && source %in% c("csv", "file", "local", "auto")) {
-    cache <- load_prop_odds_csv(csv_path)
-    if (!is.null(cache) && nrow(cache) > 0) {
-      cache_source <- "csv"
+    if (src %in% c("scoresandodds", "sao")) {
+      cache <- load_prop_odds_scoresandodds(allow_remote = allow_remote)
+      if (!is.null(cache) && nrow(cache) > 0) {
+        cache_source <- "scoresandodds"
+        break
+      }
+    }
+
+    if (src %in% c("oddstrader", "odds_trader", "ot")) {
+      cache <- load_prop_odds_oddstrader(allow_remote = allow_remote)
+      if (!is.null(cache) && nrow(cache) > 0) {
+        cache_source <- "oddstrader"
+        break
+      }
+    }
+
+    if (src %in% c("covers", "cover")) {
+      cache <- load_prop_odds_covers(allow_remote = allow_remote)
+      if (!is.null(cache) && nrow(cache) > 0) {
+        cache_source <- "covers"
+        break
+      }
+    }
+
+    if (src %in% c("odds_api", "oddsapi", "api")) {
+      cache <- load_prop_odds(api_key = api_key)
+      if (!is.null(cache) && nrow(cache) > 0) {
+        cache_source <- "odds_api"
+        break
+      }
+    }
+
+    if (src %in% c("csv", "file", "local")) {
+      cache <- load_prop_odds_csv(csv_path)
+      if (!is.null(cache) && nrow(cache) > 0) {
+        cache_source <- "csv"
+        break
+      }
     }
   }
 
